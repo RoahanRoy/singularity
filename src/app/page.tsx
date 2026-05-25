@@ -5,19 +5,23 @@ import { Shell, type ScreenId } from "@/components/meridian/Shell";
 import { SwarmScreen } from "@/components/meridian/screens/Swarm";
 import { ResearchScreen } from "@/components/meridian/screens/Research";
 import { PortfolioScreen } from "@/components/meridian/screens/Portfolio";
+import { ConsoleScreen } from "@/components/meridian/screens/Console";
+import { ComputeScreen } from "@/components/meridian/screens/Compute";
+
+const SCREENS = {
+  swarm: SwarmScreen,
+  research: ResearchScreen,
+  portfolio: PortfolioScreen,
+  console: ConsoleScreen,
+  compute: ComputeScreen,
+} as const;
 
 export default function Home() {
   const [active, setActive] = useState<ScreenId>("swarm");
+  const Screen = SCREENS[active];
   return (
     <Shell active={active} setActive={setActive}>
-      {active === "swarm" && <SwarmScreen />}
-      {active === "research" && <ResearchScreen />}
-      {active === "portfolio" && <PortfolioScreen />}
-      {active !== "swarm" && active !== "research" && active !== "portfolio" && (
-        <div style={{ padding: 40, color: "var(--ink-3)", fontFamily: "var(--mono)", fontSize: 12 }}>
-          screen :: {active} — loading…
-        </div>
-      )}
+      <Screen />
     </Shell>
   );
 }
