@@ -15,6 +15,7 @@
 import { ask, extractJson } from "./llm";
 import { loadPrompt } from "./prompts";
 import { db, DB, ID, emit, setStatus, ensureAgent } from "./appwrite";
+import { fetchLatestFiling, type EdgarFiling } from "./edgar";
 
 const AUTO_APPROVE = process.env.MERIDIAN_AUTO_APPROVE === "1";
 
@@ -32,32 +33,103 @@ export type Ctx = {
   agentIds: Record<string, string>;
 };
 
-// 1. Filing Parser ----------------------------------------------------------
-export async function parser(ctx: Ctx): Promise<Ctx> {
-  const id = ctx.agentIds.parser;
-  const prompt = loadPrompt("filing-parser");
-  await setStatus(id, "thinking");
-  await emit(id, "thought", `Pulling latest filing for ${ctx.ticker}`);
+// 1. Filing pipeline ---------------------------------------------------------
+//
+// Three trust tiers (per AGENT_DESIGN.md §5):
+//
+//   a. edgarReader  — pure HTTP. Fetches SEC data. NO LLM, NO Appwrite,
+//                     NO downstream context. Cannot be influenced by filing
+//                     content beyond returning bytes.
+//   b. summarize    — LLM call with NO tools. Sees the untrusted excerpt,
+//                     produces structured summary. Even if the filing
+//                     contains a prompt-injection attempt, the model has no
+//                     tools to misuse.
+//   c. indexer      — pure persistence. NO LLM. Writes a row to Appwrite
+//                     from the validated tuple of (reader output, summary).
+//
+// The orchestrator-facing `parser(ctx)` composes all three so the existing
+// chain is unchanged. Each stage is also exported for testing.
 
-  const raw = await ask({
-    model: prompt.meta.model,
-    system: prompt.body,
-    user: `Ticker: ${ctx.ticker}. Today's date: ${new Date().toISOString().slice(0, 10)}.`,
-  });
-  const filing = extractJson<NonNullable<Ctx["filing"]>>(raw);
+async function edgarReader(ctx: Ctx): Promise<EdgarFiling> {
+  if (process.env.MERIDIAN_FAKE_EDGAR === "1") {
+    return {
+      ticker: ctx.ticker,
+      cik: "0000000000",
+      form_type: "10-Q",
+      filed_at: new Date().toISOString().slice(0, 10),
+      source_url: `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${ctx.ticker}`,
+      primary_doc_url: "stub://no-fetch",
+      raw_excerpt: `[FAKE] Latest quarterly result for ${ctx.ticker}. Revenue and segment detail unavailable in stub mode.`,
+    };
+  }
+  return fetchLatestFiling(ctx.ticker);
+}
 
+async function summarize(edgar: EdgarFiling): Promise<{ summary: string; highlights: string[] }> {
+  const prompt = loadPrompt("filing-summarizer");
+  const userMsg = `Ticker: ${edgar.ticker}
+Form: ${edgar.form_type}
+Filed: ${edgar.filed_at}
+
+---FILING START---
+${edgar.raw_excerpt}
+---FILING END---`;
+  const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg });
+  return extractJson<{ summary: string; highlights: string[] }>(raw);
+}
+
+async function indexFiling(edgar: EdgarFiling, summary: string): Promise<void> {
   await db.createDocument(DB, "filings", ID.unique(), {
-    ticker: ctx.ticker,
-    form_type: filing.form_type,
-    filed_at: filing.filed_at,
-    source_url: filing.source_url,
+    ticker: edgar.ticker,
+    form_type: edgar.form_type,
+    filed_at: edgar.filed_at,
+    source_url: edgar.source_url,
     status: "indexed",
     vector_id: null,
   });
-  await emit(id, "tool_call", `Indexed ${filing.form_type} for ${ctx.ticker}`, filing);
-  await setStatus(id, "idle");
-  return { ...ctx, filing };
+  // summary is intentionally not stored on the filings row — schema doesn't
+  // include it, and it's reconstructible. It rides in ctx for the analyst.
+  void summary;
 }
+
+export async function parser(ctx: Ctx): Promise<Ctx> {
+  const id = ctx.agentIds.parser;
+  await setStatus(id, "thinking");
+  await emit(id, "thought", `Pulling latest filing for ${ctx.ticker}`);
+
+  let edgar: EdgarFiling;
+  try {
+    edgar = await edgarReader(ctx);
+  } catch (err) {
+    await emit(id, "alert", `EDGAR fetch failed for ${ctx.ticker}: ${(err as Error).message}`);
+    await setStatus(id, "blocked");
+    throw err;
+  }
+  await emit(id, "tool_call", `Fetched ${edgar.form_type} filed ${edgar.filed_at}`, {
+    source_url: edgar.source_url,
+    cik: edgar.cik,
+    excerpt_chars: edgar.raw_excerpt.length,
+  });
+
+  const { summary, highlights } = await summarize(edgar);
+  await emit(id, "thought", `Summarized ${edgar.form_type} for ${ctx.ticker}`, { highlights });
+
+  await indexFiling(edgar, summary);
+  await setStatus(id, "idle");
+
+  return {
+    ...ctx,
+    filing: {
+      form_type: edgar.form_type,
+      filed_at: edgar.filed_at,
+      source_url: edgar.source_url,
+      summary,
+    },
+  };
+}
+
+// Internals exported for unit testing / future composition.
+export const _filingPipeline = { edgarReader, summarize, indexFiling };
 
 // 2. Tech Analyst -----------------------------------------------------------
 export async function analyst(ctx: Ctx, reviseConcerns?: string[]): Promise<Ctx> {

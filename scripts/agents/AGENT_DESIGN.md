@@ -72,18 +72,36 @@ Anything weaker writes the memo with `status: review` and stops. This matches
 Anthropic's "stop and surface for review" pattern. Treat the env var as the
 operator's standing approval for the session; never make it the default.
 
-## 5. Trust tiers (TODO for real-data wiring)
+## 5. Trust tiers (implemented for the filing pipeline)
 
-When we wire real EDGAR / FactSet / transcripts, the ingestion worker must
-have **read-only** tool access. It extracts and returns structured data; it
-does not write to Appwrite or call the LLM with downstream context. The
-analyst gets the structured output, never the raw upstream text.
+The filing ingestion path is split into three stages with strictly decreasing
+trust as data moves rightward. Adopted from Anthropic's `valuation-reviewer`
+pattern ("The package-reader has Read/Grep only and no MCP access").
 
-Anthropic's `valuation-reviewer` enforces this: "The package-reader has
-Read/Grep only and no MCP access."
+```
+edgarReader      →   summarize         →   indexFiling
+(scripts/agents/      (filing-summarizer       (Appwrite write,
+ edgar.ts)            prompt, no tools)        no LLM)
 
-We don't have this split yet — `parser` writes filings directly. Fixing it
-is a precondition before connecting any real upstream source.
+HTTP only.            LLM call only.           Persistence only.
+No LLM.               No fetch, no DB.         No LLM, no fetch.
+No Appwrite.          No downstream ctx.       Pure I/O.
+```
+
+Why this matters:
+
+- A maliciously-crafted filing cannot trick `edgarReader` into doing
+  anything — it has no LLM and no judgment.
+- A prompt-injection attempt inside the filing excerpt reaches `summarize`,
+  but the summarizer has zero tools. The worst it can produce is a
+  nonsense JSON, which fails schema check and stalls the chain.
+- `indexFiling` writes only the structured tuple it was handed. It cannot
+  be redirected by filing content.
+
+The analyst node downstream sees the *summary*, never the raw excerpt.
+That keeps untrusted bytes out of any agent that has Appwrite or trade
+authority. The same pattern applies to every future ingestion source:
+transcripts, news, alt-data, GP packages.
 
 ## 6. Revise loops are bounded
 
@@ -132,7 +150,9 @@ Mapped to Anthropic's reference where overlap exists. Build only when needed
 
 | Slug | Role | Status |
 | --- | --- | --- |
-| `filing-parser` | ingestion (will be split into reader + indexer at trust-tier work) | ✅ live |
+| `edgarReader` (in `edgar.ts`) | HTTP fetch of SEC filings, no LLM | ✅ live |
+| `filing-summarizer` | LLM summarization of untrusted excerpt, no tools | ✅ live |
+| `indexFiling` (in `nodes.ts`) | persistence-only, no LLM | ✅ live |
 | `red-team-critic` | adversarial review | ✅ live |
 | `portfolio-manager` | sizing | ✅ live |
 | `risk-officer` | pre-trade VaR | ✅ live |
