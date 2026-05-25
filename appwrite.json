@@ -423,6 +423,14 @@
                     "required": false,
                     "array": false,
                     "encrypt": false
+                },
+                {
+                    "key": "entities_json",
+                    "type": "string",
+                    "size": 4096,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
                 }
             ],
             "indexes": [

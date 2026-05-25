@@ -3,7 +3,34 @@
 import { useEffect, useState } from "react";
 import { Panel, Tag } from "../primitives";
 import { listFilings, subscribeFilings, getTopMemo } from "@/lib/appwrite/queries";
-import type { Filing, Memo } from "@/lib/appwrite/schema";
+import type { Filing, Memo, MemoEntity } from "@/lib/appwrite/schema";
+
+const FALLBACK_ENTITIES: MemoEntity[] = [
+  { name: "Taiwan Semiconductor (TSM)", role: "subject",    weight: 1.0  },
+  { name: "Apple (AAPL)",               role: "customer",   weight: 0.78 },
+  { name: "NVIDIA (NVDA)",              role: "customer",   weight: 0.74 },
+  { name: "ASML Holding (ASML)",        role: "supplier",   weight: 0.63 },
+  { name: "Samsung Foundry",            role: "competitor", weight: 0.55 },
+  { name: "Intel Foundry",              role: "competitor", weight: 0.44 },
+  { name: "Mediatek (2454.TW)",         role: "peer",       weight: 0.41 },
+  { name: "Sumco Corporation",          role: "input",      weight: 0.33 },
+];
+
+function parseEntities(raw: string | null | undefined): MemoEntity[] | null {
+  if (!raw) return null;
+  try {
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return null;
+    const clean = arr
+      .filter((e): e is MemoEntity =>
+        e && typeof e.name === "string" && typeof e.role === "string" && typeof e.weight === "number"
+      )
+      .map((e) => ({ ...e, weight: Math.max(0, Math.min(1, e.weight)) }));
+    return clean.length ? clean : null;
+  } catch {
+    return null;
+  }
+}
 
 type Doc = { id: string; src: string; tk: string; ttl: string; when: string };
 
@@ -192,17 +219,6 @@ function TranscriptView() {
 }
 
 function EntityPanel() {
-  const entities = [
-    { name: "Taiwan Semiconductor (TSM)", role: "subject",    w: 1.0  },
-    { name: "Apple (AAPL)",               role: "customer",   w: 0.78 },
-    { name: "NVIDIA (NVDA)",              role: "customer",   w: 0.74 },
-    { name: "ASML Holding (ASML)",        role: "supplier",   w: 0.63 },
-    { name: "Samsung Foundry",            role: "competitor", w: 0.55 },
-    { name: "Intel Foundry",              role: "competitor", w: 0.44 },
-    { name: "Mediatek (2454.TW)",         role: "peer",       w: 0.41 },
-    { name: "Sumco Corporation",          role: "input",      w: 0.33 },
-  ];
-
   const [memo, setMemo] = useState<Memo | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -247,17 +263,22 @@ function EntityPanel() {
           color: "var(--ink-3)",
           letterSpacing: "0.16em",
           textTransform: "uppercase",
+          display: "flex",
+          justifyContent: "space-between",
         }}
       >
-        Entity Graph
+        <span>Entity Graph</span>
+        <span style={{ color: "var(--ink-4)" }}>
+          {parseEntities(memo?.entities_json) ? "from memo" : "sample"}
+        </span>
       </div>
-      {entities.map((e, i) => (
+      {(parseEntities(memo?.entities_json) ?? FALLBACK_ENTITIES).map((e, i) => (
         <div key={i} className="entity">
           <div className="name">{e.name}</div>
           <div className="row">
             <span style={{ textTransform: "uppercase", letterSpacing: "0.12em" }}>{e.role}</span>
-            <div className="bar"><i style={{ width: e.w * 100 + "%" }} /></div>
-            <span style={{ color: "var(--ink-1)" }}>{e.w.toFixed(2)}</span>
+            <div className="bar"><i style={{ width: e.weight * 100 + "%" }} /></div>
+            <span style={{ color: "var(--ink-1)" }}>{e.weight.toFixed(2)}</span>
           </div>
         </div>
       ))}

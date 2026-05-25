@@ -22,7 +22,13 @@ const AUTO_APPROVE = process.env.MERIDIAN_AUTO_APPROVE === "1";
 export type Ctx = {
   ticker: string;
   filing?: { form_type: string; filed_at: string; source_url: string; summary: string };
-  memo?: { title: string; thesis: string; conviction: number; source_urls?: string[] };
+  memo?: {
+    title: string;
+    thesis: string;
+    conviction: number;
+    source_urls?: string[];
+    entities?: { name: string; role: string; weight: number }[];
+  };
   critique?: { score: number; concerns: string[]; verdict: "pass" | "revise" | "reject" };
   size?: { qty: number; weight_pct: number; reasoning: string };
   risk?: { approved: boolean; var_pct: number; notes: string };
@@ -150,6 +156,13 @@ export async function analyst(ctx: Ctx, reviseConcerns?: string[]): Promise<Ctx>
   const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg });
   const memo = extractJson<NonNullable<Ctx["memo"]>>(raw);
 
+  const entities = Array.isArray(memo.entities)
+    ? memo.entities
+        .filter((e) => e && typeof e.name === "string" && typeof e.weight === "number")
+        .slice(0, 12)
+    : [];
+  const entitiesJson = entities.length ? JSON.stringify(entities).slice(0, 4096) : null;
+
   const doc = await db.createDocument(DB, "memos", ID.unique(), {
     title: memo.title,
     ticker: ctx.ticker,
@@ -158,6 +171,7 @@ export async function analyst(ctx: Ctx, reviseConcerns?: string[]): Promise<Ctx>
     author_agent_id: id,
     status: "review",
     vector_id: null,
+    entities_json: entitiesJson,
   });
   await emit(id, "memo", `${memo.title} (conv ${memo.conviction?.toFixed(2)})`, {
     memo_id: doc.$id,

@@ -16,9 +16,19 @@ One JSON object:
   "title": "8-12 word headline",
   "thesis": "3-4 sentence thesis. Include ONE concrete near-term catalyst and ONE quantified downside risk. Cite the filing's source_url where any number originated. Mark any unsupported figure [UNSOURCED].",
   "conviction": 0.0,
-  "source_urls": ["https://..."]
+  "source_urls": ["https://..."],
+  "entities": [
+    { "name": "Taiwan Semiconductor (TSM)", "role": "subject", "weight": 1.0 },
+    { "name": "NVIDIA (NVDA)", "role": "customer", "weight": 0.75 }
+  ]
 }
 ```
+
+`entities`:
+- Include the subject company (`role: "subject"`, `weight: 1.0`) plus 3–7 related entities actually named in the filing summary.
+- `role` ∈ `subject | customer | supplier | competitor | peer | input`.
+- `weight` ∈ `[0, 1]` — your judgment of how load-bearing each entity is for the thesis.
+- Use ticker in parentheses when known; otherwise just the legal name. Omit `entities` (or return `[]`) if the filing names no other parties.
 
 `conviction` interpretation:
 - `< 0.4` — opinion / weak setup, do not size

@@ -170,6 +170,14 @@ async function seedMemo(clusterIds: Record<string, string>) {
     author_agent_id: authorId,
     status: "draft",
     vector_id: null,
+    entities_json: JSON.stringify([
+      { name: "Taiwan Semiconductor (TSM)", role: "subject",    weight: 1.0 },
+      { name: "Apple (AAPL)",               role: "customer",   weight: 0.78 },
+      { name: "NVIDIA (NVDA)",              role: "customer",   weight: 0.74 },
+      { name: "ASML Holding (ASML)",        role: "supplier",   weight: 0.63 },
+      { name: "Samsung Foundry",            role: "competitor", weight: 0.55 },
+      { name: "Intel Foundry",              role: "competitor", weight: 0.44 },
+    ]),
   });
   console.log("memos + 1");
 }

@@ -62,6 +62,13 @@ export type Memo = Base & {
   author_agent_id: string;
   status: "draft" | "review" | "approved" | "rejected";
   vector_id: string | null;
+  entities_json: string | null;
+};
+
+export type MemoEntity = {
+  name: string;
+  role: "subject" | "customer" | "supplier" | "competitor" | "peer" | "input" | string;
+  weight: number;
 };
 
 export type Position = Base & {
