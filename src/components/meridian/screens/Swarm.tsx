@@ -2,7 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Panel, UTCClock } from "../primitives";
-import { clusters, feedSeed } from "@/lib/meridian/data";
+import { clusters as fallbackClusters, feedSeed } from "@/lib/meridian/data";
+import {
+  listClusters,
+  listRecentEvents,
+  subscribeAgentEvents,
+} from "@/lib/appwrite/queries";
+import type { Cluster as DbCluster, AgentEvent } from "@/lib/appwrite/schema";
 
 function rngFactory(seed: number) {
   let a = seed;
@@ -179,25 +185,68 @@ function SwarmCanvas({ selectedCluster }: { selectedCluster: string }) {
   );
 }
 
-function SwarmFeed() {
-  const [items, setItems] = useState(feedSeed.slice(0, 8));
+type FeedRow = { id: string; cluster: string; agent: string; msg: string; t: string };
+
+function fmtAgo(iso: string): string {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return s.toFixed(1) + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m";
+  return Math.floor(s / 3600) + "h";
+}
+
+function SwarmFeed({ clusterById }: { clusterById: Map<string, string> }) {
+  const [items, setItems] = useState<FeedRow[]>(() =>
+    feedSeed.slice(0, 8).map((s, i) => ({ id: "seed-" + i, cluster: s.c, agent: s.a, msg: s.msg, t: s.t })),
+  );
+  const [live, setLive] = useState(false);
+
   useEffect(() => {
-    let i = 8;
-    const id = setInterval(() => {
-      const next = feedSeed[i % feedSeed.length];
-      setItems((prev) => [{ ...next, t: "0.1s" }, ...prev.slice(0, 7)]);
-      i++;
-    }, 3200);
-    return () => clearInterval(id);
-  }, []);
+    let cancelled = false;
+    listRecentEvents(8)
+      .then((events) => {
+        if (cancelled || events.length === 0) return;
+        setLive(true);
+        setItems(
+          events.map((e) => ({
+            id: e.$id,
+            cluster: (e.cluster_id && clusterById.get(e.cluster_id)) || "—",
+            agent: "agent/" + e.agent_id.slice(-6),
+            msg: e.summary,
+            t: fmtAgo(e.occurred_at),
+          })),
+        );
+      })
+      .catch(() => {});
+    const unsub = subscribeAgentEvents((ev: AgentEvent) => {
+      if (cancelled) return;
+      setLive(true);
+      setItems((prev) =>
+        [
+          {
+            id: ev.$id,
+            cluster: (ev.cluster_id && clusterById.get(ev.cluster_id)) || "—",
+            agent: "agent/" + ev.agent_id.slice(-6),
+            msg: ev.summary,
+            t: "0.1s",
+          },
+          ...prev,
+        ].slice(0, 8),
+      );
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [clusterById]);
+
   return (
-    <div className="feed">
+    <div className="feed" data-live={live}>
       {items.map((it, i) => (
-        <div className="feed-item" key={i + "-" + it.a}>
+        <div className="feed-item" key={it.id}>
           <div className="top">
-            <span style={{ color: "var(--md-accent)" }}>● {it.c}</span>
-            <span style={{ marginLeft: "auto" }}>{it.a}</span>
-            <span style={{ color: "var(--ink-4)" }}>{i === 0 ? "live" : it.t}</span>
+            <span style={{ color: "var(--md-accent)" }}>● {it.cluster}</span>
+            <span style={{ marginLeft: "auto" }}>{it.agent}</span>
+            <span style={{ color: "var(--ink-4)" }}>{i === 0 && live ? "live" : it.t}</span>
           </div>
           <div className="msg" dangerouslySetInnerHTML={{ __html: it.msg }} />
         </div>
@@ -206,22 +255,68 @@ function SwarmFeed() {
   );
 }
 
+const INFRA_THEMES = new Set(["alt", "exec", "risk"]);
+
+type UIList = {
+  id: string;
+  themeId: string;
+  name: string;
+  agents: number;
+  conv: number;
+  color: "amber" | "cyan";
+};
+
 export function SwarmScreen() {
   const [sel, setSel] = useState("earnings");
-  const total = clusters.reduce((s, c) => s + c.agents, 0);
+  const [list, setList] = useState<UIList[]>(() =>
+    fallbackClusters.map((c) => ({
+      id: c.id,
+      themeId: c.id,
+      name: c.name,
+      agents: c.agents,
+      conv: c.conv,
+      color: c.color,
+    })),
+  );
+  const [clusterById, setClusterById] = useState<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    listClusters()
+      .then((rows: DbCluster[]) => {
+        if (cancelled || rows.length === 0) return;
+        const ui: UIList[] = rows.map((c) => ({
+          id: c.$id,
+          themeId: c.theme,
+          name: c.name,
+          agents: c.agent_count,
+          conv: c.health,
+          color: INFRA_THEMES.has(c.theme) ? "cyan" : "amber",
+        }));
+        setList(ui);
+        setClusterById(new Map(rows.map((c) => [c.$id, c.name])));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const total = list.reduce((s, c) => s + c.agents, 0);
+
   return (
     <div className="swarm">
       <Panel title="Clusters" meta={`${total.toLocaleString()} agents`} bodyClassName="tight">
         <div className="cluster-list">
-          {clusters.map((c) => (
+          {list.map((c) => (
             <div
               key={c.id}
               className={
                 "cluster " +
                 (c.color === "cyan" ? "cyan " : "") +
-                (sel === c.id ? "sel" : "")
+                (sel === c.themeId ? "sel" : "")
               }
-              onClick={() => setSel(c.id)}
+              onClick={() => setSel(c.themeId)}
             >
               <div className="name">{c.name}</div>
               <div className="meta">{c.agents}</div>
@@ -245,7 +340,7 @@ export function SwarmScreen() {
       </div>
 
       <Panel title="Activity Stream" meta="↓ live" bodyClassName="tight">
-        <SwarmFeed />
+        <SwarmFeed clusterById={clusterById} />
       </Panel>
     </div>
   );
