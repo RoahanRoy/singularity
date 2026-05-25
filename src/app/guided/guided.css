@@ -1,0 +1,162 @@
+.guided {
+  --gbg-0: #08090b;
+  --gbg-1: #0d1014;
+  --gbg-2: #131820;
+  --gline: #1b2028;
+  --gink-0: #f4f5f7;
+  --gink-1: #c9ccd3;
+  --gink-2: #8b909a;
+  --gink-3: #5a5f6a;
+  --gaccent: oklch(0.78 0.13 75);
+
+  background: var(--gbg-0);
+  color: var(--gink-1);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+}
+
+.guided .mono { font-family: var(--font-jetbrains-mono), ui-monospace, monospace; }
+
+/* rail */
+.guided .g-rail {
+  border-right: 1px solid var(--gline);
+  background: var(--gbg-1);
+  display: flex;
+  flex-direction: column;
+  padding: 22px 18px;
+}
+.guided .g-brand { display: flex; gap: 10px; align-items: center; margin-bottom: 32px; }
+.guided .g-brand .mark { width: 22px; height: 22px; border: 1px solid var(--gink-1); position: relative; }
+.guided .g-brand .mark::before { content: ""; position: absolute; inset: 4px; background: var(--gaccent); }
+.guided .g-brand .name { font-family: var(--font-newsreader), serif; font-size: 17px; color: var(--gink-0); letter-spacing: 0.04em; }
+.guided .g-brand .sub { font-family: var(--font-jetbrains-mono), monospace; font-size: 9px; letter-spacing: 0.18em; color: var(--gink-3); margin-top: 2px; }
+
+.guided .g-rail nav { display: flex; flex-direction: column; gap: 2px; }
+.guided .g-rail nav button {
+  display: grid;
+  grid-template-columns: 28px 1fr 16px;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  padding: 11px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--gink-2);
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 140ms, color 140ms;
+}
+.guided .g-rail nav button:hover { background: var(--gbg-2); color: var(--gink-0); }
+.guided .g-rail nav button.active { background: var(--gbg-2); color: var(--gink-0); }
+.guided .g-rail nav .num { font-family: var(--font-jetbrains-mono), monospace; font-size: 10px; color: var(--gink-3); letter-spacing: 0.08em; }
+.guided .g-rail nav button.active .num { color: var(--gaccent); }
+.guided .g-rail nav .done { font-size: 10px; color: var(--gink-3); }
+
+.guided .g-rail-foot {
+  margin-top: auto;
+  padding-top: 24px;
+  border-top: 1px solid var(--gline);
+}
+.guided .link {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 11px;
+  color: var(--gink-2);
+  letter-spacing: 0.06em;
+  text-decoration: none;
+}
+.guided .link:hover { color: var(--gink-0); }
+
+/* main */
+.guided .g-main { display: flex; flex-direction: column; min-width: 0; }
+.guided .g-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 56px;
+  border-bottom: 1px solid var(--gline);
+}
+.guided .eyebrow {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--gink-3);
+}
+.guided .g-pager {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+.guided .g-pager button {
+  background: transparent;
+  border: 0;
+  color: var(--gink-1);
+  cursor: pointer;
+  font: inherit;
+}
+.guided .g-pager button:hover { color: var(--gaccent); }
+.guided .g-pager .disabled { color: var(--gink-3); cursor: default; }
+.guided .g-pager .count { color: var(--gink-3); }
+
+.guided .g-content { padding: 64px 56px; max-width: 820px; flex: 1; }
+.guided .g-headline {
+  font-family: var(--font-newsreader), serif;
+  font-weight: 500;
+  font-size: clamp(40px, 6vw, 64px);
+  letter-spacing: -0.01em;
+  color: var(--gink-0);
+  margin: 0 0 28px;
+  line-height: 1.05;
+}
+.guided .lede {
+  font-family: var(--font-newsreader), serif;
+  font-size: 19px;
+  line-height: 1.55;
+  color: var(--gink-1);
+  margin: 0 0 28px;
+}
+.guided .bullets {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 14px;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--gink-1);
+}
+.guided .bullets li {
+  padding-left: 18px;
+  position: relative;
+}
+.guided .bullets li::before {
+  content: "—";
+  position: absolute;
+  left: 0;
+  color: var(--gaccent);
+}
+
+.guided .g-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 56px;
+  border-top: 1px solid var(--gline);
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--gink-3);
+}
+
+.gloss {
+  border-bottom: 1px dotted var(--gink-3);
+  cursor: help;
+  color: var(--gink-0);
+}

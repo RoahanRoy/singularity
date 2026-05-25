@@ -1,6 +1,7 @@
 "use client";
 
 import { ReactNode, useState } from "react";
+import Link from "next/link";
 import { MarketTicker, UTCClock } from "./primitives";
 
 export type ScreenId = "swarm" | "research" | "portfolio" | "console" | "compute";
@@ -83,7 +84,11 @@ function Rail({ active, setActive }: { active: ScreenId; setActive: (id: ScreenI
         <div className="avatar">KP</div>
         <div className="who">
           <div className="name">K. Park</div>
-          <div className="role">Portfolio Manager</div>
+          <div className="role">
+            <Link href="/guided" style={{ color: "var(--ink-3)", textDecoration: "none" }}>
+              ↗ Guided tour
+            </Link>
+          </div>
         </div>
       </div>
     </aside>
