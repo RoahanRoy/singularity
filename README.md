@@ -15,17 +15,18 @@ Codename: **MERIDIAN**. Concept for an AI-native hedge fund (YC Spring 2026 brie
 | ------------------- | ------------------------------------------------------- |
 | Frontend            | Next.js 16 (App Router) + TypeScript                    |
 | UI                  | Tailwind CSS v4 + shadcn/ui                             |
-| Realtime            | WebSockets + Redis _(planned)_                          |
-| Backend APIs        | FastAPI _(planned)_                                     |
-| Agent Orchestration | LangGraph + Temporal _(planned)_                        |
+| Auth                | Appwrite Auth _(planned)_                               |
+| DB                  | Appwrite Databases _(planned)_                          |
+| Realtime            | Appwrite Realtime (WebSockets) _(planned)_              |
+| Storage             | Appwrite Storage _(planned)_                            |
+| Backend APIs        | Appwrite Functions (Node/Python) _(planned)_            |
+| Agent Orchestration | LangGraph in Appwrite Functions _(planned)_             |
 | LLM Layer           | Claude + OpenAI _(planned)_                             |
-| DB                  | Postgres + pgvector _(planned)_                         |
-| Infra               | Vercel (frontend) + Railway _(planned)_                 |
-| Auth                | Clerk _(planned)_                                       |
-| Analytics           | PostHog _(planned)_                                     |
-| Observability       | Langfuse _(planned)_                                    |
+| Infra               | Vercel (frontend) + Appwrite Cloud Free _(planned)_     |
+| Analytics           | PostHog free tier _(planned)_                           |
+| Observability       | Langfuse self-host / cloud hobby _(planned)_            |
 
-The frontend layer is built. Backend / agent / persistence layers are scaffolded as TODOs and will be wired up incrementally once keys/services are configured.
+Backend collapses into Appwrite Cloud's free tier (75K MAU, 2 DBs, 5 GB storage, 3.5M function executions/mo, realtime included) — one service replaces the previously planned Clerk + Postgres + Railway + Redis + FastAPI stack. The frontend layer is built; backend / agent / persistence layers are scaffolded as TODOs and will be wired up incrementally once Appwrite keys are configured.
 
 ## Running
 
