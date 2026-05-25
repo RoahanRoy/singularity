@@ -2,7 +2,10 @@
 
 import { ReactNode, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { MarketTicker, UTCClock } from "./primitives";
+import { useOperator } from "./AuthGate";
+import { signOutOperator } from "@/lib/auth/operator";
 
 export type ScreenId = "swarm" | "research" | "portfolio" | "console" | "compute";
 
@@ -80,18 +83,51 @@ function Rail({ active, setActive }: { active: ScreenId; setActive: (id: ScreenI
         <div>Cash <span style={{ color: "var(--ink-0)" }}>4.8%</span></div>
       </div>
 
-      <div className="rail-foot">
-        <div className="avatar">KP</div>
-        <div className="who">
-          <div className="name">K. Park</div>
-          <div className="role">
-            <Link href="/guided" style={{ color: "var(--ink-3)", textDecoration: "none" }}>
-              ↗ Guided tour
-            </Link>
-          </div>
+      <RailFoot />
+    </aside>
+  );
+}
+
+function RailFoot() {
+  const op = useOperator();
+  const router = useRouter();
+  const initials = (op?.name || op?.email || "OP")
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((s) => s[0]?.toUpperCase() || "")
+    .join("") || "OP";
+
+  async function handleSignOut() {
+    await signOutOperator();
+    router.replace("/sign-in");
+  }
+
+  return (
+    <div className="rail-foot">
+      <div className="avatar">{initials}</div>
+      <div className="who">
+        <div className="name">{op?.name || op?.email || "Operator"}</div>
+        <div className="role" style={{ display: "flex", gap: 10 }}>
+          <Link href="/guided" style={{ color: "var(--ink-3)", textDecoration: "none" }}>
+            ↗ Guided tour
+          </Link>
+          <button
+            onClick={handleSignOut}
+            style={{
+              background: "transparent",
+              border: 0,
+              padding: 0,
+              color: "var(--ink-3)",
+              cursor: "pointer",
+              font: "inherit",
+            }}
+          >
+            ↩ Sign out
+          </button>
         </div>
       </div>
-    </aside>
+    </div>
   );
 }
 

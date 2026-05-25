@@ -42,7 +42,7 @@
             "enabled": true,
             "documentSecurity": false,
             "$permissions": [
-                "read(\"any\")",
+                "read(\"users\")",
                 "create(\"users\")",
                 "update(\"users\")",
                 "delete(\"users\")"
@@ -133,7 +133,7 @@
             "enabled": true,
             "documentSecurity": false,
             "$permissions": [
-                "read(\"any\")",
+                "read(\"users\")",
                 "create(\"users\")",
                 "update(\"users\")",
                 "delete(\"users\")"
@@ -185,7 +185,7 @@
             "enabled": true,
             "documentSecurity": false,
             "$permissions": [
-                "read(\"any\")",
+                "read(\"users\")",
                 "create(\"users\")",
                 "update(\"users\")",
                 "delete(\"users\")"
@@ -282,7 +282,7 @@
             "enabled": true,
             "documentSecurity": false,
             "$permissions": [
-                "read(\"any\")",
+                "read(\"users\")",
                 "create(\"any\")",
                 "update(\"any\")",
                 "delete(\"any\")"
@@ -364,7 +364,7 @@
             "enabled": true,
             "documentSecurity": false,
             "$permissions": [
-                "read(\"any\")",
+                "read(\"users\")",
                 "create(\"any\")",
                 "update(\"any\")",
                 "delete(\"any\")"
@@ -456,7 +456,7 @@
             "enabled": true,
             "documentSecurity": false,
             "$permissions": [
-                "read(\"any\")",
+                "read(\"users\")",
                 "create(\"any\")",
                 "update(\"any\")",
                 "delete(\"any\")"
@@ -526,7 +526,7 @@
             "enabled": true,
             "documentSecurity": false,
             "$permissions": [
-                "read(\"any\")",
+                "read(\"users\")",
                 "create(\"any\")",
                 "update(\"any\")",
                 "delete(\"any\")"
@@ -622,7 +622,7 @@
             "enabled": true,
             "documentSecurity": false,
             "$permissions": [
-                "read(\"any\")",
+                "read(\"users\")",
                 "create(\"any\")",
                 "update(\"any\")",
                 "delete(\"any\")"
@@ -693,7 +693,7 @@
             "enabled": true,
             "documentSecurity": false,
             "$permissions": [
-                "read(\"any\")",
+                "read(\"users\")",
                 "create(\"any\")",
                 "update(\"any\")",
                 "delete(\"any\")"
@@ -765,7 +765,7 @@
             "enabled": true,
             "documentSecurity": false,
             "$permissions": [
-                "read(\"any\")",
+                "read(\"users\")",
                 "create(\"any\")",
                 "update(\"any\")",
                 "delete(\"any\")"
@@ -840,7 +840,7 @@
             "enabled": true,
             "documentSecurity": true,
             "$permissions": [
-                "read(\"any\")",
+                "read(\"users\")",
                 "create(\"any\")",
                 "update(\"any\")",
                 "delete(\"any\")"

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Shell, type ScreenId } from "@/components/meridian/Shell";
+import { AuthGate } from "@/components/meridian/AuthGate";
 import { SwarmScreen } from "@/components/meridian/screens/Swarm";
 import { ResearchScreen } from "@/components/meridian/screens/Research";
 import { PortfolioScreen } from "@/components/meridian/screens/Portfolio";
@@ -20,8 +21,10 @@ export default function Home() {
   const [active, setActive] = useState<ScreenId>("swarm");
   const Screen = SCREENS[active];
   return (
-    <Shell active={active} setActive={setActive}>
-      <Screen />
-    </Shell>
+    <AuthGate>
+      <Shell active={active} setActive={setActive}>
+        <Screen />
+      </Shell>
+    </AuthGate>
   );
 }

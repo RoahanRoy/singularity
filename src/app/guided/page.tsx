@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { GlossTerm as G } from "@/components/meridian/GlossTerm";
+import { AuthGate } from "@/components/meridian/AuthGate";
 import "./guided.css";
 
 type Step = { id: string; num: string; label: string; eyebrow: string };
@@ -106,6 +107,14 @@ const SLIDES: Record<string, () => React.ReactElement> = {
 };
 
 export default function GuidedPage() {
+  return (
+    <AuthGate>
+      <GuidedInner />
+    </AuthGate>
+  );
+}
+
+function GuidedInner() {
   const [active, setActive] = useState<string>("swarm");
   const idx = STEPS.findIndex((s) => s.id === active);
   const step = STEPS[idx];
