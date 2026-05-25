@@ -1,8 +1,8 @@
 "use client";
 
-import { Query, type Models } from "appwrite";
+import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade } from "./schema";
+import { COLLECTIONS, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger } from "./schema";
 
 export async function listClusters(): Promise<Cluster[]> {
   const res = await databases.listDocuments<Cluster & Models.Document>(
@@ -92,4 +92,53 @@ export async function getTopMemo(): Promise<Memo | null> {
     [Query.orderDesc("conviction"), Query.limit(1)],
   );
   return res.documents[0] ?? null;
+}
+
+export async function listOperatorMessages(threadId = "default", limit = 50): Promise<OperatorMessage[]> {
+  const res = await databases.listDocuments<OperatorMessage & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.operator_messages,
+    [Query.equal("thread_id", threadId), Query.orderAsc("$createdAt"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
+export async function sendOperatorMessage(
+  content: string,
+  role: "operator" | "assistant" | "system" = "operator",
+  threadId = "default",
+): Promise<OperatorMessage> {
+  return databases.createDocument<OperatorMessage & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.operator_messages,
+    ID.unique(),
+    { thread_id: threadId, role, content, tool_calls_json: null },
+  );
+}
+
+export function subscribeOperatorMessages(threadId: string, onCreate: (m: OperatorMessage) => void) {
+  const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.operator_messages}.documents`;
+  return client.subscribe<OperatorMessage & Models.Document>(channel, (msg) => {
+    if (msg.events.some((e) => e.endsWith(".create")) && msg.payload.thread_id === threadId) {
+      onCreate(msg.payload);
+    }
+  });
+}
+
+export async function listGovernanceEvents(limit = 10): Promise<GovernanceEvent[]> {
+  const res = await databases.listDocuments<GovernanceEvent & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.governance_events,
+    [Query.orderDesc("occurred_at"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
+export async function listBudgetLedger(limit = 50): Promise<BudgetLedger[]> {
+  const res = await databases.listDocuments<BudgetLedger & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.budget_ledger,
+    [Query.orderDesc("occurred_at"), Query.limit(limit)],
+  );
+  return res.documents;
 }

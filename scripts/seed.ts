@@ -232,6 +232,60 @@ async function seedTrades(clusterIds: Record<string, string>) {
   console.log("trades +", PENDING_TRADES.length);
 }
 
+const GOV_EVENTS = [
+  { kind: "approval"      as const, actor: "K. Park",            target: "trade:NVDA buy 4200",  reason: "within auto-execute cap" },
+  { kind: "block"         as const, actor: "risk/r-04",          target: "trade:TSM call spread", reason: "VaR breach projected" },
+  { kind: "override"      as const, actor: "K. Park",            target: "rule:china-semi-cap",   reason: "PM authorized 5% headroom" },
+  { kind: "approval"      as const, actor: "exec/x-19",          target: "memo:TSM Q4",           reason: "quorum 5/6" },
+  { kind: "policy_change" as const, actor: "governance/gov-01",  target: "rule:voice-trade",      reason: "disabled for session" },
+  { kind: "approval"      as const, actor: "K. Park",            target: "spawn:8 forensic agts", reason: "budget $480 within cap" },
+];
+
+async function seedGovEvents() {
+  const existing = await db.listDocuments(DB, "governance_events", [Query.limit(1)]);
+  if (existing.total > 0) {
+    console.log("governance_events already seeded, skipping");
+    return;
+  }
+  const now = Date.now();
+  for (let i = 0; i < GOV_EVENTS.length; i++) {
+    const g = GOV_EVENTS[i];
+    await db.createDocument(DB, "governance_events", ID.unique(), {
+      ...g,
+      occurred_at: new Date(now - (GOV_EVENTS.length - i) * 90_000).toISOString(),
+    });
+  }
+  console.log("governance_events +", GOV_EVENTS.length);
+}
+
+const BUDGET = [
+  { category: "llm"        as const, provider: "anthropic",     amount_usd:  412.18 },
+  { category: "llm"        as const, provider: "openai",        amount_usd:  284.40 },
+  { category: "llm"        as const, provider: "anthropic",     amount_usd:  148.20 },
+  { category: "data"       as const, provider: "polygon",       amount_usd:   92.00 },
+  { category: "data"       as const, provider: "refinitiv",     amount_usd:  220.00 },
+  { category: "compute"    as const, provider: "modal",         amount_usd:   48.10 },
+  { category: "venue_fees" as const, provider: "ibkr",          amount_usd:   79.40 },
+];
+
+async function seedBudget() {
+  const existing = await db.listDocuments(DB, "budget_ledger", [Query.limit(1)]);
+  if (existing.total > 0) {
+    console.log("budget_ledger already seeded, skipping");
+    return;
+  }
+  const now = Date.now();
+  for (let i = 0; i < BUDGET.length; i++) {
+    const b = BUDGET[i];
+    await db.createDocument(DB, "budget_ledger", ID.unique(), {
+      ...b,
+      meta_json: null,
+      occurred_at: new Date(now - (BUDGET.length - i) * 240_000).toISOString(),
+    });
+  }
+  console.log("budget_ledger +", BUDGET.length);
+}
+
 (async () => {
   const ids = await upsertClusters();
   await seedAgents(ids);
@@ -240,6 +294,8 @@ async function seedTrades(clusterIds: Record<string, string>) {
   await seedMemo(ids);
   await seedPositions();
   await seedTrades(ids);
+  await seedGovEvents();
+  await seedBudget();
   console.log("\n✓ seed complete");
 })().catch((e) => {
   console.error(e);

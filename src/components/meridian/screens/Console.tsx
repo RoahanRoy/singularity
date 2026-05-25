@@ -1,9 +1,18 @@
 "use client";
 
-import { ReactNode, useEffect, useRef } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { Panel } from "../primitives";
+import {
+  listOperatorMessages,
+  sendOperatorMessage,
+  subscribeOperatorMessages,
+  listGovernanceEvents,
+  listBudgetLedger,
+} from "@/lib/appwrite/queries";
+import type { OperatorMessage, GovernanceEvent, BudgetLedger } from "@/lib/appwrite/schema";
 
 type Msg = { who: "user" | "ai"; name: string; body: ReactNode };
+const THREAD = "default";
 
 const sessionLog: Msg[] = [
   {
@@ -99,15 +108,61 @@ const sessionLog: Msg[] = [
   },
 ];
 
+function opMsgToMsg(m: OperatorMessage): Msg {
+  return {
+    who: m.role === "operator" ? "user" : "ai",
+    name: m.role === "operator" ? "Operator · K. Park" : m.role === "assistant" ? "Meridian · live" : "system",
+    body: <p>{m.content}</p>,
+  };
+}
+
 function ConsoleChat() {
   const feedRef = useRef<HTMLDivElement>(null);
+  const [live, setLive] = useState<OperatorMessage[]>([]);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    listOperatorMessages(THREAD, 50)
+      .then((rows) => {
+        if (!cancelled) setLive(rows);
+      })
+      .catch(() => {});
+    const unsub = subscribeOperatorMessages(THREAD, (m) => {
+      if (cancelled) return;
+      setLive((prev) => (prev.some((x) => x.$id === m.$id) ? prev : [...prev, m]));
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, []);
+
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-  }, []);
+  }, [live.length]);
+
+  async function onSend() {
+    const text = draft.trim();
+    if (!text || sending) return;
+    setSending(true);
+    setDraft("");
+    try {
+      await sendOperatorMessage(text);
+    } catch {
+      setDraft(text);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const allMsgs: Msg[] = [...sessionLog, ...live.map(opMsgToMsg)];
+
   return (
     <div className="chat">
       <div className="chat-feed" ref={feedRef}>
-        {sessionLog.map((m, i) => (
+        {allMsgs.map((m, i) => (
           <div key={i} className={"msg " + m.who}>
             <div className="av">{m.who === "user" ? "KP" : "M"}</div>
             <div>
@@ -121,8 +176,21 @@ function ConsoleChat() {
       <div className="composer">
         <div className="bar">
           <span style={{ color: "var(--ink-3)", fontFamily: "var(--mono)" }}>›</span>
-          <input placeholder="Direct intelligence  —  e.g. show emerging vol-of-vol regime shifts across asset classes" />
-          <button className="send">↵ send</button>
+          <input
+            placeholder="Direct intelligence  —  e.g. show emerging vol-of-vol regime shifts across asset classes"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                onSend();
+              }
+            }}
+            disabled={sending}
+          />
+          <button className="send" onClick={onSend} disabled={sending || !draft.trim()}>
+            ↵ send
+          </button>
         </div>
         <div className="hints">
           <span className="h">+ spawn agent</span>
@@ -134,6 +202,79 @@ function ConsoleChat() {
           </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+const FALLBACK_GOV: GovernanceEvent[] = [
+  { $id: "g-0", $createdAt: "", $updatedAt: "", kind: "approval", actor: "K. Park",   target: "trade:NVDA buy 4200", reason: "within auto-execute cap", occurred_at: new Date().toISOString() },
+  { $id: "g-1", $createdAt: "", $updatedAt: "", kind: "block",    actor: "risk/r-04", target: "trade:TSM call spread", reason: "VaR breach projected",    occurred_at: new Date().toISOString() },
+];
+
+const GOV_KIND_COLOR: Record<GovernanceEvent["kind"], string> = {
+  approval: "var(--green)",
+  block: "var(--red)",
+  override: "var(--amber)",
+  policy_change: "var(--cyan)",
+};
+
+function GovernanceFeed() {
+  const [events, setEvents] = useState<GovernanceEvent[]>(FALLBACK_GOV);
+  useEffect(() => {
+    let cancelled = false;
+    listGovernanceEvents(10)
+      .then((rows) => {
+        if (!cancelled && rows.length > 0) setEvents(rows);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return (
+    <div className="mono" style={{ fontSize: 11, lineHeight: 1.7 }}>
+      {events.map((e) => (
+        <div key={e.$id} style={{ marginBottom: 4 }}>
+          <span style={{ color: GOV_KIND_COLOR[e.kind] ?? "var(--ink-2)" }}>●</span>{" "}
+          <span style={{ color: "var(--ink-1)" }}>{e.actor}</span>{" "}
+          <span className="dim">→ {e.target}</span>
+          <div className="dim" style={{ paddingLeft: 14, fontSize: 10 }}>{e.reason}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SessionBudget() {
+  const [rows, setRows] = useState<BudgetLedger[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    listBudgetLedger(100)
+      .then((r) => {
+        if (!cancelled) setRows(r);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const inferenceSpend = rows.filter((r) => r.category === "llm").reduce((s, r) => s + r.amount_usd, 0);
+  const totalSpend = rows.reduce((s, r) => s + r.amount_usd, 0);
+  const fmt = (n: number) => "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr auto",
+        gap: "6px 10px",
+        fontFamily: "var(--mono)",
+        fontSize: 11,
+      }}
+    >
+      <span className="dim">Inference spend</span><span style={{ color: "var(--ink-0)" }}>{rows.length ? fmt(inferenceSpend) : "$1,284"}</span>
+      <span className="dim">Total spend</span><span style={{ color: "var(--ink-0)" }}>{rows.length ? fmt(totalSpend) : "$1,932"}</span>
+      <span className="dim">Cap</span><span className="amber">$5,000</span>
+      <span className="dim">Ledger entries</span><span style={{ color: "var(--ink-0)" }}>{rows.length || 7}</span>
     </div>
   );
 }
@@ -161,33 +302,12 @@ function Governance() {
         ))}
       </div>
       <div className="gov">
-        <h5>Active Agents · Session</h5>
-        <div className="mono" style={{ fontSize: 11, lineHeight: 1.9 }}>
-          <div><span className="amber">●</span> earnings/4f-118 <span className="dim">· TSM forensics</span></div>
-          <div><span className="amber">●</span> earnings/4f-9   <span className="dim">· supplier graph</span></div>
-          <div><span className="amber">●</span> macro/m-44      <span className="dim">· cross-asset</span></div>
-          <div><span className="amber">●</span> risk/r-04       <span className="dim">· dissenter</span></div>
-          <div><span className="cyan">●</span> exec/x-19       <span className="dim">· pacing optimizer</span></div>
-          <div><span className="cyan">●</span> alt/d-310       <span className="dim">· diesel divergence</span></div>
-          <div className="dim" style={{ marginTop: 8 }}>+ 8 spawned (forensic burst)</div>
-        </div>
+        <h5>Governance Events · Recent</h5>
+        <GovernanceFeed />
       </div>
       <div className="gov">
         <h5>Session Budget</h5>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr auto",
-            gap: "6px 10px",
-            fontFamily: "var(--mono)",
-            fontSize: 11,
-          }}
-        >
-          <span className="dim">Inference spend</span><span style={{ color: "var(--ink-0)" }}>$1,284</span>
-          <span className="dim">Cap</span><span className="amber">$5,000</span>
-          <span className="dim">Open positions</span><span style={{ color: "var(--ink-0)" }}>1,418</span>
-          <span className="dim">Pending orders</span><span className="amber">7</span>
-        </div>
+        <SessionBudget />
       </div>
     </>
   );
