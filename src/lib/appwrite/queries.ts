@@ -2,7 +2,7 @@
 
 import { Query, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Cluster, type AgentEvent, type Filing, type Memo } from "./schema";
+import { COLLECTIONS, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade } from "./schema";
 
 export async function listClusters(): Promise<Cluster[]> {
   const res = await databases.listDocuments<Cluster & Models.Document>(
@@ -56,6 +56,33 @@ export async function listMemos(limit = 6): Promise<Memo[]> {
     [Query.orderDesc("$createdAt"), Query.limit(limit)],
   );
   return res.documents;
+}
+
+export async function listPositions(limit = 25): Promise<Position[]> {
+  const res = await databases.listDocuments<Position & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.positions,
+    [Query.orderDesc("market_value"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
+export async function listPendingTrades(limit = 10): Promise<Trade[]> {
+  const res = await databases.listDocuments<Trade & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.trades,
+    [Query.equal("status", "pending"), Query.orderDesc("$createdAt"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
+export function subscribeTrades(onChange: (t: Trade) => void) {
+  const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.trades}.documents`;
+  return client.subscribe<Trade & Models.Document>(channel, (msg) => {
+    if (msg.events.some((e) => e.endsWith(".create") || e.endsWith(".update"))) {
+      onChange(msg.payload);
+    }
+  });
 }
 
 export async function getTopMemo(): Promise<Memo | null> {

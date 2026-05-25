@@ -1,7 +1,9 @@
 "use client";
 
-import { Fragment, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Panel } from "../primitives";
+import { listPositions, listPendingTrades, subscribeTrades } from "@/lib/appwrite/queries";
+import type { Position, Trade } from "@/lib/appwrite/schema";
 
 function PnLChart() {
   const data = useMemo(() => {
@@ -95,19 +97,62 @@ function ScenarioTree() {
   );
 }
 
+type Vote = { id: string; ticker: string; side: string; wt: string; a: number; n: number; c: number };
+
+const FALLBACK_VOTES: Vote[] = [
+  { id: "v-0", ticker: "NVDA", side: "ADD",  wt: "+0.30%", a: 7, n: 0, c: 0.78 },
+  { id: "v-1", ticker: "TSM",  side: "TRIM", wt: "−0.22%", a: 5, n: 1, c: 0.68 },
+  { id: "v-2", ticker: "GLD",  side: "ADD",  wt: "+0.15%", a: 4, n: 2, c: 0.55 },
+  { id: "v-3", ticker: "XHB",  side: "EXIT", wt: "−0.40%", a: 6, n: 1, c: 0.71 },
+  { id: "v-4", ticker: "EWJ",  side: "ADD",  wt: "+0.10%", a: 3, n: 1, c: 0.49 },
+];
+
+function tradeToVote(t: Trade, navUsd = 1_284_902_144): Vote {
+  // weight as notional / NAV; side label maps buy/sell to ADD/TRIM
+  const notional = Math.abs(t.qty) * t.price;
+  const wtPct = (t.side === "buy" ? 1 : -1) * (notional / navUsd) * 100;
+  const sideLabel = t.side === "buy" ? "ADD" : Math.abs(t.qty) * t.price > navUsd * 0.003 ? "EXIT" : "TRIM";
+  // deterministic mock vote tallies seeded off the document id
+  const seed = t.$id.charCodeAt(0) + t.$id.charCodeAt(1);
+  return {
+    id: t.$id,
+    ticker: t.ticker,
+    side: sideLabel,
+    wt: (wtPct >= 0 ? "+" : "−") + Math.abs(wtPct).toFixed(2) + "%",
+    a: 3 + (seed % 5),
+    n: seed % 3,
+    c: 0.45 + ((seed * 7) % 40) / 100,
+  };
+}
+
 function VoteList() {
-  const items = [
-    { ticker: "NVDA", side: "ADD",  wt: "+0.30%", a: 7, n: 0, c: 0.78 },
-    { ticker: "TSM",  side: "TRIM", wt: "−0.22%", a: 5, n: 1, c: 0.68 },
-    { ticker: "GLD",  side: "ADD",  wt: "+0.15%", a: 4, n: 2, c: 0.55 },
-    { ticker: "XHB",  side: "EXIT", wt: "−0.40%", a: 6, n: 1, c: 0.71 },
-    { ticker: "EWJ",  side: "ADD",  wt: "+0.10%", a: 3, n: 1, c: 0.49 },
-  ];
+  const [items, setItems] = useState<Vote[]>(FALLBACK_VOTES);
+
+  useEffect(() => {
+    let cancelled = false;
+    listPendingTrades(8)
+      .then((rows) => {
+        if (cancelled || rows.length === 0) return;
+        setItems(rows.map((t) => tradeToVote(t)));
+      })
+      .catch(() => {});
+    const unsub = subscribeTrades(() => {
+      if (cancelled) return;
+      listPendingTrades(8).then((rows) => {
+        if (!cancelled && rows.length > 0) setItems(rows.map((t) => tradeToVote(t)));
+      }).catch(() => {});
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, []);
+
   return (
     <div>
-      {items.map((it, i) => (
+      {items.map((it) => (
         <div
-          key={i}
+          key={it.id}
           style={{
             display: "grid",
             gridTemplateColumns: "70px 80px 1fr 60px 50px",
@@ -138,56 +183,95 @@ function VoteList() {
   );
 }
 
-function FactorHeatmap() {
-  const factors = ["MOM", "VAL", "QUAL", "SIZE", "VOL", "GROWTH", "YIELD", "CARRY"];
-  const sectors = ["TECH", "HEALTH", "FIN", "ENERGY", "DISC", "STAPLES", "INDU", "MATS", "UTIL", "RE", "COMM"];
-  const val = (i: number, j: number) => (((i * 31 + j * 17) % 100) / 100 - 0.5) * 2;
+const FALLBACK_POSITIONS: Position[] = [
+  { $id: "p-0", $createdAt: "", $updatedAt: "", ticker: "AVGO", qty: 9840,  avg_cost: 1240.10, market_value: 13_120_400, unrealized_pnl:  920_100, weight: 0.102, factor_exposures_json: null },
+  { $id: "p-1", $createdAt: "", $updatedAt: "", ticker: "TSM",  qty: 62100, avg_cost: 168.42,  market_value: 11_820_900, unrealized_pnl:  264_500, weight: 0.092, factor_exposures_json: null },
+  { $id: "p-2", $createdAt: "", $updatedAt: "", ticker: "GLD",  qty: 41200, avg_cost: 228.10,  market_value: 10_540_800, unrealized_pnl: 1_122_300, weight: 0.082, factor_exposures_json: null },
+  { $id: "p-3", $createdAt: "", $updatedAt: "", ticker: "ASML", qty: 11200, avg_cost: 880.55,  market_value:  9_640_000, unrealized_pnl: -210_400, weight: 0.075, factor_exposures_json: null },
+  { $id: "p-4", $createdAt: "", $updatedAt: "", ticker: "MSFT", qty: 21500, avg_cost: 408.20,  market_value:  9_412_000, unrealized_pnl:  632_100, weight: 0.073, factor_exposures_json: null },
+  { $id: "p-5", $createdAt: "", $updatedAt: "", ticker: "NVDA", qty: 18420, avg_cost: 412.18,  market_value:  9_142_300, unrealized_pnl: 1_540_220, weight: 0.071, factor_exposures_json: null },
+];
+
+function fmtUsd(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (abs >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (abs >= 1e3) return (n / 1e3).toFixed(1) + "K";
+  return n.toFixed(0);
+}
+
+function PositionsList() {
+  const [rows, setRows] = useState<Position[]>(FALLBACK_POSITIONS);
+
+  useEffect(() => {
+    let cancelled = false;
+    listPositions(15)
+      .then((p) => {
+        if (cancelled || p.length === 0) return;
+        setRows(p);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
-    <div style={{ padding: "10px 12px", overflow: "auto" }}>
+    <div>
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "60px repeat(11, 1fr)",
-          gap: 2,
+          gridTemplateColumns: "70px 1fr 90px 90px 70px",
+          gap: 10,
+          padding: "6px 12px",
           fontFamily: "var(--mono)",
-          fontSize: 9.5,
-          letterSpacing: "0.1em",
+          fontSize: 10,
+          color: "var(--ink-3)",
+          letterSpacing: "0.12em",
+          textTransform: "uppercase",
+          borderBottom: "1px solid var(--line-soft)",
         }}
       >
-        <div />
-        {sectors.map((s) => (
-          <div key={s} style={{ color: "var(--ink-3)", textAlign: "center" }}>{s}</div>
-        ))}
-        {factors.map((f, i) => (
-          <Fragment key={f}>
-            <div style={{ color: "var(--ink-3)", display: "flex", alignItems: "center" }}>{f}</div>
-            {sectors.map((s, j) => {
-              const v = val(i, j);
-              const isPos = v >= 0;
-              const op = Math.min(0.95, 0.15 + Math.abs(v) * 0.85);
-              const bg = isPos ? `oklch(0.74 0.10 155 / ${op})` : `oklch(0.70 0.13 25 / ${op})`;
-              return (
-                <div
-                  key={s + i}
-                  style={{
-                    height: 22,
-                    background: bg,
-                    display: "grid",
-                    placeItems: "center",
-                    color: Math.abs(v) > 0.5 ? "#0a0a0a" : "var(--ink-1)",
-                    fontSize: 9.5,
-                  }}
-                >
-                  {v.toFixed(1)}
-                </div>
-              );
-            })}
-          </Fragment>
-        ))}
+        <span>Ticker</span>
+        <span>Qty</span>
+        <span style={{ textAlign: "right" }}>MV</span>
+        <span style={{ textAlign: "right" }}>uPnL</span>
+        <span style={{ textAlign: "right" }}>Wt</span>
       </div>
+      {rows.map((p) => (
+        <div
+          key={p.$id}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "70px 1fr 90px 90px 70px",
+            gap: 10,
+            padding: "8px 12px",
+            borderBottom: "1px solid var(--line-soft)",
+            fontFamily: "var(--mono)",
+            fontSize: 11,
+            alignItems: "center",
+          }}
+        >
+          <span style={{ color: "var(--ink-0)" }}>{p.ticker}</span>
+          <span style={{ color: "var(--ink-2)" }}>{p.qty.toLocaleString()}</span>
+          <span style={{ color: "var(--ink-1)", textAlign: "right" }}>${fmtUsd(p.market_value)}</span>
+          <span
+            style={{
+              color: p.unrealized_pnl >= 0 ? "var(--green)" : "var(--red)",
+              textAlign: "right",
+            }}
+          >
+            {p.unrealized_pnl >= 0 ? "+" : "−"}${fmtUsd(Math.abs(p.unrealized_pnl))}
+          </span>
+          <span style={{ color: "var(--ink-2)", textAlign: "right" }}>
+            {(p.weight * 100).toFixed(2)}%
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
+
 
 export function PortfolioScreen() {
   const kpis: [string, string, "up" | "down" | ""][] = [
@@ -283,8 +367,8 @@ export function PortfolioScreen() {
         <VoteList />
       </Panel>
 
-      <Panel title="Factor × Sector Topology" meta="z-score · 30d" bodyClassName="tight">
-        <FactorHeatmap />
+      <Panel title="Positions · Live" meta="ranked by MV" bodyClassName="tight">
+        <PositionsList />
       </Panel>
     </div>
   );

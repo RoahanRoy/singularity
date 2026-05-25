@@ -174,12 +174,72 @@ async function seedMemo(clusterIds: Record<string, string>) {
   console.log("memos + 1");
 }
 
+const POSITIONS = [
+  { ticker: "NVDA",  qty:  18420, avg_cost: 412.18, market_value:  9_142_300, unrealized_pnl:  1_540_220, weight: 0.071 },
+  { ticker: "TSM",   qty:  62100, avg_cost: 168.42, market_value: 11_820_900, unrealized_pnl:    264_500, weight: 0.092 },
+  { ticker: "AVGO",  qty:   9840, avg_cost: 1240.10, market_value: 13_120_400, unrealized_pnl:    920_100, weight: 0.102 },
+  { ticker: "ASML",  qty:  11200, avg_cost: 880.55, market_value:  9_640_000, unrealized_pnl:   -210_400, weight: 0.075 },
+  { ticker: "MSFT",  qty:  21500, avg_cost: 408.20, market_value:  9_412_000, unrealized_pnl:    632_100, weight: 0.073 },
+  { ticker: "GOOG",  qty:  34800, avg_cost: 178.40, market_value:  6_842_400, unrealized_pnl:    412_000, weight: 0.053 },
+  { ticker: "GLD",   qty:  41200, avg_cost: 228.10, market_value: 10_540_800, unrealized_pnl:  1_122_300, weight: 0.082 },
+  { ticker: "TLT",   qty:  88400, avg_cost:  92.40, market_value:  7_840_800, unrealized_pnl:   -418_200, weight: 0.061 },
+  { ticker: "XHB",   qty: -12400, avg_cost:  98.20, market_value: -1_240_000, unrealized_pnl:    142_000, weight: -0.010 },
+  { ticker: "EWJ",   qty:  62800, avg_cost:  72.40, market_value:  4_840_200, unrealized_pnl:    218_400, weight: 0.038 },
+];
+
+async function seedPositions() {
+  const existing = await db.listDocuments(DB, "positions", [Query.limit(1)]);
+  if (existing.total > 0) {
+    console.log("positions already seeded, skipping");
+    return;
+  }
+  for (const p of POSITIONS) {
+    await db.createDocument(DB, "positions", ID.unique(), { ...p, factor_exposures_json: null });
+  }
+  console.log("positions +", POSITIONS.length);
+}
+
+const PENDING_TRADES = [
+  { ticker: "NVDA", side: "buy"  as const, qty:  4200, price: 496.20, venue: "NASDAQ" },
+  { ticker: "TSM",  side: "sell" as const, qty:  8400, price: 190.40, venue: "NYSE"   },
+  { ticker: "GLD",  side: "buy"  as const, qty:  6200, price: 255.80, venue: "ARCA"   },
+  { ticker: "XHB",  side: "sell" as const, qty: 12400, price:  86.40, venue: "ARCA"   },
+  { ticker: "EWJ",  side: "buy"  as const, qty:  3100, price:  77.10, venue: "ARCA"   },
+];
+
+async function seedTrades(clusterIds: Record<string, string>) {
+  const existing = await db.listDocuments(DB, "trades", [Query.limit(1)]);
+  if (existing.total > 0) {
+    console.log("trades already seeded, skipping");
+    return;
+  }
+  // pull an Execution agent if available, else any
+  const cid = clusterIds["Execution Microstr."];
+  const agents = await db.listDocuments(DB, "agents", [Query.equal("cluster_id", cid), Query.limit(1)]);
+  const aid = agents.documents[0]?.$id ?? "unknown";
+  for (const t of PENDING_TRADES) {
+    await db.createDocument(DB, "trades", ID.unique(), {
+      ticker: t.ticker,
+      side: t.side,
+      qty: t.qty,
+      price: t.price,
+      venue: t.venue,
+      agent_id: aid,
+      status: "pending",
+      filled_at: null,
+    });
+  }
+  console.log("trades +", PENDING_TRADES.length);
+}
+
 (async () => {
   const ids = await upsertClusters();
   await seedAgents(ids);
   await seedEvents(ids);
   await seedFilings();
   await seedMemo(ids);
+  await seedPositions();
+  await seedTrades(ids);
   console.log("\n✓ seed complete");
 })().catch((e) => {
   console.error(e);
