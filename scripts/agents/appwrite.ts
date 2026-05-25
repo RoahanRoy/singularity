@@ -1,8 +1,11 @@
 /**
  * Appwrite helpers for the agent loop. Server-only (uses API key).
  */
-import "dotenv/config";
+import dotenv from "dotenv";
 import { Client, Databases, ID, Query } from "node-appwrite";
+
+dotenv.config({ path: ".env.local" });
+dotenv.config(); // fall back to .env if .env.local missing
 
 const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!;
 const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!;
