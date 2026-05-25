@@ -1,0 +1,893 @@
+{
+    "projectId": "6a1436090022b92b275d",
+    "projectName": "MERIDIAN",
+    "settings": {
+        "services": {
+            "account": true,
+            "avatars": true,
+            "databases": true,
+            "locale": true,
+            "health": true,
+            "storage": true,
+            "teams": true,
+            "users": true,
+            "functions": true,
+            "graphql": true,
+            "messaging": true
+        },
+        "auth": {
+            "methods": {
+                "jwt": true,
+                "phone": false,
+                "invites": true,
+                "anonymous": false,
+                "email-otp": true,
+                "magic-url": true,
+                "email-password": true
+            }
+        }
+    },
+    "databases": [
+        {
+            "$id": "meridian",
+            "name": "meridian",
+            "enabled": true
+        }
+    ],
+    "collections": [
+        {
+            "$id": "agents",
+            "databaseId": "meridian",
+            "name": "agents",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"any\")",
+                "create(\"users\")",
+                "update(\"users\")",
+                "delete(\"users\")"
+            ],
+            "attributes": [
+                {
+                    "key": "name",
+                    "type": "string",
+                    "size": 128,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "role",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "cluster_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "status",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "model",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "conviction",
+                    "type": "double",
+                    "required": false,
+                    "default": 0,
+                    "array": false
+                },
+                {
+                    "key": "last_action_at",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_cluster",
+                    "type": "key",
+                    "attributes": [
+                        "cluster_id"
+                    ]
+                },
+                {
+                    "key": "by_status",
+                    "type": "key",
+                    "attributes": [
+                        "status"
+                    ]
+                },
+                {
+                    "key": "by_role",
+                    "type": "key",
+                    "attributes": [
+                        "role"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "clusters",
+            "databaseId": "meridian",
+            "name": "clusters",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"any\")",
+                "create(\"users\")",
+                "update(\"users\")",
+                "delete(\"users\")"
+            ],
+            "attributes": [
+                {
+                    "key": "name",
+                    "type": "string",
+                    "size": 128,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "theme",
+                    "type": "string",
+                    "size": 256,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "agent_count",
+                    "type": "integer",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "health",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_name",
+                    "type": "unique",
+                    "attributes": [
+                        "name"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "agent_events",
+            "databaseId": "meridian",
+            "name": "agent_events",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"any\")",
+                "create(\"users\")",
+                "update(\"users\")",
+                "delete(\"users\")"
+            ],
+            "attributes": [
+                {
+                    "key": "agent_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "cluster_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "kind",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "summary",
+                    "type": "string",
+                    "size": 1024,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "payload_json",
+                    "type": "string",
+                    "size": 16384,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "occurred_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_agent_time",
+                    "type": "key",
+                    "attributes": [
+                        "agent_id",
+                        "occurred_at"
+                    ],
+                    "orders": [
+                        "ASC",
+                        "DESC"
+                    ]
+                },
+                {
+                    "key": "by_cluster_time",
+                    "type": "key",
+                    "attributes": [
+                        "cluster_id",
+                        "occurred_at"
+                    ],
+                    "orders": [
+                        "ASC",
+                        "DESC"
+                    ]
+                },
+                {
+                    "key": "by_time",
+                    "type": "key",
+                    "attributes": [
+                        "occurred_at"
+                    ],
+                    "orders": [
+                        "DESC"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "filings",
+            "databaseId": "meridian",
+            "name": "filings",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"any\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "ticker",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "form_type",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "filed_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "source_url",
+                    "type": "string",
+                    "size": 1024,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "status",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "vector_id",
+                    "type": "string",
+                    "size": 128,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_ticker_time",
+                    "type": "key",
+                    "attributes": [
+                        "ticker",
+                        "filed_at"
+                    ],
+                    "orders": [
+                        "ASC",
+                        "DESC"
+                    ]
+                },
+                {
+                    "key": "by_status",
+                    "type": "key",
+                    "attributes": [
+                        "status"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "memos",
+            "databaseId": "meridian",
+            "name": "memos",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"any\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "title",
+                    "type": "string",
+                    "size": 256,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "ticker",
+                    "type": "string",
+                    "size": 16,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "thesis",
+                    "type": "string",
+                    "size": 16384,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "conviction",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "author_agent_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "status",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "vector_id",
+                    "type": "string",
+                    "size": 128,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_ticker",
+                    "type": "key",
+                    "attributes": [
+                        "ticker"
+                    ]
+                },
+                {
+                    "key": "by_status",
+                    "type": "key",
+                    "attributes": [
+                        "status"
+                    ]
+                },
+                {
+                    "key": "by_author",
+                    "type": "key",
+                    "attributes": [
+                        "author_agent_id"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "positions",
+            "databaseId": "meridian",
+            "name": "positions",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"any\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "ticker",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "qty",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "avg_cost",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "market_value",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "unrealized_pnl",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "weight",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "factor_exposures_json",
+                    "type": "string",
+                    "size": 4096,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_ticker",
+                    "type": "unique",
+                    "attributes": [
+                        "ticker"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "trades",
+            "databaseId": "meridian",
+            "name": "trades",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"any\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "ticker",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "side",
+                    "type": "string",
+                    "size": 8,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "qty",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "price",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "venue",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "agent_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "status",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "filled_at",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_ticker",
+                    "type": "key",
+                    "attributes": [
+                        "ticker"
+                    ]
+                },
+                {
+                    "key": "by_status",
+                    "type": "key",
+                    "attributes": [
+                        "status"
+                    ]
+                },
+                {
+                    "key": "by_agent",
+                    "type": "key",
+                    "attributes": [
+                        "agent_id"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "scenarios",
+            "databaseId": "meridian",
+            "name": "scenarios",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"any\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "name",
+                    "type": "string",
+                    "size": 128,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "description",
+                    "type": "string",
+                    "size": 2048,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "shocks_json",
+                    "type": "string",
+                    "size": 8192,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "nav_delta",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "worst_position",
+                    "type": "string",
+                    "size": 16,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "run_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_run_at",
+                    "type": "key",
+                    "attributes": [
+                        "run_at"
+                    ],
+                    "orders": [
+                        "DESC"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "governance_events",
+            "databaseId": "meridian",
+            "name": "governance_events",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"any\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "kind",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "actor",
+                    "type": "string",
+                    "size": 128,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "target",
+                    "type": "string",
+                    "size": 128,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "reason",
+                    "type": "string",
+                    "size": 2048,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "occurred_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_time",
+                    "type": "key",
+                    "attributes": [
+                        "occurred_at"
+                    ],
+                    "orders": [
+                        "DESC"
+                    ]
+                },
+                {
+                    "key": "by_kind",
+                    "type": "key",
+                    "attributes": [
+                        "kind"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "budget_ledger",
+            "databaseId": "meridian",
+            "name": "budget_ledger",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"any\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "category",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "provider",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "amount_usd",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "meta_json",
+                    "type": "string",
+                    "size": 4096,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "occurred_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_time",
+                    "type": "key",
+                    "attributes": [
+                        "occurred_at"
+                    ],
+                    "orders": [
+                        "DESC"
+                    ]
+                },
+                {
+                    "key": "by_category_time",
+                    "type": "key",
+                    "attributes": [
+                        "category",
+                        "occurred_at"
+                    ],
+                    "orders": [
+                        "ASC",
+                        "DESC"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "operator_messages",
+            "databaseId": "meridian",
+            "name": "operator_messages",
+            "enabled": true,
+            "documentSecurity": true,
+            "$permissions": [
+                "read(\"any\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "thread_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "role",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "content",
+                    "type": "string",
+                    "size": 16384,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "tool_calls_json",
+                    "type": "string",
+                    "size": 16384,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_thread",
+                    "type": "key",
+                    "attributes": [
+                        "thread_id"
+                    ]
+                }
+            ]
+        }
+    ]
+}
