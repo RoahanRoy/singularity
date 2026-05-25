@@ -1,25 +1,64 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Panel, Tag } from "../primitives";
+import { listFilings, subscribeFilings, getTopMemo } from "@/lib/appwrite/queries";
+import type { Filing, Memo } from "@/lib/appwrite/schema";
 
-const docs = [
-  { src: "10-K",          tk: "NVDA", ttl: "Annual Report — segment commentary on China-restricted SKUs and supply mix.", when: "0.4s" },
-  { src: "EARNINGS CALL", tk: "TSM",  ttl: "Q4 2025 transcript — capex language softens; mgmt deflects two questions on inventory.", when: "12s" },
-  { src: "8-K",           tk: "AVGO", ttl: "Executive departure disclosure — CFO transition, no successor named.", when: "1m 4s" },
-  { src: "13F",           tk: "BX",   ttl: "Reported holdings reveal -$340M reduction in semiconductor names.", when: "3m 12s" },
-  { src: "S-1",           tk: "—",    ttl: "Newly filed: vertical-AI infra company, lead investors include sovereign vehicle.", when: "8m" },
-  { src: "NEWS",          tk: "ASML", ttl: "Reuters wire — export-license clarification scheduled next month.", when: "11m" },
-  { src: "PATENT",        tk: "GOOG", ttl: "Granted: distillation method for sub-300B parameter models.", when: "23m" },
-  { src: "ALT",           tk: "AMZN", ttl: "Truck-stop diesel throughput dataset — -2.4% w/w, NA corridors.", when: "31m" },
-  { src: "REG",           tk: "JPM",  ttl: "Fed exam letter referenced in proxy; mention of liquidity stress overlay.", when: "47m" },
+type Doc = { id: string; src: string; tk: string; ttl: string; when: string };
+
+const FALLBACK_DOCS: Doc[] = [
+  { id: "f-0", src: "10-K",          tk: "NVDA", ttl: "Annual Report — segment commentary on China-restricted SKUs and supply mix.", when: "0.4s" },
+  { id: "f-1", src: "EARNINGS CALL", tk: "TSM",  ttl: "Q4 2025 transcript — capex language softens; mgmt deflects two questions on inventory.", when: "12s" },
+  { id: "f-2", src: "8-K",           tk: "AVGO", ttl: "Executive departure disclosure — CFO transition, no successor named.", when: "1m 4s" },
+  { id: "f-3", src: "13F",           tk: "BX",   ttl: "Reported holdings reveal -$340M reduction in semiconductor names.", when: "3m 12s" },
+  { id: "f-4", src: "S-1",           tk: "—",    ttl: "Newly filed: vertical-AI infra company, lead investors include sovereign vehicle.", when: "8m" },
 ];
 
-function DocList({ sel, setSel }: { sel: number; setSel: (i: number) => void }) {
+function fmtAgo(iso: string): string {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return s.toFixed(1) + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m " + Math.floor(s % 60) + "s";
+  return Math.floor(s / 3600) + "h";
+}
+
+function filingToDoc(f: Filing): Doc {
+  return {
+    id: f.$id,
+    src: f.form_type,
+    tk: f.ticker,
+    ttl: f.source_url, // seeded as human summary; schema v2 should split this
+    when: fmtAgo(f.filed_at),
+  };
+}
+
+function DocList({ sel, setSel }: { sel: string | null; setSel: (id: string) => void }) {
+  const [docs, setDocs] = useState<Doc[]>(FALLBACK_DOCS);
+
+  useEffect(() => {
+    let cancelled = false;
+    listFilings(12)
+      .then((rows) => {
+        if (cancelled || rows.length === 0) return;
+        setDocs(rows.map(filingToDoc));
+      })
+      .catch(() => {});
+    const unsub = subscribeFilings((f) => {
+      if (cancelled) return;
+      setDocs((prev) => [filingToDoc(f), ...prev].slice(0, 12));
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, []);
+
+  const selected = sel ?? docs[1]?.id ?? docs[0]?.id ?? null;
+
   return (
     <div>
-      {docs.map((d, i) => (
-        <div key={i} className={"doc " + (i === sel ? "sel" : "")} onClick={() => setSel(i)}>
+      {docs.map((d) => (
+        <div key={d.id} className={"doc " + (d.id === selected ? "sel" : "")} onClick={() => setSel(d.id)}>
           <div className="row">
             <span className="src">{d.src}</span>
             <span className="tk mono">{d.tk}</span>
@@ -103,22 +142,38 @@ function EntityPanel() {
     { name: "Mediatek (2454.TW)",         role: "peer",       w: 0.41 },
     { name: "Sumco Corporation",          role: "input",      w: 0.33 },
   ];
+
+  const [memo, setMemo] = useState<Memo | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getTopMemo()
+      .then((m) => {
+        if (!cancelled) setMemo(m);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const title = memo?.title ?? "TSM — Q4 print, demand softness signal";
+  const conv = memo?.conviction ?? 0.74;
+  const thesis =
+    memo?.thesis ??
+    "Three independent agents converged on a softening-demand interpretation of management's tone, supported by alt-data divergence in NA capex shipments and a thinning options skew on TSM 1M. Suggested expression: long SOXX vs. short TSM call spread. Risk-managed via VIX overlay.";
+
   return (
     <div>
       <div className="memo">
-        <Tag tone="amber">DRAFT MEMO · v3</Tag>
-        <h4 style={{ marginTop: 6 }}>TSM — Q4 print, demand softness signal</h4>
+        <Tag tone="amber">{memo ? `${memo.status.toUpperCase()} MEMO` : "DRAFT MEMO · v3"}</Tag>
+        <h4 style={{ marginTop: 6 }}>{title}</h4>
         <div className="ks">
-          <span className="k">Conviction</span><span className="v">0.74</span>
+          <span className="k">Conviction</span><span className="v">{conv.toFixed(2)}</span>
           <span className="k">Horizon</span><span className="v">2-6 weeks</span>
           <span className="k">Size (NAV)</span><span className="v">0.40%</span>
           <span className="k">Sharpe (est.)</span><span className="v">1.82</span>
         </div>
-        <p>
-          Three independent agents converged on a softening-demand interpretation of management&apos;s tone, supported by
-          alt-data divergence in NA capex shipments and a thinning options skew on TSM 1M. Suggested expression: long
-          SOXX vs. short TSM call spread. Risk-managed via VIX overlay.
-        </p>
+        <p>{thesis}</p>
       </div>
 
       <div
@@ -148,7 +203,7 @@ function EntityPanel() {
 }
 
 export function ResearchScreen() {
-  const [sel, setSel] = useState(1);
+  const [sel, setSel] = useState<string | null>(null);
   return (
     <div className="research">
       <Panel title="Ingest Queue" meta="2,418 / hr" bodyClassName="tight">
