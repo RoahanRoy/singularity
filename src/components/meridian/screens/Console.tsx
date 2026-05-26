@@ -1,147 +1,88 @@
 "use client";
 
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Panel } from "../primitives";
+import { useOperator } from "../AuthGate";
 import {
   listOperatorMessages,
   sendOperatorMessage,
   subscribeOperatorMessages,
   listGovernanceEvents,
   listBudgetLedger,
+  listPositions,
 } from "@/lib/appwrite/queries";
-import type { OperatorMessage, GovernanceEvent, BudgetLedger } from "@/lib/appwrite/schema";
+import type {
+  OperatorMessage,
+  GovernanceEvent,
+  BudgetLedger,
+  Position,
+} from "@/lib/appwrite/schema";
 
-type Msg = { who: "user" | "ai"; name: string; body: ReactNode };
 const THREAD = "default";
 
-const sessionLog: Msg[] = [
-  {
-    who: "user",
-    name: "Operator · K. Park",
-    body: <p>Show me all high-conviction positions derived from post-earnings supplier dislocations in the last 72 hours.</p>,
-  },
-  {
-    who: "ai",
-    name: "Meridian · synthesizer",
-    body: (
-      <div>
-        <p>
-          Surfacing <span className="h">7 positions</span> that meet the criteria. Three are derived from the TSM call
-          (supplier-side); the remaining four trace to AVGO and the CHRG/EV cluster. Median conviction{" "}
-          <span className="h">0.74</span>, median horizon <span className="h">11 days</span>.
-        </p>
-        <div className="action-card">
-          <div className="head"><span className="lbl">positions</span> · post-earnings supplier dislocation</div>
-          <div className="grid">
-            <span className="k">Long</span><span className="v">SOXX · 0.62%</span>
-            <span className="k">Long</span><span className="v">ASML · 0.30%</span>
-            <span className="k">Short</span><span className="v">TSM 1M ATM call spread · 0.40%</span>
-            <span className="k">Pair</span><span className="v">AVGO / MRVL · 0.18% / −0.18%</span>
-            <span className="k">Long</span><span className="v">CHRG 2W puts · 0.12%</span>
-            <span className="k">Hedge</span><span className="v">VIX 1M call spread · 0.20%</span>
-            <span className="k">Long</span><span className="v">SMCI · 0.14%</span>
-            <span className="k">Sharpe (port)</span><span className="v">1.82</span>
-          </div>
-        </div>
-      </div>
-    ),
-  },
-  {
-    who: "user",
-    name: "Operator · K. Park",
-    body: <p>Reduce China-linked semiconductor exposure by 15%. Preserve idiosyncratic alpha. Run pre-trade through the new risk overlay.</p>,
-  },
-  {
-    who: "ai",
-    name: "Meridian · portfolio orchestrator",
-    body: (
-      <div>
-        <p>
-          Modeled three execution paths. Path B preserves <span className="h">87%</span> of idiosyncratic alpha while
-          reducing China-linked semi exposure from <span className="h">9.4%</span> to <span className="h">8.0%</span>{" "}
-          (−15.0%). Pre-trade risk overlay passes. <span className="amber">28 sub-agents</span> participated; 2
-          dissented and requested human review.
-        </p>
-        <div className="quote">
-          &ldquo;Dissent · risk/topology-04 — the proposed unwind is correlated with our SOXX long; consider pacing over
-          2 sessions to avoid book-internal hedging cost.&rdquo;
-        </div>
-        <div className="action-card">
-          <div className="head"><span className="lbl">proposed orders</span> · path B · staged 2-session</div>
-          <div className="grid">
-            <span className="k">Reduce</span><span className="v">TSM ADR · −0.62%</span>
-            <span className="k">Reduce</span><span className="v">SMIC HK · −0.31%</span>
-            <span className="k">Reduce</span><span className="v">SOXX (paced)</span>
-            <span className="k">Preserve</span><span className="v">ASML, AVGO, NVDA</span>
-            <span className="k">Slippage est.</span><span className="v">2.4bp</span>
-            <span className="k">Alpha preserved</span><span className="v">87%</span>
-            <span className="k">Risk Δ VaR</span><span className="v">−0.08%</span>
-            <span className="k">Time to fill</span><span className="v">~46 min</span>
-          </div>
-          <div className="ctrls">
-            <button className="btn primary">Authorize Execution</button>
-            <button className="btn">Spawn Dissent Review</button>
-            <button className="btn">Show Path A · C</button>
-          </div>
-        </div>
-      </div>
-    ),
-  },
-  {
-    who: "user",
-    name: "Operator · K. Park",
-    body: <p>Spawn deeper forensic agents on the TSM filing anomaly. Limit at 8 agents, budget $480 in inference.</p>,
-  },
-  {
-    who: "ai",
-    name: "Meridian · agent orchestrator",
-    body: (
-      <div>
-        <p>
-          Spawned <span className="h">8 forensic agents</span> across language, tone, supplier graph, options skew,
-          patent activity, and management history dimensions. Budget capped at <span className="h">$480</span>{" "}
-          (<span className="dim">$61 expected median spend</span>). Findings will route into the TSM memo as numbered
-          sub-reports. ETA <span className="h">~7 minutes</span>.
-        </p>
-      </div>
-    ),
-  },
-];
-
-function opMsgToMsg(m: OperatorMessage): Msg {
-  return {
-    who: m.role === "operator" ? "user" : "ai",
-    name: m.role === "operator" ? "Operator · K. Park" : m.role === "assistant" ? "Meridian · live" : "system",
-    body: <p>{m.content}</p>,
-  };
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "??";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-function ConsoleChat() {
+function relTime(iso: string | null | undefined, now: number): string {
+  if (!iso) return "—";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "—";
+  const s = Math.max(0, Math.floor((now - t) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+function ConsoleChat({
+  operatorName,
+  operatorInitials,
+  onActivity,
+}: {
+  operatorName: string;
+  operatorInitials: string;
+  onActivity: (iso: string) => void;
+}) {
   const feedRef = useRef<HTMLDivElement>(null);
-  const [live, setLive] = useState<OperatorMessage[]>([]);
+  const [msgs, setMsgs] = useState<OperatorMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-    listOperatorMessages(THREAD, 50)
+    const cancelled = { v: false };
+    listOperatorMessages(THREAD, 200)
       .then((rows) => {
-        if (!cancelled) setLive(rows);
+        if (cancelled.v) return;
+        setMsgs(rows);
+        setLoaded(true);
+        const last = rows[rows.length - 1];
+        if (last) onActivity(last.$createdAt);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled.v) setLoaded(true);
+      });
     const unsub = subscribeOperatorMessages(THREAD, (m) => {
-      if (cancelled) return;
-      setLive((prev) => (prev.some((x) => x.$id === m.$id) ? prev : [...prev, m]));
+      if (cancelled.v) return;
+      setMsgs((prev) => (prev.some((x) => x.$id === m.$id) ? prev : [...prev, m]));
+      onActivity(m.$createdAt);
     });
     return () => {
-      cancelled = true;
+      cancelled.v = true;
       unsub();
     };
-  }, []);
+  }, [onActivity]);
 
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-  }, [live.length]);
+  }, [msgs.length]);
 
   async function onSend() {
     const text = draft.trim();
@@ -157,27 +98,53 @@ function ConsoleChat() {
     }
   }
 
-  const allMsgs: Msg[] = [...sessionLog, ...live.map(opMsgToMsg)];
-
   return (
     <div className="chat">
       <div className="chat-feed" ref={feedRef}>
-        {allMsgs.map((m, i) => (
-          <div key={i} className={"msg " + m.who}>
-            <div className="av">{m.who === "user" ? "KP" : "M"}</div>
+        {loaded && msgs.length === 0 && (
+          <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 12, textAlign: "center", padding: "40px 0" }}>
+            No messages in this thread yet. Send a directive below to begin.
+          </div>
+        )}
+        {msgs.map((m) => {
+          const isOp = m.role === "operator";
+          const name = isOp
+            ? `Operator · ${operatorName}`
+            : m.role === "assistant"
+            ? "Meridian · assistant"
+            : "system";
+          return (
+            <div key={m.$id} className={"msg " + (isOp ? "user" : "ai")}>
+              <div className="av">{isOp ? operatorInitials : "M"}</div>
+              <div>
+                <div className="who">{name}</div>
+                <div className="body">
+                  <p style={{ whiteSpace: "pre-wrap" }}>{m.content}</p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {msgs.length > 0 && msgs[msgs.length - 1].role === "operator" && (
+          <div className="msg ai">
+            <div className="av">M</div>
             <div>
-              <div className="who">{m.name}</div>
-              <div className="body">{m.body}</div>
+              <div className="who">Meridian · assistant</div>
+              <div className="body">
+                <p className="dim" style={{ fontFamily: "var(--mono)", fontSize: 12 }}>
+                  thinking<span className="dim">…</span>
+                </p>
+              </div>
             </div>
           </div>
-        ))}
+        )}
       </div>
 
       <div className="composer">
         <div className="bar">
           <span style={{ color: "var(--ink-3)", fontFamily: "var(--mono)" }}>›</span>
           <input
-            placeholder="Direct intelligence  —  e.g. show emerging vol-of-vol regime shifts across asset classes"
+            placeholder="Direct intelligence — e.g. show emerging vol-of-vol regime shifts across asset classes"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -193,23 +160,15 @@ function ConsoleChat() {
           </button>
         </div>
         <div className="hints">
-          <span className="h">+ spawn agent</span>
-          <span className="h">+ governance constraint</span>
-          <span className="h">+ replay scenario</span>
-          <span className="h">+ attach filing</span>
+          <span className="h">thread · {THREAD}</span>
           <span style={{ marginLeft: "auto", color: "var(--ink-4)" }}>
-            voice <span className="kbd">⌘ V</span>
+            {msgs.length} message{msgs.length === 1 ? "" : "s"}
           </span>
         </div>
       </div>
     </div>
   );
 }
-
-const FALLBACK_GOV: GovernanceEvent[] = [
-  { $id: "g-0", $createdAt: "", $updatedAt: "", kind: "approval", actor: "K. Park",   target: "trade:NVDA buy 4200", reason: "within auto-execute cap", occurred_at: new Date().toISOString() },
-  { $id: "g-1", $createdAt: "", $updatedAt: "", kind: "block",    actor: "risk/r-04", target: "trade:TSM call spread", reason: "VaR breach projected",    occurred_at: new Date().toISOString() },
-];
 
 const GOV_KIND_COLOR: Record<GovernanceEvent["kind"], string> = {
   approval: "var(--green)",
@@ -219,18 +178,25 @@ const GOV_KIND_COLOR: Record<GovernanceEvent["kind"], string> = {
 };
 
 function GovernanceFeed() {
-  const [events, setEvents] = useState<GovernanceEvent[]>(FALLBACK_GOV);
+  const [events, setEvents] = useState<GovernanceEvent[] | null>(null);
   useEffect(() => {
-    let cancelled = false;
-    listGovernanceEvents(10)
+    const cancelled = { v: false };
+    listGovernanceEvents(12)
       .then((rows) => {
-        if (!cancelled && rows.length > 0) setEvents(rows);
+        if (!cancelled.v) setEvents(rows);
       })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+      .catch(() => {
+        if (!cancelled.v) setEvents([]);
+      });
+    return () => { cancelled.v = true; };
   }, []);
+
+  if (events === null) {
+    return <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>loading…</div>;
+  }
+  if (events.length === 0) {
+    return <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>No governance events recorded.</div>;
+  }
   return (
     <div className="mono" style={{ fontSize: 11, lineHeight: 1.7 }}>
       {events.map((e) => (
@@ -245,22 +211,39 @@ function GovernanceFeed() {
   );
 }
 
-function SessionBudget() {
-  const [rows, setRows] = useState<BudgetLedger[]>([]);
+function PortfolioPosture() {
+  const [positions, setPositions] = useState<Position[] | null>(null);
   useEffect(() => {
-    let cancelled = false;
-    listBudgetLedger(100)
+    const cancelled = { v: false };
+    listPositions(100)
       .then((r) => {
-        if (!cancelled) setRows(r);
+        if (!cancelled.v) setPositions(r);
       })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+      .catch(() => {
+        if (!cancelled.v) setPositions([]);
+      });
+    return () => { cancelled.v = true; };
   }, []);
-  const inferenceSpend = rows.filter((r) => r.category === "llm").reduce((s, r) => s + r.amount_usd, 0);
-  const totalSpend = rows.reduce((s, r) => s + r.amount_usd, 0);
-  const fmt = (n: number) => "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+
+  if (positions === null) {
+    return <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>loading…</div>;
+  }
+  if (positions.length === 0) {
+    return <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>No positions on the book.</div>;
+  }
+
+  const totalMV = positions.reduce((s, p) => s + (p.market_value || 0), 0);
+  const totalPnL = positions.reduce((s, p) => s + (p.unrealized_pnl || 0), 0);
+  const weights = positions.map((p) => Math.abs(p.weight || 0));
+  const maxWeight = Math.max(...weights, 0);
+  const maxIdx = weights.indexOf(maxWeight);
+  const top = positions[maxIdx];
+
+  const fmtUsd = (n: number) =>
+    (n < 0 ? "-$" : "$") +
+    Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  const fmtPct = (n: number) => `${(n * 100).toFixed(2)}%`;
+
   return (
     <div
       style={{
@@ -271,39 +254,134 @@ function SessionBudget() {
         fontSize: 11,
       }}
     >
-      <span className="dim">Inference spend</span><span style={{ color: "var(--ink-0)" }}>{rows.length ? fmt(inferenceSpend) : "$1,284"}</span>
-      <span className="dim">Total spend</span><span style={{ color: "var(--ink-0)" }}>{rows.length ? fmt(totalSpend) : "$1,932"}</span>
-      <span className="dim">Cap</span><span className="amber">$5,000</span>
-      <span className="dim">Ledger entries</span><span style={{ color: "var(--ink-0)" }}>{rows.length || 7}</span>
+      <span className="dim">Positions</span>
+      <span style={{ color: "var(--ink-0)" }}>{positions.length}</span>
+      <span className="dim">Total market value</span>
+      <span style={{ color: "var(--ink-0)" }}>{fmtUsd(totalMV)}</span>
+      <span className="dim">Unrealized P&L</span>
+      <span style={{ color: totalPnL >= 0 ? "var(--green)" : "var(--red)" }}>{fmtUsd(totalPnL)}</span>
+      <span className="dim">Largest weight</span>
+      <span style={{ color: "var(--ink-0)" }}>
+        {top?.ticker ?? "—"} · {fmtPct(maxWeight)}
+      </span>
     </div>
   );
 }
 
+function SessionBudget() {
+  const [rows, setRows] = useState<BudgetLedger[] | null>(null);
+  useEffect(() => {
+    const cancelled = { v: false };
+    listBudgetLedger(200)
+      .then((r) => {
+        if (!cancelled.v) setRows(r);
+      })
+      .catch(() => {
+        if (!cancelled.v) setRows([]);
+      });
+    return () => { cancelled.v = true; };
+  }, []);
+
+  if (rows === null) {
+    return <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>loading…</div>;
+  }
+  if (rows.length === 0) {
+    return <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>No spend recorded.</div>;
+  }
+
+  const byCategory = rows.reduce<Record<string, number>>((acc, r) => {
+    acc[r.category] = (acc[r.category] || 0) + r.amount_usd;
+    return acc;
+  }, {});
+  const total = rows.reduce((s, r) => s + r.amount_usd, 0);
+  const fmt = (n: number) => "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  const order: Array<BudgetLedger["category"]> = ["llm", "data", "compute", "venue_fees"];
+  const label: Record<BudgetLedger["category"], string> = {
+    llm: "Inference",
+    data: "Data",
+    compute: "Compute",
+    venue_fees: "Venue fees",
+  };
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr auto",
+        gap: "6px 10px",
+        fontFamily: "var(--mono)",
+        fontSize: 11,
+      }}
+    >
+      {order
+        .filter((k) => byCategory[k])
+        .map((k) => (
+          <span key={k} style={{ display: "contents" }}>
+            <span className="dim">{label[k]}</span>
+            <span style={{ color: "var(--ink-0)" }}>{fmt(byCategory[k])}</span>
+          </span>
+        ))}
+      <span className="dim">Total spend</span>
+      <span style={{ color: "var(--ink-0)" }}>{fmt(total)}</span>
+      <span className="dim">Ledger entries</span>
+      <span style={{ color: "var(--ink-0)" }}>{rows.length}</span>
+    </div>
+  );
+}
+
+function PolicyChanges() {
+  const [events, setEvents] = useState<GovernanceEvent[] | null>(null);
+  const [renderedAt, setRenderedAt] = useState(0);
+  useEffect(() => {
+    const cancelled = { v: false };
+    listGovernanceEvents(50)
+      .then((rows) => {
+        if (cancelled.v) return;
+        setEvents(rows.filter((e) => e.kind === "policy_change").slice(0, 8));
+        setRenderedAt(Date.now());
+      })
+      .catch(() => {
+        if (!cancelled.v) setEvents([]);
+      });
+    return () => { cancelled.v = true; };
+  }, []);
+
+  if (events === null) {
+    return <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>loading…</div>;
+  }
+  if (events.length === 0) {
+    return <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>No active policies recorded.</div>;
+  }
+  const now = renderedAt;
+  return (
+    <>
+      {events.map((e) => {
+        const recent = now - Date.parse(e.occurred_at) < 7 * 24 * 3600 * 1000;
+        return (
+          <div key={e.$id} className={"rule " + (recent ? "on" : "")}>
+            <span className="sw" />
+            <span>{e.target} — <span className="dim">{e.reason}</span></span>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function Governance() {
-  const rules = [
-    { on: true,  text: "Max single-name NAV ≤ 1.2%" },
-    { on: true,  text: "China-linked semi ≤ 10.0%" },
-    { on: true,  text: "Net leverage ≤ 2.8×" },
-    { on: true,  text: "VaR(99,1d) ≤ 1.8% NAV" },
-    { on: true,  text: "Auto-execute < $5M notional" },
-    { on: false, text: "Voice-trade permission" },
-    { on: true,  text: "Two-agent dissent → human review" },
-    { on: false, text: "Overnight power: PM only" },
-  ];
   return (
     <>
       <div className="gov">
-        <h5>Governance Overlays</h5>
-        {rules.map((r, i) => (
-          <div key={i} className={"rule " + (r.on ? "on" : "")}>
-            <span className="sw" />
-            <span>{r.text}</span>
-          </div>
-        ))}
+        <h5>Portfolio Posture</h5>
+        <PortfolioPosture />
       </div>
       <div className="gov">
         <h5>Governance Events · Recent</h5>
         <GovernanceFeed />
+      </div>
+      <div className="gov">
+        <h5>Active Policies</h5>
+        <PolicyChanges />
       </div>
       <div className="gov">
         <h5>Session Budget</h5>
@@ -314,15 +392,32 @@ function Governance() {
 }
 
 export function ConsoleScreen() {
+  const operator = useOperator();
+  const operatorName = operator?.name || operator?.email || "anonymous";
+  const operatorInitials = useMemo(() => initials(operatorName), [operatorName]);
+
+  const [lastActivity, setLastActivity] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const lastLabel = lastActivity ? `last action ${relTime(lastActivity, now)}` : "no activity yet";
+
   return (
     <div className="console-grid">
       <div className="panel" style={{ borderTop: 0, borderBottom: 0, borderLeft: 0 }}>
         <div className="panel-head">
-          <span className="title">Operator Console · session #2,841</span>
-          <span className="meta">K. Park (PM) · supervised · last action 12s ago</span>
+          <span className="title">Operator Console · thread {THREAD}</span>
+          <span className="meta">{operatorName} · supervised · {lastLabel}</span>
         </div>
         <div className="panel-body tight" style={{ overflow: "hidden", display: "flex", minHeight: 0 }}>
-          <ConsoleChat />
+          <ConsoleChat
+            operatorName={operatorName}
+            operatorInitials={operatorInitials}
+            onActivity={setLastActivity}
+          />
         </div>
       </div>
 
