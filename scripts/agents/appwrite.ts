@@ -73,3 +73,27 @@ export async function setStatus(agentId: string, status: "idle" | "thinking" | "
     last_action_at: new Date().toISOString(),
   });
 }
+
+/**
+ * Append a row to budget_ledger. Non-fatal — failures are logged and swallowed
+ * so a ledger outage never breaks the agent loop.
+ */
+export async function recordSpend(
+  category: "llm" | "data" | "compute" | "venue_fees",
+  provider: string,
+  amountUsd: number,
+  meta?: unknown,
+): Promise<void> {
+  if (!Number.isFinite(amountUsd) || amountUsd < 0) return;
+  try {
+    await db.createDocument(DB, "budget_ledger", ID.unique(), {
+      category,
+      provider,
+      amount_usd: Number(amountUsd.toFixed(6)),
+      meta_json: meta ? JSON.stringify(meta).slice(0, 4000) : null,
+      occurred_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn(`[budget] failed to record ${category} $${amountUsd}:`, (err as Error).message);
+  }
+}

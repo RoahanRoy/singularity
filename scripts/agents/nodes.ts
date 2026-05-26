@@ -80,7 +80,7 @@ Filed: ${edgar.filed_at}
 ---FILING START---
 ${edgar.raw_excerpt}
 ---FILING END---`;
-  const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg });
+  const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg, label: `summarize:${edgar.ticker}` });
   return extractJson<{ summary: string; highlights: string[] }>(raw);
 }
 
@@ -153,7 +153,7 @@ export async function analyst(ctx: Ctx, reviseConcerns?: string[]): Promise<Ctx>
       : "",
   ].join("\n");
 
-  const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg });
+  const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg, label: `analyst:${ctx.ticker}` });
   const memo = extractJson<NonNullable<Ctx["memo"]>>(raw);
 
   const entities = Array.isArray(memo.entities)
@@ -193,6 +193,7 @@ export async function critic(ctx: Ctx): Promise<Ctx> {
     system: prompt.body,
     user: `Memo: ${JSON.stringify(ctx.memo)}
 Filing summary it cites: ${ctx.filing?.summary ?? "n/a"}`,
+    label: `critic:${ctx.ticker}`,
   });
   const critique = extractJson<NonNullable<Ctx["critique"]>>(raw);
   await emit(id, "thought", `Verdict ${critique.verdict} (score ${critique.score?.toFixed(2)})`, critique);
@@ -251,6 +252,7 @@ export async function pm(ctx: Ctx): Promise<Ctx> {
     system: prompt.body,
     user: `Memo: ${JSON.stringify(ctx.memo)}
 Critic score: ${ctx.critique?.score}`,
+    label: `pm:${ctx.ticker}`,
   });
   const size = extractJson<NonNullable<Ctx["size"]>>(raw);
   await emit(id, "thought", `Sizing ${ctx.ticker} at ${size.weight_pct?.toFixed(2)}% (${size.qty} sh)`, size);
@@ -269,6 +271,7 @@ export async function risk(ctx: Ctx): Promise<Ctx> {
     model: prompt.meta.model,
     system: prompt.body,
     user: `Proposed: BUY ${ctx.size.qty} ${ctx.ticker} (weight ${ctx.size.weight_pct}%)`,
+    label: `risk:${ctx.ticker}`,
   });
   const r = extractJson<NonNullable<Ctx["risk"]>>(raw);
   await emit(id, r.approved ? "thought" : "alert",
@@ -288,6 +291,7 @@ export async function compliance(ctx: Ctx): Promise<Ctx> {
     model: prompt.meta.model,
     system: prompt.body,
     user: `Trade: BUY ${ctx.size?.qty} ${ctx.ticker}. Restricted list: empty. Prior position: none.`,
+    label: `compliance:${ctx.ticker}`,
   });
   const c = extractJson<NonNullable<Ctx["compliance"]>>(raw);
 
