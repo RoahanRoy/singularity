@@ -182,6 +182,23 @@ async function seedMemo(clusterIds: Record<string, string>) {
   console.log("memos + 1");
 }
 
+// Per-ticker factor betas. The Portfolio screen aggregates these across the
+// book (weight × beta) into the net Factor Exposures panel — so the bars are
+// genuinely derived from the positions rather than hard-coded in the component.
+type FactorBeta = { factor: string; beta: number };
+const FACTORS: Record<string, FactorBeta[]> = {
+  NVDA: [{ factor: "US_LARGE", beta: 1.42 }, { factor: "VOL_VIX", beta: 0.34 }],
+  TSM:  [{ factor: "US_LARGE", beta: 0.88 }, { factor: "EM_EQ", beta: 0.62 }],
+  AVGO: [{ factor: "US_LARGE", beta: 1.18 }, { factor: "IG_CREDIT", beta: 0.21 }],
+  ASML: [{ factor: "EU_EQ", beta: 1.24 }, { factor: "US_LARGE", beta: 0.46 }],
+  MSFT: [{ factor: "US_LARGE", beta: 1.06 }],
+  GOOG: [{ factor: "US_LARGE", beta: 1.11 }],
+  GLD:  [{ factor: "GOLD", beta: 1.0 }, { factor: "FX_USD", beta: -0.28 }],
+  TLT:  [{ factor: "RATES_10Y", beta: 1.0 }, { factor: "RATES_2_5Y", beta: 0.34 }],
+  XHB:  [{ factor: "US_SMALL", beta: -0.92 }, { factor: "RATES_2_5Y", beta: -0.41 }],
+  EWJ:  [{ factor: "JP_EQ", beta: 1.08 }, { factor: "FX_USD", beta: 0.22 }],
+};
+
 const POSITIONS = [
   { ticker: "NVDA",  qty:  18420, avg_cost: 412.18, market_value:  9_142_300, unrealized_pnl:  1_540_220, weight: 0.071 },
   { ticker: "TSM",   qty:  62100, avg_cost: 168.42, market_value: 11_820_900, unrealized_pnl:    264_500, weight: 0.092 },
@@ -196,13 +213,28 @@ const POSITIONS = [
 ];
 
 async function seedPositions() {
-  const existing = await db.listDocuments(DB, "positions", [Query.limit(1)]);
+  const existing = await db.listDocuments(DB, "positions", [Query.limit(100)]);
   if (existing.total > 0) {
-    console.log("positions already seeded, skipping");
+    // Backfill factor_exposures_json on rows seeded before factors existed.
+    let patched = 0;
+    for (const doc of existing.documents) {
+      const ticker = (doc as { ticker?: string }).ticker;
+      const hasFactors = (doc as { factor_exposures_json?: string | null }).factor_exposures_json;
+      if (ticker && FACTORS[ticker] && !hasFactors) {
+        await db.updateDocument(DB, "positions", doc.$id, {
+          factor_exposures_json: JSON.stringify(FACTORS[ticker]),
+        });
+        patched++;
+      }
+    }
+    console.log(`positions already seeded${patched ? ` — backfilled factors on ${patched}` : ", skipping"}`);
     return;
   }
   for (const p of POSITIONS) {
-    await db.createDocument(DB, "positions", ID.unique(), { ...p, factor_exposures_json: null });
+    await db.createDocument(DB, "positions", ID.unique(), {
+      ...p,
+      factor_exposures_json: JSON.stringify(FACTORS[p.ticker] ?? []),
+    });
   }
   console.log("positions +", POSITIONS.length);
 }
@@ -294,6 +326,163 @@ async function seedBudget() {
   console.log("budget_ledger +", BUDGET.length);
 }
 
+const SCENARIOS = [
+  {
+    name: "FOMC · March",
+    description: "Rate-decision branches priced off OIS and Fed-funds futures.",
+    nav_delta: 0.0041,
+    worst_position: "TLT",
+    branches: [
+      { label: "hold @ 4.25", prob: 0.62, delta: 0.0041 },
+      { label: "hawkish hold", prob: 0.28, delta: -0.0018 },
+      { label: "cut 25bp", prob: 0.10, delta: 0.0112 },
+    ],
+  },
+  {
+    name: "TSM · Q4 print",
+    description: "Earnings reaction conditioned on capex guidance language.",
+    nav_delta: 0.0022,
+    worst_position: "TSM",
+    branches: [
+      { label: "beat + soft guide", prob: 0.41, delta: 0.0022 },
+      { label: "in-line", prob: 0.34, delta: -0.0008 },
+      { label: "miss", prob: 0.25, delta: -0.0061 },
+    ],
+  },
+  {
+    name: "Hormuz disruption",
+    description: "Tail geopolitical shock; energy + vol overlay engaged.",
+    nav_delta: -0.0281,
+    worst_position: "AVGO",
+    branches: [
+      { label: "tail event", prob: 0.06, delta: -0.0281, hedged_delta: -0.0044 },
+    ],
+  },
+];
+
+async function seedScenarios() {
+  const existing = await db.listDocuments(DB, "scenarios", [Query.limit(1)]);
+  if (existing.total > 0) {
+    console.log("scenarios already seeded, skipping");
+    return;
+  }
+  const now = Date.now();
+  for (let i = 0; i < SCENARIOS.length; i++) {
+    const s = SCENARIOS[i];
+    await db.createDocument(DB, "scenarios", ID.unique(), {
+      name: s.name,
+      description: s.description,
+      shocks_json: JSON.stringify(s.branches),
+      nav_delta: s.nav_delta,
+      worst_position: s.worst_position,
+      run_at: new Date(now - i * 60_000).toISOString(),
+    });
+  }
+  console.log("scenarios +", SCENARIOS.length);
+}
+
+async function seedFundSnapshots() {
+  const existing = await db.listDocuments(DB, "fund_snapshots", [Query.limit(1)]);
+  if (existing.total > 0) {
+    console.log("fund_snapshots already seeded, skipping");
+    return;
+  }
+  // 180 daily NAV marks ending today — a mild upward drift with realistic
+  // session noise. The Portfolio screen derives YTD/MTD/vol/Sharpe/maxDD from
+  // this series, so the KPIs are computed, not literals.
+  const DAYS = 180;
+  let nav = 1_086_000_000;
+  let seed = 20260530;
+  const rand = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+  const today = new Date();
+  today.setHours(16, 0, 0, 0);
+  for (let i = DAYS - 1; i >= 0; i--) {
+    const ret = (rand() - 0.42) * 0.011; // slight positive drift
+    const prev = nav;
+    nav = prev * (1 + ret);
+    const captured = new Date(today.getTime() - i * 24 * 3600 * 1000);
+    await db.createDocument(DB, "fund_snapshots", ID.unique(), {
+      nav_usd: Math.round(nav),
+      pnl_daily: Math.round(nav - prev),
+      captured_at: captured.toISOString(),
+    });
+  }
+  console.log("fund_snapshots +", DAYS);
+}
+
+const MODEL_ROUTES = [
+  { model: "OPUS-4.7",   load: 0.62, latency_ms: 412, status: "OK" },
+  { model: "HAIKU-4.5",  load: 0.88, latency_ms: 48,  status: "OK" },
+  { model: "SONNET-4.6", load: 0.55, latency_ms: 188, status: "OK" },
+  { model: "EMBED-V4",   load: 0.91, latency_ms: 12,  status: "OK" },
+  { model: "RERANK-V2",  load: 0.40, latency_ms: 22,  status: "OK" },
+  { model: "FORECAST-N", load: 0.71, latency_ms: 96,  status: "OK" },
+  { model: "VISION-T",   load: 0.18, latency_ms: 304, status: "OK" },
+  { model: "MEM-LARGE",  load: 0.66, latency_ms: 8,   status: "OK" },
+];
+
+async function seedModelRoutes() {
+  const existing = await db.listDocuments(DB, "model_routes", [Query.limit(1)]);
+  if (existing.total > 0) {
+    console.log("model_routes already seeded, skipping");
+    return;
+  }
+  const now = new Date().toISOString();
+  for (const r of MODEL_ROUTES) {
+    await db.createDocument(DB, "model_routes", ID.unique(), { ...r, updated_at: now });
+  }
+  console.log("model_routes +", MODEL_ROUTES.length);
+}
+
+const PIPELINES = [
+  { name: "filings-ingestion",     status: "running", throughput: "12.4K/h" },
+  { name: "earnings-transcribe",   status: "running", throughput: "18 active" },
+  { name: "news-multilingual",     status: "running", throughput: "2.4K/h" },
+  { name: "alt-data-fusion",       status: "running", throughput: "84 streams" },
+  { name: "patent-graph",          status: "running", throughput: "rebuild 22m" },
+  { name: "macro-nowcaster",       status: "running", throughput: "step 14" },
+  { name: "thesis-generator",      status: "running", throughput: "118 queued" },
+  { name: "backtest-orchestrator", status: "running", throughput: "running" },
+  { name: "execution-routing",     status: "running", throughput: "13 venues" },
+  { name: "compliance-watch",      status: "running", throughput: "0 alerts" },
+];
+
+async function seedPipelines() {
+  const existing = await db.listDocuments(DB, "pipelines", [Query.limit(1)]);
+  if (existing.total > 0) {
+    console.log("pipelines already seeded, skipping");
+    return;
+  }
+  const now = new Date().toISOString();
+  for (const p of PIPELINES) {
+    await db.createDocument(DB, "pipelines", ID.unique(), { ...p, updated_at: now });
+  }
+  console.log("pipelines +", PIPELINES.length);
+}
+
+const COMPUTE_NODES = [
+  { zone: "DC-EAST",  gpu_model: "H100", gpu_count: 1024, utilization: 0.88, temp_c: 41.2 },
+  { zone: "DC-EAST",  gpu_model: "B200", gpu_count: 768,  utilization: 0.91, temp_c: 43.8 },
+  { zone: "DC-WEST",  gpu_model: "H100", gpu_count: 384,  utilization: 0.72, temp_c: 38.4 },
+  { zone: "DC-EU",    gpu_model: "A100", gpu_count: 128,  utilization: 0.54, temp_c: 36.1 },
+];
+
+async function seedComputeNodes() {
+  const existing = await db.listDocuments(DB, "compute_nodes", [Query.limit(1)]);
+  if (existing.total > 0) {
+    console.log("compute_nodes already seeded, skipping");
+    return;
+  }
+  const now = new Date().toISOString();
+  for (const n of COMPUTE_NODES) {
+    await db.createDocument(DB, "compute_nodes", ID.unique(), { ...n, updated_at: now });
+  }
+  console.log("compute_nodes +", COMPUTE_NODES.length);
+}
+
 (async () => {
   const ids = await upsertClusters();
   await seedAgents(ids);
@@ -304,6 +493,11 @@ async function seedBudget() {
   await seedTrades(ids);
   await seedGovEvents();
   await seedBudget();
+  await seedScenarios();
+  await seedFundSnapshots();
+  await seedModelRoutes();
+  await seedPipelines();
+  await seedComputeNodes();
   console.log("\n✓ seed complete");
 })().catch((e) => {
   console.error(e);

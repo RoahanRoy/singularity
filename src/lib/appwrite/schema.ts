@@ -15,6 +15,10 @@ export const COLLECTIONS = {
   governance_events: "governance_events",
   budget_ledger: "budget_ledger",
   operator_messages: "operator_messages",
+  fund_snapshots: "fund_snapshots",
+  model_routes: "model_routes",
+  pipelines: "pipelines",
+  compute_nodes: "compute_nodes",
 } as const;
 
 type Base = { $id: string; $createdAt: string; $updatedAt: string };
@@ -122,4 +126,48 @@ export type OperatorMessage = Base & {
   role: "operator" | "assistant" | "system";
   content: string;
   tool_calls_json: string | null;
+};
+
+export type FundSnapshot = Base & {
+  nav_usd: number;
+  pnl_daily: number;
+  captured_at: string;
+};
+
+export type ModelRoute = Base & {
+  model: string;
+  load: number;
+  latency_ms: number;
+  status: string;
+  updated_at: string;
+};
+
+export type Pipeline = Base & {
+  name: string;
+  status: "running" | "idle" | "failing" | string;
+  throughput: string;
+  updated_at: string;
+};
+
+export type ComputeNode = Base & {
+  zone: string;
+  gpu_model: string;
+  gpu_count: number;
+  utilization: number;
+  temp_c: number;
+  updated_at: string;
+};
+
+/** A single factor exposure entry stored on a position's factor_exposures_json. */
+export type FactorExposure = {
+  factor: string;
+  beta: number;
+};
+
+/** A scenario branch stored inside a scenario's shocks_json. */
+export type ScenarioBranch = {
+  label: string;
+  prob: number;
+  delta: number;
+  hedged_delta?: number;
 };

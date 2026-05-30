@@ -896,6 +896,233 @@
                     ]
                 }
             ]
+        },
+        {
+            "$id": "fund_snapshots",
+            "databaseId": "meridian",
+            "name": "fund_snapshots",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "nav_usd",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "pnl_daily",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "captured_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_captured_at",
+                    "type": "key",
+                    "attributes": [
+                        "captured_at"
+                    ],
+                    "orders": [
+                        "DESC"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "model_routes",
+            "databaseId": "meridian",
+            "name": "model_routes",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "model",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "load",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "latency_ms",
+                    "type": "integer",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "status",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "updated_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_load",
+                    "type": "key",
+                    "attributes": [
+                        "load"
+                    ],
+                    "orders": [
+                        "DESC"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "pipelines",
+            "databaseId": "meridian",
+            "name": "pipelines",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "name",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "status",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "throughput",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "updated_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_updated_at",
+                    "type": "key",
+                    "attributes": [
+                        "updated_at"
+                    ],
+                    "orders": [
+                        "DESC"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "compute_nodes",
+            "databaseId": "meridian",
+            "name": "compute_nodes",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "zone",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "gpu_model",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "gpu_count",
+                    "type": "integer",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "utilization",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "temp_c",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "updated_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_zone",
+                    "type": "key",
+                    "attributes": [
+                        "zone"
+                    ]
+                }
+            ]
         }
     ]
 }

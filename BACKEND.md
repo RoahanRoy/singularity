@@ -61,6 +61,10 @@ This reads `appwrite.json` and creates the `meridian` database, 11 collections, 
 | `governance_events` | approvals / blocks / policy changes | Console |
 | `budget_ledger` | spend by category (LLM, data, compute, venue) | Console / Compute |
 | `operator_messages` | chat thread with the assistant | Console |
+| `fund_snapshots` | daily NAV / P&L time series — drives the P&L chart + derived KPIs | Portfolio |
+| `model_routes` | inference-plane load / latency per model | Compute |
+| `pipelines` | data/agent pipeline status + throughput | Compute |
+| `compute_nodes` | GPU fabric zones (count / utilization / temp) | Compute |
 
 `operator_messages` uses document-level security so each operator only reads their own messages. The other collections are shared across all signed-in users (collection-level `users` permission).
 
@@ -81,8 +85,9 @@ This replaces the "WebSockets + Redis" line item in the README.
 
 ## 6. What's still mocked
 
-- Mock data in [src/lib/meridian/data.ts](src/lib/meridian/data.ts) still drives the UI. Migrating each screen to live Appwrite reads is its own task — schema is ready when you are.
-- LangGraph / agent runtime: nothing yet. Will live in an Appwrite Function (Node) once we wire the first agent loop.
+- **Portfolio** and **Compute** now read live from Appwrite. NAV is summed from `positions`; KPIs (YTD/MTD/Sharpe/Sortino/Max DD/Vol) are computed from the `fund_snapshots` return series; net factor exposures are aggregated from each position's `factor_exposures_json`; the scenario tree renders `scenarios`. Compute drives the GPU rack from `compute_nodes`, routing from `model_routes`, pipelines from `pipelines`, telemetry from fabric + routes + ledger, the knowledge graph from memo `entities_json` + position tickers, and venues from distinct `trades.venue`. Each panel falls back to an empty-state message when its collection is empty.
+- Any remaining mock data in [src/lib/meridian/data.ts](src/lib/meridian/data.ts) is no longer wired into Portfolio/Compute. Other screens migrate on the same pattern (query in `queries.ts` → component fetch with fallback → row in `scripts/seed.ts`).
+- LangGraph / agent runtime: nothing yet. Will live in an Appwrite Function (Node) once we wire the first agent loop. Until then `scripts/seed.ts` (idempotent) populates all collections; new collections are created headlessly with `node scripts/restore-schema.mjs` (avoid `appwrite push tables` — it has wiped the DB before).
 
 ## 7. Free-tier limits to watch
 

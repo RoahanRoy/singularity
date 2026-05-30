@@ -2,7 +2,7 @@
 
 import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger } from "./schema";
+import { COLLECTIONS, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type ModelRoute, type Pipeline, type ComputeNode } from "./schema";
 
 export async function listClusters(): Promise<Cluster[]> {
   const res = await databases.listDocuments<Cluster & Models.Document>(
@@ -76,6 +76,15 @@ export async function listPendingTrades(limit = 10): Promise<Trade[]> {
   return res.documents;
 }
 
+export async function listRecentTrades(limit = 50): Promise<Trade[]> {
+  const res = await databases.listDocuments<Trade & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.trades,
+    [Query.orderDesc("$createdAt"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
 export function subscribeTrades(onChange: (t: Trade) => void) {
   const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.trades}.documents`;
   return client.subscribe<Trade & Models.Document>(channel, (msg) => {
@@ -139,6 +148,52 @@ export async function listBudgetLedger(limit = 50): Promise<BudgetLedger[]> {
     DATABASE_ID,
     COLLECTIONS.budget_ledger,
     [Query.orderDesc("occurred_at"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
+export async function listScenarios(limit = 12): Promise<Scenario[]> {
+  const res = await databases.listDocuments<Scenario & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.scenarios,
+    [Query.orderDesc("run_at"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
+/** Oldest → newest, so the series can be charted left-to-right. */
+export async function listFundSnapshots(limit = 200): Promise<FundSnapshot[]> {
+  const res = await databases.listDocuments<FundSnapshot & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.fund_snapshots,
+    [Query.orderDesc("captured_at"), Query.limit(limit)],
+  );
+  return res.documents.slice().reverse();
+}
+
+export async function listModelRoutes(limit = 20): Promise<ModelRoute[]> {
+  const res = await databases.listDocuments<ModelRoute & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.model_routes,
+    [Query.orderDesc("load"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
+export async function listPipelines(limit = 20): Promise<Pipeline[]> {
+  const res = await databases.listDocuments<Pipeline & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.pipelines,
+    [Query.orderDesc("updated_at"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
+export async function listComputeNodes(limit = 20): Promise<ComputeNode[]> {
+  const res = await databases.listDocuments<ComputeNode & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.compute_nodes,
+    [Query.orderAsc("zone"), Query.limit(limit)],
   );
   return res.documents;
 }
