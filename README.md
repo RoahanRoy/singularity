@@ -1,41 +1,94 @@
 # MERIDIAN — Autonomous Capital Intelligence
 
-An interactive prototype of an AI-native hedge fund operating system. Visualizes a future where a small team of human operators supervises thousands of specialized AI agents that read filings, parse earnings, generate trade theses, construct portfolios, and execute trades autonomously.
+An interactive prototype of an AI-native hedge fund operating system. A small team of human operators supervises clusters of specialized AI agents that read SEC filings, parse earnings, generate trade theses, construct portfolios, and stage trades for approval — with humans in the loop by default.
 
 Codename: **MERIDIAN**. Concept for an AI-native hedge fund (YC Spring 2026 brief).
 
 ## Two routes
 
-- `/` — **Operator view.** Full 5-screen cockpit: Swarm Command, Research Engine, Portfolio OS, Operator Console, Compute Layer. Live-ticking data, agent activity streams, dense information architecture.
+- `/` — **Operator view.** Full 5-screen cockpit: Swarm Command, Research Engine, Portfolio OS, Operator Console, Compute Layer. Live data from Appwrite, realtime agent-activity streams, dense information architecture. Behind an operator sign-in gate.
 - `/guided` — **Guided tour.** Simplified, one-idea-at-a-time walkthrough with plain-English explanations. Hover any underlined term (NAV, Sharpe, VaR, alpha, factor exposure, etc.) for an inline glossary tooltip.
 
-## Stack
+## What's actually wired
 
-| Layer               | Choice                                                  |
-| ------------------- | ------------------------------------------------------- |
-| Frontend            | Next.js 16 (App Router) + TypeScript                    |
-| UI                  | Tailwind CSS v4 + shadcn/ui                             |
-| Auth                | Appwrite Auth _(planned)_                               |
-| DB                  | Appwrite Databases _(planned)_                          |
-| Realtime            | Appwrite Realtime (WebSockets) _(planned)_              |
-| Storage             | Appwrite Storage _(planned)_                            |
-| Backend APIs        | Appwrite Functions (Node/Python) _(planned)_            |
-| Agent Orchestration | LangGraph in Appwrite Functions _(planned)_             |
-| LLM Layer           | Claude + OpenAI _(planned)_                             |
-| Infra               | Vercel (frontend) + Appwrite Cloud Free _(planned)_     |
-| Analytics           | PostHog free tier _(planned)_                           |
-| Observability       | Langfuse self-host / cloud hobby _(planned)_            |
+The frontend, persistence, auth, and the first agent loop are **built and running** — not scaffolding. The screens read live from Appwrite (with realtime subscriptions and empty-state fallbacks), the operator console talks to an auto-started assistant, and a filing → thesis → risk → compliance → paper-fill chain runs against real SEC EDGAR data.
 
-Backend collapses into Appwrite Cloud's free tier (75K MAU, 2 DBs, 5 GB storage, 3.5M function executions/mo, realtime included) — one service replaces the previously planned Clerk + Postgres + Railway + Redis + FastAPI stack. The frontend layer is built; backend / agent / persistence layers are scaffolded as TODOs and will be wired up incrementally once Appwrite keys are configured.
+| Layer               | Choice                                                       | Status |
+| ------------------- | ------------------------------------------------------------ | ------ |
+| Frontend            | Next.js 16 (App Router) + React 19 + TypeScript              | ✅ built |
+| UI                  | Tailwind CSS v4 + shadcn/ui                                  | ✅ built |
+| Auth                | Appwrite Auth (email/password) + operator email allowlist    | ✅ built |
+| DB                  | Appwrite Databases — 17 collections (see [BACKEND.md](BACKEND.md)) | ✅ built |
+| Realtime            | Appwrite Realtime (WebSockets) — agent events, trades, chat  | ✅ built |
+| Embeddings          | Upstash Vector (filings / memos)                             | ✅ wired |
+| Agent runtime       | Function-chain orchestrator in `scripts/agents/` + responder | ✅ first loop live |
+| LLM layer           | Claude + OpenAI (server-only keys)                           | ✅ wired |
+| Data ingestion      | SEC EDGAR filing reader (HTTP-only trust tier)               | ✅ live |
+| Infra               | Vercel (frontend) + Appwrite Cloud Free                      | ✅ deployed |
+
+Backend collapses into Appwrite Cloud's free tier (75K MAU, 5 GB storage, 3.5M function executions/mo, realtime included) — one service replaces the previously planned Clerk + Postgres + Railway + Redis + FastAPI stack. The only thing that costs money at prototype scale is LLM API calls; spend is logged to the `budget_ledger` collection.
+
+## The agent loop
+
+`npm run agents:tech` runs one orchestrator cycle through a bounded function chain (see [scripts/agents/AGENT_DESIGN.md](scripts/agents/AGENT_DESIGN.md)):
+
+```
+edgarReader → summarize → indexFiling → analyst → critic → pm → risk → riskOverlay → compliance → broker
+```
+
+Three principles enforced throughout:
+
+- **Trust tiers.** Filing ingestion is split so untrusted bytes never reach an agent with tools: `edgarReader` is HTTP-only (no LLM, no DB), `filing-summarizer` is LLM-only (no fetch, no DB), `indexFiling` is persistence-only (no LLM). A prompt-injection attempt in a filing can at worst produce nonsense JSON that fails schema check.
+- **Human-in-the-loop by default.** A trade auto-executes only if the critic passes, `conviction × score ≥ 0.4`, **and** `MERIDIAN_AUTO_APPROVE=1` is set for the session. Anything weaker writes the memo as `review` and stops.
+- **One job per agent.** Analysts don't size, PMs don't execute, risk doesn't re-size, compliance doesn't approve sizing. Each system prompt lives in `scripts/agents/prompts/<slug>.md` — never inlined in TypeScript.
+
+The **operator-console responder** (`npm run agents:responder`) auto-starts when the Next server boots (via `src/instrumentation.ts`; disable with `MERIDIAN_AUTOSTART=0`) so the assistant replies to operator messages. Both workers are managed by a supervisor exposed at `/api/agents` (status) and `/api/agents/control` (start / stop / restart).
 
 ## Running
 
 ```bash
 npm install
+cp .env.local.example .env.local   # then fill in the keys below
+```
+
+Required environment (`.env.local`):
+
+- `NEXT_PUBLIC_APPWRITE_ENDPOINT`, `NEXT_PUBLIC_APPWRITE_PROJECT_ID`, `NEXT_PUBLIC_APPWRITE_DATABASE_ID` — Appwrite project (defaults pre-filled in the example)
+- `NEXT_PUBLIC_OPERATOR_EMAILS` — comma-separated allowlist; signed-in users outside it are signed out
+- `APPWRITE_API_KEY` — server-only, for schema + seed scripts
+- `UPSTASH_VECTOR_REST_URL` / `_TOKEN` — embeddings
+- `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` — LLM calls (agent loop only)
+
+Provision the database, then run the app:
+
+```bash
+node scripts/restore-schema.mjs     # create DB + 17 collections from appwrite.json (idempotent, additive)
+npx tsx --env-file=.env.local scripts/seed.ts   # populate every collection (idempotent)
 npm run dev
 ```
 
+> Use `restore-schema.mjs` to create collections, **not** `appwrite push tables` — the CLI has misread this collections-format config as "no tables" and wiped the database before.
+
 Then visit http://localhost:3000 for the operator view or http://localhost:3000/guided for the guided tour.
+
+Optional — drive the agents manually:
+
+```bash
+npm run agents:tech        # one filing → thesis → risk → compliance → paper-fill cycle
+npm run agents:responder   # operator-console assistant (also auto-starts with the server)
+```
+
+## Screens & their live sources
+
+| Screen | Reads from |
+| --- | --- |
+| **Swarm Command** | `clusters`, `agents`, `agent_events` (realtime firehose) |
+| **Research Engine** | `filings`, `memos` (+ `entities_json` graph, `filing_id` linkage) |
+| **Portfolio OS** | `positions` (NAV + net factor exposures), `fund_snapshots` (P&L chart + derived KPIs), `scenarios` (stress tree), `trades` (pending votes) |
+| **Operator Console** | `operator_messages` (live chat + responder), `governance_events`, `budget_ledger`, `positions` |
+| **Compute Layer** | `compute_nodes` (GPU fabric), `model_routes`, `pipelines`, `budget_ledger`, memo entities (knowledge graph), `trades.venue` |
+
+The `risk_limits` and `audit_log` collections back the agent runtime (the risk-officer and compliance nodes), not a screen yet. See [BACKEND.md](BACKEND.md) for the full collection schema, realtime channels, and free-tier limits.
 
 ## Design system
 
@@ -52,27 +105,31 @@ src/
   app/
     layout.tsx              # fonts + html shell
     page.tsx                # operator view (5-screen switch)
-    guided/                 # /guided route
-      page.tsx              # walkthrough + slides
-      guided.css            # guided-tour styles
+    sign-in/page.tsx        # Appwrite email/password gate
+    guided/                 # /guided route (walkthrough + glossary)
+    api/agents/             # supervisor status + control endpoints
     globals.css             # tailwind + shadcn + MERIDIAN tokens
+  instrumentation.ts        # auto-starts the console responder on boot
   components/
-    ui/                     # shadcn primitives (button, tooltip, ...)
+    ui/                     # shadcn primitives
     meridian/
       Shell.tsx             # rail / topbar / status frame
+      AuthGate.tsx          # operator allowlist gate + context
       primitives.tsx        # Panel, Tag, UTCClock, Sparkline, MarketTicker
       GlossTerm.tsx         # hover-explained glossary term
-      screens/
-        Swarm.tsx           # agent constellation + clusters + activity feed
-        Research.tsx        # filing queue + transcript + memo + entity graph
-        Portfolio.tsx       # NAV / P&L / exposures / scenario tree / heatmap
-        Console.tsx         # operator chat + governance + budget
-        Compute.tsx         # GPU rack + routing + knowledge graph + venues
+      screens/              # Swarm, Research, Portfolio, Console, Compute
   lib/
-    meridian/
-      data.ts               # mock clusters / ticker / feed seed
-      glossary.ts           # finance/AI term definitions (64 entries)
-    utils.ts                # shadcn cn()
+    appwrite/               # client, server, auth, schema, queries
+    agents/supervisor.ts    # spawns/tracks responder + tech workers
+    vector/upstash.ts       # embeddings client
+    meridian/               # data.ts (Swarm/ticker seed), glossary.ts
+    auth/operator.ts        # operator-email allowlist helper
+
+scripts/
+  seed.ts                   # idempotent seed for every collection
+  restore-schema.mjs        # headless collection creation from appwrite.json
+  agents/                   # orchestrator, nodes, EDGAR reader, LLM client,
+                            # prompts/*.md (one system prompt per agent)
 
 reference/                  # the original Claude Design HTML/JSX prototype
 ```
