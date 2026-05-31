@@ -14,6 +14,7 @@ const STEPS: Step[] = [
   { id: "portfolio", num: "03", label: "The Portfolio",    eyebrow: "CAPITAL ALLOCATION" },
   { id: "console",   num: "04", label: "The Operator",     eyebrow: "HUMAN + AI" },
   { id: "compute",   num: "05", label: "The Compute",      eyebrow: "INFRASTRUCTURE" },
+  { id: "start",     num: "06", label: "Build a Fund",     eyebrow: "GETTING STARTED" },
 ];
 
 function SwarmSlide() {
@@ -98,12 +99,55 @@ function ComputeSlide() {
   );
 }
 
+function StartSlide() {
+  return (
+    <>
+      <p className="lede">
+        Building a fund on MERIDIAN, end to end. You bring the capital and a mandate; the swarm brings the
+        research, execution, and round-the-clock vigilance. Here is the operator&apos;s path from an empty
+        book to a live fund.
+      </p>
+      <ul className="bullets">
+        <li>
+          <strong>Step 1 — Set your mandate.</strong> Sign in as an operator and state your intent in plain
+          language in the Console: strategy, universe, and hard risk limits — max <G>leverage</G> and a daily{" "}
+          <G>var</G> cap.
+        </li>
+        <li>
+          <strong>Step 2 — Let the Swarm orient.</strong> Specialist clusters — <G>macro</G>, equities,{" "}
+          <G>vol</G>, <G>credit</G>, <G>alt-data</G> — pick up your mandate and surface ideas as{" "}
+          <G>conviction</G> builds.
+        </li>
+        <li>
+          <strong>Step 3 — Review the Research.</strong> Agents read every filing and{" "}
+          <G term="earnings call">earnings call</G> and auto-draft a <G>thesis</G>; you accept, reject, or send
+          it back for more work.
+        </li>
+        <li>
+          <strong>Step 4 — Shape the Portfolio.</strong> Approved theses become positions. Watch live{" "}
+          <G>nav</G>, <G term="pnl">P&amp;L</G>, and <G term="factor exposure">factor exposures</G>, and tune{" "}
+          <G>sharpe</G> and <G>drawdown</G> targets to taste.
+        </li>
+        <li>
+          <strong>Step 5 — Authorize execution.</strong> The system models each trade, scores <G>slippage</G>,
+          and asks for one click — any agent <G>dissent</G> forces a human review before anything fires.
+        </li>
+        <li>
+          <strong>Step 6 — Supervise, don&apos;t micromanage.</strong> Track spend on the Compute layer and let
+          the swarm run the book while you set direction.
+        </li>
+      </ul>
+    </>
+  );
+}
+
 const SLIDES: Record<string, () => React.ReactElement> = {
   swarm: SwarmSlide,
   research: ResearchSlide,
   portfolio: PortfolioSlide,
   console: ConsoleSlide,
   compute: ComputeSlide,
+  start: StartSlide,
 };
 
 export default function GuidedPage() {
