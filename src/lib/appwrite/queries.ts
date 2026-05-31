@@ -2,7 +2,7 @@
 
 import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type ModelRoute, type Pipeline, type ComputeNode } from "./schema";
+import { COLLECTIONS, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type ModelRoute, type Pipeline, type ComputeNode, type RiskLimits, type AuditLog } from "./schema";
 
 export async function listClusters(): Promise<Cluster[]> {
   const res = await databases.listDocuments<Cluster & Models.Document>(
@@ -203,6 +203,26 @@ export async function listComputeNodes(limit = 20): Promise<ComputeNode[]> {
     DATABASE_ID,
     COLLECTIONS.compute_nodes,
     [Query.orderAsc("zone"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
+/** The operator's configured risk limits (singleton row keyed by `key`). */
+export async function getRiskLimits(key = "default"): Promise<RiskLimits | null> {
+  const res = await databases.listDocuments<RiskLimits & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.risk_limits,
+    [Query.equal("key", key), Query.limit(1)],
+  );
+  return res.documents[0] ?? null;
+}
+
+/** Append-only pre-trade / governance audit trail, newest first. */
+export async function listAuditLog(limit = 50): Promise<AuditLog[]> {
+  const res = await databases.listDocuments<AuditLog & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.audit_log,
+    [Query.orderDesc("occurred_at"), Query.limit(limit)],
   );
   return res.documents;
 }

@@ -14,7 +14,7 @@
  */
 import { ask, extractJson } from "./llm";
 import { loadPrompt } from "./prompts";
-import { db, DB, ID, emit, setStatus, ensureAgent } from "./appwrite";
+import { db, DB, ID, Query, emit, setStatus, ensureAgent, writeAudit, ensureRiskLimits } from "./appwrite";
 import { fetchLatestFiling, type EdgarFiling } from "./edgar";
 
 const AUTO_APPROVE = process.env.MERIDIAN_AUTO_APPROVE === "1";
@@ -34,6 +34,7 @@ export type Ctx = {
   risk?: { approved: boolean; var_pct: number; notes: string };
   compliance?: { approved: boolean; flags: string[] };
   trade?: { id: string; status: "filled" | "rejected" };
+  preTrade?: { allowed: boolean; breaches: string[] };
   memoId?: string;
   reviseCount?: number;
   agentIds: Record<string, string>;
@@ -281,10 +282,71 @@ export async function risk(ctx: Ctx): Promise<Ctx> {
   return { ...ctx, risk: r };
 }
 
+// 5b. Deterministic pre-trade risk overlay ----------------------------------
+//
+// Unlike the risk-officer node (an LLM that can be wrong, or talked around by a
+// persuasive memo), these checks are pure code and always run between sizing
+// and execution. Every decision — allow or block — is written to audit_log so
+// the operator has an immutable paper trail. Limits come from the operator's
+// risk_limits row (seeded with defaults on first run).
+export async function riskOverlay(ctx: Ctx): Promise<Ctx> {
+  const id = ctx.agentIds.risk;
+  // Nothing to gate unless the chain produced a sized, LLM-risk-approved trade.
+  if (!ctx.size || ctx.size.qty === 0 || !ctx.risk?.approved) return ctx;
+
+  await setStatus(id, "thinking");
+  const limits = await ensureRiskLimits();
+
+  const positions = await db.listDocuments(DB, "positions", [Query.limit(200)]);
+  const held = positions.documents as unknown as Array<{ ticker: string; weight: number }>;
+  // `weight` may be stored as a fraction (0..1) or a percent — normalise to pct.
+  const toPct = (w: number) => (Math.abs(w) <= 1 ? w * 100 : w);
+  const grossPct = held.reduce((s, p) => s + Math.abs(toPct(p.weight ?? 0)), 0);
+  const alreadyHeld = held.some((p) => p.ticker === ctx.ticker);
+  const nameCount = new Set(held.map((p) => p.ticker)).size + (alreadyHeld ? 0 : 1);
+
+  const proposedWeight = ctx.size.weight_pct ?? 0;
+  const varPct = ctx.risk.var_pct ?? 0;
+  const projectedGross = grossPct + proposedWeight;
+
+  const breaches: string[] = [];
+  if (proposedWeight > limits.max_position_weight_pct)
+    breaches.push(`position weight ${proposedWeight.toFixed(2)}% > ${limits.max_position_weight_pct}% cap`);
+  if (projectedGross > limits.max_gross_leverage * 100)
+    breaches.push(`gross exposure ${projectedGross.toFixed(0)}% > ${(limits.max_gross_leverage * 100).toFixed(0)}% cap`);
+  if (varPct > limits.daily_var_limit_pct)
+    breaches.push(`VaR ${varPct.toFixed(2)}% > ${limits.daily_var_limit_pct}% cap`);
+  if (nameCount > limits.max_name_count)
+    breaches.push(`book would hold ${nameCount} names > ${limits.max_name_count} cap`);
+
+  const allowed = breaches.length === 0;
+  const detail = allowed
+    ? `Pre-trade overlay cleared ${ctx.ticker}: weight ${proposedWeight.toFixed(2)}%, VaR ${varPct.toFixed(2)}%, gross ${projectedGross.toFixed(0)}%, names ${nameCount}.`
+    : `Pre-trade overlay BLOCKED ${ctx.ticker}: ${breaches.join("; ")}.`;
+
+  await writeAudit("risk-overlay", "pre_trade_check", ctx.ticker, allowed ? "allow" : "block", detail);
+
+  if (!allowed) {
+    await db.createDocument(DB, "governance_events", ID.unique(), {
+      kind: "block",
+      actor: "risk-overlay",
+      target: ctx.ticker,
+      reason: breaches.join("; ").slice(0, 500),
+      occurred_at: new Date().toISOString(),
+    });
+    if (ctx.memoId) await db.updateDocument(DB, "memos", ctx.memoId, { status: "rejected" });
+    await emit(id, "alert", `Overlay BLOCK ${ctx.ticker}: ${breaches[0]}`, { breaches });
+  } else {
+    await emit(id, "thought", `Overlay cleared ${ctx.ticker}`, { proposedWeight, varPct, projectedGross, nameCount });
+  }
+  await setStatus(id, "idle");
+  return { ...ctx, preTrade: { allowed, breaches } };
+}
+
 // 6. Compliance -------------------------------------------------------------
 export async function compliance(ctx: Ctx): Promise<Ctx> {
   const id = ctx.agentIds.compliance;
-  if (!ctx.risk?.approved) return ctx;
+  if (!ctx.risk?.approved || !ctx.preTrade?.allowed) return ctx;
 
   const prompt = loadPrompt("compliance");
   await setStatus(id, "thinking");
@@ -312,7 +374,7 @@ export async function compliance(ctx: Ctx): Promise<Ctx> {
 // 7. Paper Broker -----------------------------------------------------------
 export async function broker(ctx: Ctx): Promise<Ctx> {
   const id = ctx.agentIds.broker;
-  if (!ctx.compliance?.approved) return ctx;
+  if (!ctx.compliance?.approved || !ctx.preTrade?.allowed) return ctx;
   await setStatus(id, "executing");
 
   const price = 100 + Math.random() * 400;

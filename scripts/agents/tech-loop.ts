@@ -15,7 +15,7 @@
 import { nextTicker } from "./universe";
 import {
   bootstrapAgents,
-  parser, analyst, critic, pm, risk, compliance, broker,
+  parser, analyst, critic, pm, risk, riskOverlay, compliance, broker,
   type Ctx,
 } from "./nodes";
 
@@ -30,6 +30,7 @@ async function main() {
   ctx = await critic(ctx);
   ctx = await pm(ctx);
   ctx = await risk(ctx);
+  ctx = await riskOverlay(ctx);
   ctx = await compliance(ctx);
   ctx = await broker(ctx);
 

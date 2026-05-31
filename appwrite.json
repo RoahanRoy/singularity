@@ -1138,6 +1138,148 @@
                     ]
                 }
             ]
+        },
+        {
+            "$id": "risk_limits",
+            "databaseId": "meridian",
+            "name": "risk_limits",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "key",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "max_position_weight_pct",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "max_gross_leverage",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "daily_var_limit_pct",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "max_name_count",
+                    "type": "integer",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "updated_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_key",
+                    "type": "unique",
+                    "attributes": [
+                        "key"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "audit_log",
+            "databaseId": "meridian",
+            "name": "audit_log",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "actor",
+                    "type": "string",
+                    "size": 128,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "action",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "target",
+                    "type": "string",
+                    "size": 128,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "decision",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "detail",
+                    "type": "string",
+                    "size": 4096,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "occurred_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_time",
+                    "type": "key",
+                    "attributes": [
+                        "occurred_at"
+                    ],
+                    "orders": [
+                        "DESC"
+                    ]
+                },
+                {
+                    "key": "by_decision",
+                    "type": "key",
+                    "attributes": [
+                        "decision"
+                    ]
+                }
+            ]
         }
     ]
 }

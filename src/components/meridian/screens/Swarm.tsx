@@ -31,21 +31,37 @@ type Node = {
   active: boolean;
 };
 
-function SwarmCanvas({ selectedCluster }: { selectedCluster: string }) {
+type CanvasDef = { id: string; name: string; x: number; y: number; count: number; color: string };
+type CanvasCluster = { id: string; themeId: string; name: string; agents: number; color: "amber" | "cyan" };
+
+// Fixed coordinate slots + decorative defaults. Live clusters are mapped onto
+// these positions; when there's no live data the full set renders as fallback.
+const FALLBACK_DEFS: CanvasDef[] = [
+  { id: "earnings", name: "Earnings Forensics", x: 0.3,  y: 0.35, count: 42, color: "var(--md-accent)" },
+  { id: "macro",    name: "Macro & Rates",      x: 0.68, y: 0.28, count: 36, color: "var(--md-accent)" },
+  { id: "vol",      name: "Vol Surface",        x: 0.84, y: 0.55, count: 22, color: "var(--md-accent)" },
+  { id: "equities", name: "Equities US",        x: 0.22, y: 0.62, count: 48, color: "var(--md-accent)" },
+  { id: "credit",   name: "Credit & HY",        x: 0.5,  y: 0.78, count: 26, color: "var(--md-accent)" },
+  { id: "geo",      name: "Geopolitical",       x: 0.78, y: 0.82, count: 20, color: "var(--md-accent)" },
+  { id: "alt",      name: "Alt-Data",           x: 0.52, y: 0.18, count: 32, color: "var(--cyan)" },
+  { id: "exec",     name: "Execution",          x: 0.1,  y: 0.3,  count: 16, color: "var(--cyan)" },
+  { id: "risk",     name: "Risk Topology",      x: 0.92, y: 0.3,  count: 18, color: "var(--cyan)" },
+];
+
+function SwarmCanvas({ selectedCluster, clusters }: { selectedCluster: string; clusters: CanvasCluster[] }) {
   const { nodes, edges, clusterDefs } = useMemo(() => {
     const W = 1000, H = 700;
     const r = rngFactory(424242);
-    const defs = [
-      { id: "earnings", name: "Earnings Forensics", x: 0.3,  y: 0.35, count: 42, color: "var(--md-accent)" },
-      { id: "macro",    name: "Macro & Rates",      x: 0.68, y: 0.28, count: 36, color: "var(--md-accent)" },
-      { id: "vol",      name: "Vol Surface",        x: 0.84, y: 0.55, count: 22, color: "var(--md-accent)" },
-      { id: "equities", name: "Equities US",        x: 0.22, y: 0.62, count: 48, color: "var(--md-accent)" },
-      { id: "credit",   name: "Credit & HY",        x: 0.5,  y: 0.78, count: 26, color: "var(--md-accent)" },
-      { id: "geo",      name: "Geopolitical",       x: 0.78, y: 0.82, count: 20, color: "var(--md-accent)" },
-      { id: "alt",      name: "Alt-Data",           x: 0.52, y: 0.18, count: 32, color: "var(--cyan)" },
-      { id: "exec",     name: "Execution",          x: 0.1,  y: 0.3,  count: 16, color: "var(--cyan)" },
-      { id: "risk",     name: "Risk Topology",      x: 0.92, y: 0.3,  count: 18, color: "var(--cyan)" },
-    ];
+    const defs: CanvasDef[] = clusters.length
+      ? clusters.slice(0, FALLBACK_DEFS.length).map((c, i) => ({
+          id: c.themeId || c.id,
+          name: c.name,
+          x: FALLBACK_DEFS[i].x,
+          y: FALLBACK_DEFS[i].y,
+          count: Math.max(6, Math.min(60, Math.round(c.agents) || 8)),
+          color: c.color === "cyan" ? "var(--cyan)" : "var(--md-accent)",
+        }))
+      : FALLBACK_DEFS;
     const nodes: Node[] = [];
     defs.forEach((c) => {
       const cx = c.x * W, cy = c.y * H;
@@ -64,25 +80,22 @@ function SwarmCanvas({ selectedCluster }: { selectedCluster: string }) {
         });
       }
     });
-    const links: [string, string][] = [
-      ["earnings", "equities"], ["earnings", "macro"], ["macro", "vol"],
-      ["vol", "risk"], ["alt", "earnings"], ["alt", "macro"],
-      ["equities", "credit"], ["credit", "risk"], ["geo", "macro"],
-      ["geo", "credit"], ["exec", "equities"], ["exec", "vol"],
-      ["alt", "geo"], ["risk", "credit"],
-    ];
-    const map = new Map(defs.map((c) => [c.id, c]));
-    const edges = links.map(([a, b], i) => {
-      const A = map.get(a)!, B = map.get(b)!;
-      return {
-        id: a + "-" + b,
-        x1: A.x * W, y1: A.y * H,
-        x2: B.x * W, y2: B.y * H,
-        delay: (i * 0.7) % 6,
-      };
-    });
+    // Ring edges across whatever clusters exist, so the animated links render
+    // for any id set — live themes or the fallback topology.
+    const edges =
+      defs.length > 1
+        ? defs.map((A, i) => {
+            const B = defs[(i + 1) % defs.length];
+            return {
+              id: `${A.id}-${B.id}-${i}`,
+              x1: A.x * W, y1: A.y * H,
+              x2: B.x * W, y2: B.y * H,
+              delay: (i * 0.7) % 6,
+            };
+          })
+        : [];
     return { nodes, edges, clusterDefs: defs };
-  }, []);
+  }, [clusters]);
 
   const [pulse, setPulse] = useState<{ x: number; y: number; color: string; key: number } | null>(null);
   useEffect(() => {
@@ -335,7 +348,7 @@ export function SwarmScreen() {
           <span className="meta">{total.toLocaleString()} agents · 14 active threads · 0 anomalies</span>
         </div>
         <div className="panel-body tight" style={{ position: "relative", overflow: "hidden" }}>
-          <SwarmCanvas selectedCluster={sel} />
+          <SwarmCanvas selectedCluster={sel} clusters={list} />
         </div>
       </div>
 

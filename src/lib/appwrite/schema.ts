@@ -19,6 +19,8 @@ export const COLLECTIONS = {
   model_routes: "model_routes",
   pipelines: "pipelines",
   compute_nodes: "compute_nodes",
+  risk_limits: "risk_limits",
+  audit_log: "audit_log",
 } as const;
 
 type Base = { $id: string; $createdAt: string; $updatedAt: string };
@@ -157,6 +159,24 @@ export type ComputeNode = Base & {
   utilization: number;
   temp_c: number;
   updated_at: string;
+};
+
+export type RiskLimits = Base & {
+  key: string;
+  max_position_weight_pct: number;
+  max_gross_leverage: number;
+  daily_var_limit_pct: number;
+  max_name_count: number;
+  updated_at: string;
+};
+
+export type AuditLog = Base & {
+  actor: string;
+  action: string;
+  target: string;
+  decision: "allow" | "block" | string;
+  detail: string;
+  occurred_at: string;
 };
 
 /** A single factor exposure entry stored on a position's factor_exposures_json. */

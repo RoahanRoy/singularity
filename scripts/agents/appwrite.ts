@@ -97,3 +97,67 @@ export async function recordSpend(
     console.warn(`[budget] failed to record ${category} $${amountUsd}:`, (err as Error).message);
   }
 }
+
+/** Built-in fallback used when no risk_limits row exists yet. */
+export const DEFAULT_RISK_LIMITS = {
+  max_position_weight_pct: 5,
+  max_gross_leverage: 1.5,
+  daily_var_limit_pct: 3,
+  max_name_count: 40,
+};
+
+export type RiskLimitValues = typeof DEFAULT_RISK_LIMITS;
+
+/**
+ * Read the operator's risk limits, seeding a default row on first run so the
+ * operator has something to edit. Falls back to DEFAULT_RISK_LIMITS if the
+ * collection is unreachable — the deterministic overlay must always have limits.
+ */
+export async function ensureRiskLimits(key = "default"): Promise<RiskLimitValues> {
+  try {
+    const existing = await db.listDocuments(DB, "risk_limits", [Query.equal("key", key), Query.limit(1)]);
+    const row = existing.documents[0];
+    if (row) {
+      return {
+        max_position_weight_pct: row.max_position_weight_pct,
+        max_gross_leverage: row.max_gross_leverage,
+        daily_var_limit_pct: row.daily_var_limit_pct,
+        max_name_count: row.max_name_count,
+      };
+    }
+    await db.createDocument(DB, "risk_limits", ID.unique(), {
+      key,
+      ...DEFAULT_RISK_LIMITS,
+      updated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn(`[risk] could not load/seed risk_limits, using defaults:`, (err as Error).message);
+  }
+  return { ...DEFAULT_RISK_LIMITS };
+}
+
+/**
+ * Append a row to the audit_log. Non-fatal — failures are logged and swallowed
+ * so an audit outage never blocks a trade decision (the decision itself still
+ * stands; only its paper trail is lost).
+ */
+export async function writeAudit(
+  actor: string,
+  action: string,
+  target: string,
+  decision: "allow" | "block",
+  detail: string,
+): Promise<void> {
+  try {
+    await db.createDocument(DB, "audit_log", ID.unique(), {
+      actor,
+      action,
+      target,
+      decision,
+      detail: detail.slice(0, 4000),
+      occurred_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn(`[audit] failed to record ${action}/${target}:`, (err as Error).message);
+  }
+}
