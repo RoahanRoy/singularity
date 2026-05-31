@@ -20,19 +20,33 @@ const client = new Client().setEndpoint(endpoint).setProject(projectId).setKey(a
 export const db = new Databases(client);
 export { ID, Query };
 
-/**
- * Resolve a stable agent doc by name — creates it under the Tech cluster on
- * first run so the Swarm screen lights up with our seven agents.
- */
-export async function ensureAgent(name: string, role: "research" | "execution" | "risk" | "ops") {
-  const existing = await db.listDocuments(DB, "agents", [Query.equal("name", name), Query.limit(1)]);
-  if (existing.documents[0]) return existing.documents[0].$id;
+export type ClusterRef = { name: string; theme: string };
 
-  const cluster = await ensureCluster("Tech — Equities US", "equities");
+const DEFAULT_CLUSTER: ClusterRef = { name: "Tech — Equities US", theme: "equities" };
+const CLUSTER_CACHE = new Map<string, string>();
+
+/**
+ * Resolve a stable agent doc by name. If the agent exists in a different
+ * cluster (e.g. left over from before sector routing), it is rehomed.
+ */
+export async function ensureAgent(
+  name: string,
+  role: "research" | "execution" | "risk" | "ops",
+  cluster: ClusterRef = DEFAULT_CLUSTER,
+) {
+  const clusterId = await ensureCluster(cluster.name, cluster.theme);
+  const existing = await db.listDocuments(DB, "agents", [Query.equal("name", name), Query.limit(1)]);
+  const row = existing.documents[0];
+  if (row) {
+    if (row.cluster_id !== clusterId) {
+      await db.updateDocument(DB, "agents", row.$id, { cluster_id: clusterId });
+    }
+    return row.$id;
+  }
   const doc = await db.createDocument(DB, "agents", ID.unique(), {
     name,
     role,
-    cluster_id: cluster,
+    cluster_id: clusterId,
     status: "idle",
     model: "claude-sonnet-4-6",
     conviction: 0,
@@ -42,12 +56,35 @@ export async function ensureAgent(name: string, role: "research" | "execution" |
 }
 
 async function ensureCluster(name: string, theme: string) {
+  const cached = CLUSTER_CACHE.get(name);
+  if (cached) return cached;
   const existing = await db.listDocuments(DB, "clusters", [Query.equal("name", name), Query.limit(1)]);
-  if (existing.documents[0]) return existing.documents[0].$id;
+  if (existing.documents[0]) {
+    CLUSTER_CACHE.set(name, existing.documents[0].$id);
+    return existing.documents[0].$id;
+  }
   const doc = await db.createDocument(DB, "clusters", ID.unique(), {
-    name, theme, agent_count: 7, health: 0.9,
+    name, theme, agent_count: 0, health: 0.9,
   });
+  CLUSTER_CACHE.set(name, doc.$id);
   return doc.$id;
+}
+
+/**
+ * Recompute agent_count on every cluster from the live `agents` collection.
+ * Cheap enough to run once per bootstrap — keeps the Swarm panel honest.
+ */
+export async function recountClusters(): Promise<void> {
+  const clusters = await db.listDocuments(DB, "clusters", [Query.limit(100)]);
+  for (const c of clusters.documents) {
+    const agents = await db.listDocuments(DB, "agents", [
+      Query.equal("cluster_id", c.$id),
+      Query.limit(1),
+    ]);
+    if (c.agent_count !== agents.total) {
+      await db.updateDocument(DB, "clusters", c.$id, { agent_count: agents.total });
+    }
+  }
 }
 
 export async function emit(

@@ -14,7 +14,7 @@
  */
 import { ask, extractJson } from "./llm";
 import { loadPrompt } from "./prompts";
-import { db, DB, ID, Query, emit, setStatus, ensureAgent, writeAudit, ensureRiskLimits } from "./appwrite";
+import { db, DB, ID, Query, emit, setStatus, ensureAgent, recountClusters, writeAudit, ensureRiskLimits, type ClusterRef } from "./appwrite";
 import { fetchLatestFiling, type EdgarFiling } from "./edgar";
 import { fetchTranscript } from "./transcript";
 import { sectorOf, type Sector } from "./universe";
@@ -710,24 +710,40 @@ export async function budgetController(
 }
 
 // Bootstrap -----------------------------------------------------------------
+const C: Record<string, ClusterRef> = {
+  tech:        { name: "Tech — Equities US",        theme: "equities" },
+  healthcare:  { name: "Healthcare — Equities US",  theme: "equities" },
+  energy:      { name: "Energy — Equities US",      theme: "equities" },
+  financials:  { name: "Financials — Equities US",  theme: "equities" },
+  consumer:    { name: "Consumer — Equities US",    theme: "equities" },
+  industrials: { name: "Industrials — Equities US", theme: "equities" },
+  research:    { name: "Research",                  theme: "earnings" },
+  ops:         { name: "Portfolio Ops",             theme: "event"    },
+  risk:        { name: "Risk",                      theme: "risk"     },
+  execution:   { name: "Execution",                 theme: "exec"     },
+  governance:  { name: "Governance",                theme: "risk"     },
+};
+
 export async function bootstrapAgents(): Promise<Ctx["agentIds"]> {
-  return {
-    parser:            await ensureAgent("Filing Parser",         "research"),
-    earningsReviewer:  await ensureAgent("Earnings Reviewer",     "research"),
-    analyst_tech:        await ensureAgent("Tech Analyst",         "research"),
-    analyst_healthcare:  await ensureAgent("Healthcare Analyst",   "research"),
-    analyst_energy:      await ensureAgent("Energy Analyst",       "research"),
-    analyst_financials:  await ensureAgent("Financials Analyst",   "research"),
-    analyst_consumer:    await ensureAgent("Consumer Analyst",     "research"),
-    analyst_industrials: await ensureAgent("Industrials Analyst",  "research"),
-    critic:            await ensureAgent("Red Team Critic",       "research"),
-    valuationReviewer: await ensureAgent("Valuation Reviewer",    "research"),
-    pm:                await ensureAgent("PM",                    "ops"),
-    risk:              await ensureAgent("Risk Officer",          "risk"),
-    compliance:        await ensureAgent("Compliance",            "ops"),
-    smartRouter:       await ensureAgent("Smart Router",          "execution"),
-    broker:            await ensureAgent("Paper Broker",          "execution"),
-    tca:               await ensureAgent("TCA",                   "ops"),
-    budgetController:  await ensureAgent("Budget Controller",     "ops"),
+  const ids = {
+    parser:              await ensureAgent("Filing Parser",        "research",  C.research),
+    earningsReviewer:    await ensureAgent("Earnings Reviewer",    "research",  C.research),
+    analyst_tech:        await ensureAgent("Tech Analyst",         "research",  C.tech),
+    analyst_healthcare:  await ensureAgent("Healthcare Analyst",   "research",  C.healthcare),
+    analyst_energy:      await ensureAgent("Energy Analyst",       "research",  C.energy),
+    analyst_financials:  await ensureAgent("Financials Analyst",   "research",  C.financials),
+    analyst_consumer:    await ensureAgent("Consumer Analyst",     "research",  C.consumer),
+    analyst_industrials: await ensureAgent("Industrials Analyst",  "research",  C.industrials),
+    critic:              await ensureAgent("Red Team Critic",      "research",  C.research),
+    valuationReviewer:   await ensureAgent("Valuation Reviewer",   "research",  C.research),
+    pm:                  await ensureAgent("PM",                   "ops",       C.ops),
+    risk:                await ensureAgent("Risk Officer",         "risk",      C.risk),
+    compliance:          await ensureAgent("Compliance",           "ops",       C.ops),
+    smartRouter:         await ensureAgent("Smart Router",         "execution", C.execution),
+    broker:              await ensureAgent("Paper Broker",         "execution", C.execution),
+    tca:                 await ensureAgent("TCA",                  "ops",       C.execution),
+    budgetController:    await ensureAgent("Budget Controller",    "ops",       C.governance),
   };
+  await recountClusters();
+  return ids;
 }
