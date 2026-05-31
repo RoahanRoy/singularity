@@ -7,6 +7,9 @@
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  // On Vercel (serverless) we can't spawn long-lived children and there's no
+  // `claude login` session — the dispatcher owns agents there. Don't even try.
+  if (process.env.VERCEL) return;
   if (process.env.MERIDIAN_AUTOSTART === "0") return;
   // Avoid double-spawn during Next dev's two-pass boot.
   if (process.env.MERIDIAN_SUPERVISED === "1") return;

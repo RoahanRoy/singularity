@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "agents:tech": "tsx scripts/agents/tech-loop.ts",
-    "agents:responder": "tsx scripts/agents/responder.ts"
+    "agents:responder": "tsx scripts/agents/responder.ts",
+    "agents:dispatch": "tsx scripts/agents/dispatcher.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.150",

@@ -639,6 +639,40 @@
             ]
         },
         {
+            "$id": "tca",
+            "databaseId": "meridian",
+            "name": "tca",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                { "key": "trade_id", "type": "string", "size": 64, "required": true, "array": false, "encrypt": false },
+                { "key": "ticker", "type": "string", "size": 16, "required": true, "array": false, "encrypt": false },
+                { "key": "venue", "type": "string", "size": 32, "required": true, "array": false, "encrypt": false },
+                { "key": "algo", "type": "string", "size": 16, "required": true, "array": false, "encrypt": false },
+                { "key": "arrival_price", "type": "double", "required": true, "array": false },
+                { "key": "fill_price", "type": "double", "required": true, "array": false },
+                { "key": "benchmark_price", "type": "double", "required": true, "array": false },
+                { "key": "benchmark_kind", "type": "string", "size": 16, "required": true, "array": false, "encrypt": false },
+                { "key": "slippage_bps", "type": "double", "required": true, "array": false },
+                { "key": "fees_bps", "type": "double", "required": true, "array": false },
+                { "key": "impact_bps", "type": "double", "required": true, "array": false },
+                { "key": "venue_score", "type": "double", "required": true, "array": false },
+                { "key": "notes", "type": "string", "size": 1024, "required": false, "array": false, "encrypt": false },
+                { "key": "occurred_at", "type": "datetime", "required": true, "array": false }
+            ],
+            "indexes": [
+                { "key": "by_trade", "type": "key", "attributes": ["trade_id"] },
+                { "key": "by_ticker", "type": "key", "attributes": ["ticker"] },
+                { "key": "by_time", "type": "key", "attributes": ["occurred_at"], "orders": ["DESC"] }
+            ]
+        },
+        {
             "$id": "scenarios",
             "databaseId": "meridian",
             "name": "scenarios",
@@ -1277,6 +1311,149 @@
                     "type": "key",
                     "attributes": [
                         "decision"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "agent_commands",
+            "databaseId": "meridian",
+            "name": "agent_commands",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "target",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "action",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "status",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "requested_by",
+                    "type": "string",
+                    "size": 128,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "occurred_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "consumed_at",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_status_time",
+                    "type": "key",
+                    "attributes": [
+                        "status",
+                        "occurred_at"
+                    ],
+                    "orders": [
+                        "ASC",
+                        "ASC"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "agent_status",
+            "databaseId": "meridian",
+            "name": "agent_status",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "attributes": [
+                {
+                    "key": "name",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "running",
+                    "type": "boolean",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "pid",
+                    "type": "integer",
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "started_at",
+                    "type": "datetime",
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "exit_code",
+                    "type": "integer",
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "last_log",
+                    "type": "string",
+                    "size": 1024,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "updated_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_name",
+                    "type": "unique",
+                    "attributes": [
+                        "name"
                     ]
                 }
             ]

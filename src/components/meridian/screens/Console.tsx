@@ -10,12 +10,16 @@ import {
   listGovernanceEvents,
   listBudgetLedger,
   listPositions,
+  listAgentStatus,
+  subscribeAgentStatus,
+  enqueueAgentCommand,
 } from "@/lib/appwrite/queries";
 import type {
   OperatorMessage,
   GovernanceEvent,
   BudgetLedger,
   Position,
+  AgentStatusDoc,
 } from "@/lib/appwrite/schema";
 
 const THREAD = "default";
@@ -368,80 +372,100 @@ function PolicyChanges() {
   );
 }
 
-type AgentStatusRow = {
-  name: "responder" | "tech";
-  running: boolean;
-  pid: number | null;
-  startedAt: string | null;
-  exitCode: number | null;
-  lastLogs: string[];
-};
+type WorkerName = "responder" | "tech";
 
-const AGENT_LABEL: Record<AgentStatusRow["name"], string> = {
+const AGENT_LABEL: Record<WorkerName, string> = {
   responder: "Operator responder",
   tech: "Tech research loop",
 };
+const AGENT_ORDER: WorkerName[] = ["responder", "tech"];
 
+// The dispatcher republishes status every ~2s; if the freshest row is older
+// than this, treat it as offline (nobody is home to run the agents).
+const DISPATCHER_STALE_MS = 15_000;
+
+/**
+ * Drives the laptop dispatcher through Appwrite. Clicking a button enqueues a
+ * command row (works even when this UI is served from Vercel); the dispatcher
+ * — running where `claude login` lives — consumes it and publishes status back,
+ * which arrives here over realtime.
+ */
 function AgentControls() {
-  const [agents, setAgents] = useState<AgentStatusRow[] | null>(null);
+  const [statuses, setStatuses] = useState<Record<string, AgentStatusDoc> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 3000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     const cancelled = { v: false };
-    const tick = () => {
-      fetch("/api/agents", { cache: "no-store" })
-        .then((r) => r.json())
-        .then((data: { agents: AgentStatusRow[] }) => {
-          if (!cancelled.v) setAgents(data.agents);
-        })
-        .catch(() => {
-          if (!cancelled.v) setAgents([]);
-        });
-    };
-    tick();
-    const t = setInterval(tick, 4000);
+    listAgentStatus()
+      .then((rows) => {
+        if (cancelled.v) return;
+        const map: Record<string, AgentStatusDoc> = {};
+        for (const r of rows) map[r.name] = r;
+        setStatuses(map);
+      })
+      .catch(() => {
+        if (!cancelled.v) setStatuses({});
+      });
+    const unsub = subscribeAgentStatus((row) => {
+      if (cancelled.v) return;
+      setStatuses((prev) => ({ ...(prev ?? {}), [row.name]: row }));
+    });
     return () => {
       cancelled.v = true;
-      clearInterval(t);
+      unsub();
     };
   }, []);
 
-  async function send(name: AgentStatusRow["name"], action: "start" | "stop" | "restart") {
+  async function send(name: WorkerName, action: "start" | "stop" | "restart") {
     setBusy(`${name}:${action}`);
     try {
-      const res = await fetch("/api/agents/control", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, action }),
-      });
-      const data = (await res.json()) as { status?: AgentStatusRow };
-      if (data.status) {
-        setAgents((prev) => {
-          if (!prev) return prev;
-          return prev.map((a) => (a.name === data.status!.name ? data.status! : a));
-        });
-      }
+      await enqueueAgentCommand(name, action);
+    } catch {
+      // Failure surfaces as the status simply not changing.
     } finally {
-      setBusy(null);
+      // Give the dispatcher a beat to pick the command up before re-enabling.
+      setTimeout(() => setBusy(null), 800);
     }
   }
 
-  if (agents === null) {
+  if (statuses === null) {
     return <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>loading…</div>;
   }
 
+  const freshest = Object.values(statuses).reduce(
+    (max, s) => Math.max(max, Date.parse(s.updated_at || "") || 0),
+    0,
+  );
+  const dispatcherOnline = freshest > 0 && now - freshest < DISPATCHER_STALE_MS;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {agents.map((a) => {
-        const dotColor = a.running ? "var(--green)" : a.exitCode !== null ? "var(--red)" : "var(--ink-3)";
-        const statusText = a.running
-          ? `running · pid ${a.pid}`
-          : a.exitCode !== null
-          ? `stopped · exit ${a.exitCode}`
+      <div
+        className="dim"
+        style={{ fontFamily: "var(--mono)", fontSize: 10, display: "flex", alignItems: "center", gap: 6 }}
+      >
+        <span style={{ color: dispatcherOnline ? "var(--green)" : "var(--red)", fontSize: 12, lineHeight: 1 }}>●</span>
+        {dispatcherOnline ? "dispatcher online" : "dispatcher offline — run npm run agents:dispatch on your host"}
+      </div>
+      {AGENT_ORDER.map((name) => {
+        const s = statuses[name];
+        const running = s?.running ?? false;
+        const dotColor = running ? "var(--green)" : s?.exit_code != null ? "var(--red)" : "var(--ink-3)";
+        const statusText = running
+          ? `running · pid ${s?.pid ?? "—"}`
+          : s?.exit_code != null
+          ? `stopped · exit ${s.exit_code}`
           : "idle";
+        const disabled = busy !== null || !dispatcherOnline;
         return (
           <div
-            key={a.name}
+            key={name}
             style={{
               display: "grid",
               gridTemplateColumns: "auto 1fr auto",
@@ -453,25 +477,25 @@ function AgentControls() {
           >
             <span style={{ color: dotColor, fontSize: 14, lineHeight: 1 }}>●</span>
             <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-              <span style={{ color: "var(--ink-0)" }}>{AGENT_LABEL[a.name]}</span>
+              <span style={{ color: "var(--ink-0)" }}>{AGENT_LABEL[name]}</span>
               <span className="dim" style={{ fontSize: 10 }}>{statusText}</span>
             </div>
             <div style={{ display: "flex", gap: 4 }}>
-              {a.running ? (
+              {running ? (
                 <>
                   <button
                     className="send"
                     style={{ fontSize: 10, padding: "2px 8px" }}
-                    disabled={busy !== null}
-                    onClick={() => send(a.name, "restart")}
+                    disabled={disabled}
+                    onClick={() => send(name, "restart")}
                   >
                     ↻
                   </button>
                   <button
                     className="send"
                     style={{ fontSize: 10, padding: "2px 8px" }}
-                    disabled={busy !== null}
-                    onClick={() => send(a.name, "stop")}
+                    disabled={disabled}
+                    onClick={() => send(name, "stop")}
                   >
                     stop
                   </button>
@@ -480,8 +504,8 @@ function AgentControls() {
                 <button
                   className="send"
                   style={{ fontSize: 10, padding: "2px 8px" }}
-                  disabled={busy !== null}
-                  onClick={() => send(a.name, "start")}
+                  disabled={disabled}
+                  onClick={() => send(name, "start")}
                 >
                   start
                 </button>

@@ -21,6 +21,8 @@ export const COLLECTIONS = {
   compute_nodes: "compute_nodes",
   risk_limits: "risk_limits",
   audit_log: "audit_log",
+  agent_commands: "agent_commands",
+  agent_status: "agent_status",
 } as const;
 
 type Base = { $id: string; $createdAt: string; $updatedAt: string };
@@ -177,6 +179,35 @@ export type AuditLog = Base & {
   decision: "allow" | "block" | string;
   detail: string;
   occurred_at: string;
+};
+
+/** The two workers the operator can drive. */
+export type AgentWorker = "responder" | "tech";
+
+/**
+ * A control command enqueued by the Operator Console (possibly served from
+ * Vercel) and consumed by the laptop dispatcher, which actually owns the
+ * agent child processes. This is the message bus that lets a serverless UI
+ * drive processes that must run where `claude login` lives.
+ */
+export type AgentCommand = Base & {
+  target: AgentWorker | string;
+  action: "start" | "stop" | "restart";
+  status: "pending" | "done" | "error";
+  requested_by: string | null;
+  occurred_at: string;
+  consumed_at: string | null;
+};
+
+/** Live status of a worker, published by the dispatcher for the UI to render. */
+export type AgentStatusDoc = Base & {
+  name: AgentWorker | string;
+  running: boolean;
+  pid: number | null;
+  started_at: string | null;
+  exit_code: number | null;
+  last_log: string | null;
+  updated_at: string;
 };
 
 /** A single factor exposure entry stored on a position's factor_exposures_json. */

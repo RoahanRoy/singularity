@@ -2,7 +2,7 @@
 
 import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type ModelRoute, type Pipeline, type ComputeNode, type RiskLimits, type AuditLog } from "./schema";
+import { COLLECTIONS, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type ModelRoute, type Pipeline, type ComputeNode, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc } from "./schema";
 
 export async function listClusters(): Promise<Cluster[]> {
   const res = await databases.listDocuments<Cluster & Models.Document>(
@@ -225,4 +225,50 @@ export async function listAuditLog(limit = 50): Promise<AuditLog[]> {
     [Query.orderDesc("occurred_at"), Query.limit(limit)],
   );
   return res.documents;
+}
+
+/**
+ * Enqueue a control command for the laptop dispatcher. The UI never spawns
+ * agents itself (it may be running on serverless Vercel); it just writes a
+ * row here and the dispatcher — running where `claude login` lives — acts on
+ * it and reports back via agent_status.
+ */
+export async function enqueueAgentCommand(
+  target: "responder" | "tech",
+  action: "start" | "stop" | "restart",
+  requestedBy: string | null = null,
+): Promise<AgentCommand> {
+  return databases.createDocument<AgentCommand & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.agent_commands,
+    ID.unique(),
+    {
+      target,
+      action,
+      status: "pending",
+      requested_by: requestedBy,
+      occurred_at: new Date().toISOString(),
+      consumed_at: null,
+    },
+  );
+}
+
+/** Current worker status rows, as last published by the dispatcher. */
+export async function listAgentStatus(): Promise<AgentStatusDoc[]> {
+  const res = await databases.listDocuments<AgentStatusDoc & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.agent_status,
+    [Query.limit(25)],
+  );
+  return res.documents;
+}
+
+/** Realtime worker-status updates (the dispatcher republishes every tick). */
+export function subscribeAgentStatus(onChange: (row: AgentStatusDoc) => void) {
+  const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.agent_status}.documents`;
+  return client.subscribe<AgentStatusDoc & Models.Document>(channel, (msg) => {
+    if (msg.events.some((e) => e.endsWith(".create") || e.endsWith(".update"))) {
+      onChange(msg.payload);
+    }
+  });
 }
