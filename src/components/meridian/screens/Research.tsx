@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Panel, Tag } from "../primitives";
-import { listFilings, subscribeFilings, getTopMemo } from "@/lib/appwrite/queries";
+import { listFilings, subscribeFilings, getTopMemo, listMemosByFiling } from "@/lib/appwrite/queries";
 import type { Filing, Memo, MemoEntity } from "@/lib/appwrite/schema";
 
 const FALLBACK_ENTITIES: MemoEntity[] = [
@@ -101,39 +101,99 @@ function DocList({
   );
 }
 
-function FilingDetail({ doc, raw }: { doc: Doc; raw: string }) {
+const STATUS_TONE: Record<Filing["status"], string> = {
+  queued: "var(--ink-3)",
+  parsing: "var(--md-accent)",
+  indexed: "var(--cyan)",
+  failed: "var(--red)",
+};
+
+function FilingDetail({ filing }: { filing: Filing }) {
+  const [memos, setMemos] = useState<Memo[] | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setLoaded(false);
+    listMemosByFiling(filing.$id)
+      .then((rows) => {
+        if (cancelled) return;
+        setMemos(rows);
+        setLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setMemos([]);
+        setLoaded(true);
+      });
+    return () => { cancelled = true; };
+  }, [filing.$id]);
+
   const parsed = (() => {
-    try {
-      return new URL(raw);
-    } catch {
-      return null;
-    }
+    try { return new URL(filing.source_url); } catch { return null; }
   })();
+  const tone = STATUS_TONE[filing.status] ?? "var(--ink-3)";
+
   return (
     <div style={{ padding: "22px 26px", maxWidth: 760, fontFamily: "var(--serif)", color: "var(--ink-1)", fontSize: 14, lineHeight: 1.6 }}>
-      <div style={{ fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 8 }}>
-        {doc.src} · {doc.tk} · ingested {doc.when} ago
+      <div style={{ fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 8, display: "flex", gap: 10, alignItems: "center" }}>
+        <span>{filing.form_type} · {filing.ticker} · ingested {fmtAgo(filing.filed_at)} ago</span>
+        <span style={{ color: tone, border: `1px solid ${tone}`, padding: "1px 6px", letterSpacing: "0.14em" }}>
+          {filing.status}
+        </span>
       </div>
       <h3 style={{ fontFamily: "var(--serif)", fontWeight: 500, fontSize: 18, margin: "0 0 12px", color: "var(--ink-0)" }}>
-        {doc.tk} — {doc.src}
+        {filing.ticker} — {filing.form_type}
       </h3>
       <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "6px 16px", fontFamily: "var(--mono)", fontSize: 11.5, marginBottom: 18 }}>
         <span style={{ color: "var(--ink-3)" }}>Source</span>
-        <a href={raw} target="_blank" rel="noreferrer" style={{ color: "var(--cyan)", wordBreak: "break-all" }}>{raw}</a>
+        <a href={filing.source_url} target="_blank" rel="noreferrer" style={{ color: "var(--cyan)", wordBreak: "break-all" }}>{filing.source_url}</a>
         {parsed && (
           <>
             <span style={{ color: "var(--ink-3)" }}>Host</span>
             <span style={{ color: "var(--ink-1)" }}>{parsed.hostname.replace(/^www\./, "")}</span>
           </>
         )}
+        <span style={{ color: "var(--ink-3)" }}>Filing ID</span>
+        <span style={{ color: "var(--ink-4)" }}>{filing.$id}</span>
       </div>
-      <div style={{ border: "1px dashed var(--line)", padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-3)", lineHeight: 1.55 }}>
-        <div style={{ color: "var(--md-accent)", letterSpacing: "0.14em", textTransform: "uppercase", fontSize: 9.5, marginBottom: 6 }}>
-          Reasoning overlay · pending
+
+      <div style={{ fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--ink-3)", margin: "20px 0 10px" }}>
+        Memos from this filing {loaded && memos ? `(${memos.length})` : ""}
+      </div>
+
+      {!loaded && (
+        <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-4)" }}>loading…</div>
+      )}
+
+      {loaded && memos && memos.length === 0 && (
+        <div style={{ border: "1px dashed var(--line)", padding: "14px 16px", fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-3)", lineHeight: 1.55 }}>
+          <div style={{ color: "var(--md-accent)", letterSpacing: "0.14em", textTransform: "uppercase", fontSize: 9.5, marginBottom: 6 }}>
+            No memos linked yet
+          </div>
+          {filing.status === "indexed"
+            ? "Filing is indexed but no analyst memo references it. Older memos may pre-date the filing_id link — re-run the analyst to backfill."
+            : `Filing status is "${filing.status}". The analyst pipeline will produce a memo once parsing completes.`}
         </div>
-        Document is in the ingest queue. Transcript parsing, forensic phrase analysis, and trade thesis
-        generation will appear here once the agent pipeline processes this filing.
-      </div>
+      )}
+
+      {loaded && memos && memos.map((m) => (
+        <div key={m.$id} style={{ border: "1px solid var(--line)", background: "var(--bg-2)", padding: "12px 14px", marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+            <span style={{ fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--md-accent)" }}>
+              {m.status} memo
+            </span>
+            <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--ink-1)" }}>
+              conv {m.conviction.toFixed(2)}
+            </span>
+          </div>
+          <h4 style={{ fontFamily: "var(--serif)", fontWeight: 500, fontSize: 14.5, margin: "6px 0 6px", color: "var(--ink-0)" }}>
+            {m.title}
+          </h4>
+          <p style={{ fontFamily: "var(--serif)", fontSize: 13, lineHeight: 1.55, color: "var(--ink-1)", margin: 0 }}>
+            {m.thesis}
+          </p>
+        </div>
+      ))}
     </div>
   );
 }
@@ -287,20 +347,20 @@ function EntityPanel() {
 }
 
 export function ResearchScreen() {
-  const [docs, setDocs] = useState<Doc[]>(FALLBACK_DOCS);
+  const [filings, setFilings] = useState<Filing[]>([]);
   const [sel, setSel] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     listFilings(12)
       .then((rows) => {
-        if (cancelled || rows.length === 0) return;
-        setDocs(rows.map(filingToDoc));
+        if (cancelled) return;
+        setFilings(rows);
       })
       .catch(() => {});
     const unsub = subscribeFilings((f) => {
       if (cancelled) return;
-      setDocs((prev) => [filingToDoc(f), ...prev].slice(0, 12));
+      setFilings((prev) => [f, ...prev.filter((p) => p.$id !== f.$id)].slice(0, 12));
     });
     return () => {
       cancelled = true;
@@ -308,18 +368,24 @@ export function ResearchScreen() {
     };
   }, []);
 
+  const liveDocs: Doc[] = filings.map(filingToDoc);
+  const docs: Doc[] = liveDocs.length ? liveDocs : FALLBACK_DOCS;
+
   const selectedId = sel ?? docs[1]?.id ?? docs[0]?.id ?? null;
   const selectedDoc = docs.find((d) => d.id === selectedId) ?? null;
-  const isFallback = !selectedDoc || selectedDoc.id.startsWith("f-");
+  const selectedFiling = selectedDoc ? filings.find((f) => f.$id === selectedDoc.id) ?? null : null;
+  const isFallback = !selectedFiling;
 
-  const headTitle = selectedDoc && !isFallback
-    ? `${selectedDoc.tk} · ${selectedDoc.src}`
+  const headTitle = selectedFiling
+    ? `${selectedFiling.ticker} · ${selectedFiling.form_type}`
     : "TSM · Q4 2025 Earnings Call · Reasoning Overlay";
-  const headMeta = isFallback ? "3 agents synthesizing · 0.74 conv." : "queued · awaiting agent pipeline";
+  const headMeta = selectedFiling
+    ? `status: ${selectedFiling.status}`
+    : "3 agents synthesizing · 0.74 conv.";
 
   return (
     <div className="research">
-      <Panel title="Ingest Queue" meta={`${docs.length} loaded`} bodyClassName="tight">
+      <Panel title="Ingest Queue" meta={`${liveDocs.length || FALLBACK_DOCS.length} loaded`} bodyClassName="tight">
         <DocList docs={docs} selected={selectedId} setSel={setSel} />
       </Panel>
 
@@ -329,7 +395,7 @@ export function ResearchScreen() {
           <span className="meta">{headMeta}</span>
         </div>
         <div className="panel-body" style={{ position: "relative" }}>
-          {isFallback || !selectedDoc ? <TranscriptView /> : <FilingDetail doc={selectedDoc} raw={selectedDoc.ttl} />}
+          {isFallback || !selectedFiling ? <TranscriptView /> : <FilingDetail filing={selectedFiling} />}
         </div>
       </div>
 

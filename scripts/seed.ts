@@ -170,6 +170,7 @@ async function seedMemo(clusterIds: Record<string, string>) {
     author_agent_id: authorId,
     status: "draft",
     vector_id: null,
+    filing_id: null,
     entities_json: JSON.stringify([
       { name: "Taiwan Semiconductor (TSM)", role: "subject",    weight: 1.0 },
       { name: "Apple (AAPL)",               role: "customer",   weight: 0.78 },

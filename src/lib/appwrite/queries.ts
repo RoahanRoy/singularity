@@ -85,6 +85,15 @@ export async function listRecentTrades(limit = 50): Promise<Trade[]> {
   return res.documents;
 }
 
+export async function listMemosByFiling(filingId: string, limit = 6): Promise<Memo[]> {
+  const res = await databases.listDocuments<Memo & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.memos,
+    [Query.equal("filing_id", filingId), Query.orderDesc("$createdAt"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
 export function subscribeTrades(onChange: (t: Trade) => void) {
   const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.trades}.documents`;
   return client.subscribe<Trade & Models.Document>(channel, (msg) => {

@@ -21,7 +21,7 @@ const AUTO_APPROVE = process.env.MERIDIAN_AUTO_APPROVE === "1";
 
 export type Ctx = {
   ticker: string;
-  filing?: { form_type: string; filed_at: string; source_url: string; summary: string };
+  filing?: { id?: string; form_type: string; filed_at: string; source_url: string; summary: string };
   memo?: {
     title: string;
     thesis: string;
@@ -84,8 +84,8 @@ ${edgar.raw_excerpt}
   return extractJson<{ summary: string; highlights: string[] }>(raw);
 }
 
-async function indexFiling(edgar: EdgarFiling, summary: string): Promise<void> {
-  await db.createDocument(DB, "filings", ID.unique(), {
+async function indexFiling(edgar: EdgarFiling, summary: string): Promise<string> {
+  const doc = await db.createDocument(DB, "filings", ID.unique(), {
     ticker: edgar.ticker,
     form_type: edgar.form_type,
     filed_at: edgar.filed_at,
@@ -93,9 +93,8 @@ async function indexFiling(edgar: EdgarFiling, summary: string): Promise<void> {
     status: "indexed",
     vector_id: null,
   });
-  // summary is intentionally not stored on the filings row — schema doesn't
-  // include it, and it's reconstructible. It rides in ctx for the analyst.
   void summary;
+  return doc.$id;
 }
 
 export async function parser(ctx: Ctx): Promise<Ctx> {
@@ -120,12 +119,13 @@ export async function parser(ctx: Ctx): Promise<Ctx> {
   const { summary, highlights } = await summarize(edgar);
   await emit(id, "thought", `Summarized ${edgar.form_type} for ${ctx.ticker}`, { highlights });
 
-  await indexFiling(edgar, summary);
+  const filingId = await indexFiling(edgar, summary);
   await setStatus(id, "idle");
 
   return {
     ...ctx,
     filing: {
+      id: filingId,
       form_type: edgar.form_type,
       filed_at: edgar.filed_at,
       source_url: edgar.source_url,
@@ -172,6 +172,7 @@ export async function analyst(ctx: Ctx, reviseConcerns?: string[]): Promise<Ctx>
     status: "review",
     vector_id: null,
     entities_json: entitiesJson,
+    filing_id: ctx.filing?.id ?? null,
   });
   await emit(id, "memo", `${memo.title} (conv ${memo.conviction?.toFixed(2)})`, {
     memo_id: doc.$id,

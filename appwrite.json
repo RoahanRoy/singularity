@@ -431,6 +431,14 @@
                     "required": false,
                     "array": false,
                     "encrypt": false
+                },
+                {
+                    "key": "filing_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
                 }
             ],
             "indexes": [
@@ -453,6 +461,13 @@
                     "type": "key",
                     "attributes": [
                         "author_agent_id"
+                    ]
+                },
+                {
+                    "key": "by_filing",
+                    "type": "key",
+                    "attributes": [
+                        "filing_id"
                     ]
                 }
             ]

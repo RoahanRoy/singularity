@@ -67,6 +67,7 @@ export type Memo = Base & {
   status: "draft" | "review" | "approved" | "rejected";
   vector_id: string | null;
   entities_json: string | null;
+  filing_id: string | null;
 };
 
 export type MemoEntity = {
