@@ -368,9 +368,139 @@ function PolicyChanges() {
   );
 }
 
+type AgentStatusRow = {
+  name: "responder" | "tech";
+  running: boolean;
+  pid: number | null;
+  startedAt: string | null;
+  exitCode: number | null;
+  lastLogs: string[];
+};
+
+const AGENT_LABEL: Record<AgentStatusRow["name"], string> = {
+  responder: "Operator responder",
+  tech: "Tech research loop",
+};
+
+function AgentControls() {
+  const [agents, setAgents] = useState<AgentStatusRow[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    const cancelled = { v: false };
+    const tick = () => {
+      fetch("/api/agents", { cache: "no-store" })
+        .then((r) => r.json())
+        .then((data: { agents: AgentStatusRow[] }) => {
+          if (!cancelled.v) setAgents(data.agents);
+        })
+        .catch(() => {
+          if (!cancelled.v) setAgents([]);
+        });
+    };
+    tick();
+    const t = setInterval(tick, 4000);
+    return () => {
+      cancelled.v = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  async function send(name: AgentStatusRow["name"], action: "start" | "stop" | "restart") {
+    setBusy(`${name}:${action}`);
+    try {
+      const res = await fetch("/api/agents/control", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, action }),
+      });
+      const data = (await res.json()) as { status?: AgentStatusRow };
+      if (data.status) {
+        setAgents((prev) => {
+          if (!prev) return prev;
+          return prev.map((a) => (a.name === data.status!.name ? data.status! : a));
+        });
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (agents === null) {
+    return <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>loading…</div>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {agents.map((a) => {
+        const dotColor = a.running ? "var(--green)" : a.exitCode !== null ? "var(--red)" : "var(--ink-3)";
+        const statusText = a.running
+          ? `running · pid ${a.pid}`
+          : a.exitCode !== null
+          ? `stopped · exit ${a.exitCode}`
+          : "idle";
+        return (
+          <div
+            key={a.name}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "auto 1fr auto",
+              alignItems: "center",
+              gap: 8,
+              fontFamily: "var(--mono)",
+              fontSize: 11,
+            }}
+          >
+            <span style={{ color: dotColor, fontSize: 14, lineHeight: 1 }}>●</span>
+            <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+              <span style={{ color: "var(--ink-0)" }}>{AGENT_LABEL[a.name]}</span>
+              <span className="dim" style={{ fontSize: 10 }}>{statusText}</span>
+            </div>
+            <div style={{ display: "flex", gap: 4 }}>
+              {a.running ? (
+                <>
+                  <button
+                    className="send"
+                    style={{ fontSize: 10, padding: "2px 8px" }}
+                    disabled={busy !== null}
+                    onClick={() => send(a.name, "restart")}
+                  >
+                    ↻
+                  </button>
+                  <button
+                    className="send"
+                    style={{ fontSize: 10, padding: "2px 8px" }}
+                    disabled={busy !== null}
+                    onClick={() => send(a.name, "stop")}
+                  >
+                    stop
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="send"
+                  style={{ fontSize: 10, padding: "2px 8px" }}
+                  disabled={busy !== null}
+                  onClick={() => send(a.name, "start")}
+                >
+                  start
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Governance() {
   return (
     <>
+      <div className="gov">
+        <h5>Agents</h5>
+        <AgentControls />
+      </div>
       <div className="gov">
         <h5>Portfolio Posture</h5>
         <PortfolioPosture />
