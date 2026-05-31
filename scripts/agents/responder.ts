@@ -21,6 +21,10 @@ import { loadPrompt } from "./prompts";
 
 const POLL_MS = Number(process.env.MERIDIAN_RESPONDER_POLL_MS || 3000);
 const MAX_THREAD_HISTORY = 12;
+// How far back to look for unanswered operator messages at boot. Defaults to
+// 10 minutes so a message sent just before the responder started still gets
+// answered. Set MERIDIAN_RESPONDER_LOOKBACK_MIN=0 to fall back to "boot time".
+const LOOKBACK_MIN = Number(process.env.MERIDIAN_RESPONDER_LOOKBACK_MIN ?? 10);
 
 type OperatorMessage = {
   $id: string;
@@ -56,7 +60,7 @@ type GovernanceEvent = {
   occurred_at: string;
 };
 
-const BOOT_AT = new Date().toISOString();
+const BOOT_AT = new Date(Date.now() - LOOKBACK_MIN * 60_000).toISOString();
 const processed = new Set<string>();
 
 async function recentOperatorMessages(sinceIso: string): Promise<OperatorMessage[]> {
@@ -234,7 +238,9 @@ async function tick(watermark: { iso: string }): Promise<void> {
 }
 
 async function main() {
-  console.log(`[responder] booted at ${BOOT_AT}, polling every ${POLL_MS}ms`);
+  console.log(
+    `[responder] booted, watermark=${BOOT_AT} (lookback ${LOOKBACK_MIN}m), polling every ${POLL_MS}ms`,
+  );
   const watermark = { iso: BOOT_AT };
   // Trim processed set periodically so it doesn't grow unbounded.
   setInterval(() => {
