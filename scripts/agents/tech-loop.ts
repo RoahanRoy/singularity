@@ -20,10 +20,12 @@
  *   MERIDIAN_TECH_INTERVAL_MS        pause between cycles (default 60000)
  *   MERIDIAN_TECH_ERROR_BACKOFF_MS   pause after a failed cycle (default 15000)
  */
-import { nextTicker } from "./universe";
+import { nextTicker, sectorOf } from "./universe";
 import {
   bootstrapAgents,
-  parser, analyst, critic, pm, risk, riskOverlay, compliance, broker,
+  parser, earningsReview, analyst, critic, valuation,
+  pm, risk, riskOverlay, compliance, smartRouter, broker, tca,
+  budgetController,
   type Ctx,
 } from "./nodes";
 
@@ -55,17 +57,22 @@ type AgentIds = Awaited<ReturnType<typeof bootstrapAgents>>;
 
 async function runCycle(agentIds: AgentIds): Promise<void> {
   const ticker = nextTicker();
-  console.log(`\n=== MERIDIAN tech loop — ${ticker} ===\n`);
+  const sector = sectorOf(ticker);
+  console.log(`\n=== MERIDIAN loop — ${ticker} (${sector}) ===\n`);
 
   let ctx: Ctx = { ticker, agentIds };
   ctx = await parser(ctx);
+  ctx = await earningsReview(ctx);
   ctx = await analyst(ctx);
   ctx = await critic(ctx);
+  ctx = await valuation(ctx);
   ctx = await pm(ctx);
   ctx = await risk(ctx);
   ctx = await riskOverlay(ctx);
   ctx = await compliance(ctx);
+  ctx = await smartRouter(ctx);
   ctx = await broker(ctx);
+  ctx = await tca(ctx);
 
   console.log(`\n=== Done. Trade: ${ctx.trade?.status ?? "no fill"} ===`);
 }
@@ -78,19 +85,34 @@ async function main() {
     return;
   }
 
-  console.log(`[tech] continuous mode — ${INTERVAL_MS}ms between cycles (MERIDIAN_TECH_ONCE=1 for a single run)`);
+  console.log(`[loop] continuous mode — base ${INTERVAL_MS}ms between cycles (MERIDIAN_TECH_ONCE=1 for a single run)`);
+  let throttleMs = 0;
   while (!stopping) {
+    // Budget gate — runs every cycle, can throttle or kill the loop.
+    try {
+      const verdict = await budgetController(agentIds);
+      if (verdict.verdict === "kill") {
+        console.log(`[loop] budget KILL — $${verdict.spend_24h_usd.toFixed(4)} of $${verdict.limit_24h_usd} (${verdict.pct_of_limit.toFixed(1)}%). Stopping.`);
+        break;
+      }
+      throttleMs = verdict.verdict === "throttle"
+        ? Math.max(INTERVAL_MS, verdict.next_check_minutes * 60_000)
+        : 0;
+    } catch (err) {
+      console.warn(`[loop] budget check failed (continuing): ${(err as Error).message}`);
+    }
+
     try {
       await runCycle(agentIds);
     } catch (err) {
-      console.error(`[tech] cycle failed: ${(err as Error).message}`);
+      console.error(`[loop] cycle failed: ${(err as Error).message}`);
       if (!stopping) await sleep(ERROR_BACKOFF_MS);
       continue;
     }
     if (stopping) break;
-    await sleep(INTERVAL_MS);
+    await sleep(Math.max(INTERVAL_MS, throttleMs));
   }
-  console.log(`[tech] stopped.`);
+  console.log(`[loop] stopped.`);
 }
 
 main().catch((err) => {

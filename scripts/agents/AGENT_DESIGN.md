@@ -131,18 +131,21 @@ Mapped to Anthropic's reference where overlap exists. Build only when needed
 | Slug | Mirrors Anthropic's | Status |
 | --- | --- | --- |
 | `tech-analyst` | `earnings-reviewer` × `market-researcher` (US tech only) | ✅ live |
-| `healthcare-analyst` | same pattern, healthcare universe | planned |
-| `energy-analyst` | same pattern, energy universe | planned |
-| `financials-analyst` | same pattern, financials universe | planned |
-| `consumer-analyst` | same pattern, consumer universe | planned |
-| `industrials-analyst` | same pattern, industrials universe | planned |
+| `healthcare-analyst` | same pattern, healthcare universe | ✅ live |
+| `energy-analyst` | same pattern, energy universe | ✅ live |
+| `financials-analyst` | same pattern, financials universe | ✅ live |
+| `consumer-analyst` | same pattern, consumer universe | ✅ live |
+| `industrials-analyst` | same pattern, industrials universe | ✅ live |
+
+The orchestrator routes each ticker to the right analyst via `sectorOf(ticker)`
+in `universe.ts`. Each analyst is a distinct row in the `agents` collection.
 
 ### Cross-sector specialists
 
 | Slug | Mirrors Anthropic's | Status |
 | --- | --- | --- |
-| `earnings-reviewer` | `earnings-reviewer` (verbatim) | planned |
-| `valuation-reviewer` | `valuation-reviewer` | planned |
+| `earnings-reviewer` | `earnings-reviewer` (verbatim) | ✅ live (transcript source still stubbed in `transcript.ts`) |
+| `valuation-reviewer` | `valuation-reviewer` | ✅ live |
 | `kyc-screener` | `kyc-screener` (counterparty onboarding) | not for MVP |
 | `gl-reconciler` | `gl-reconciler` (fund accounting) | not for MVP |
 
@@ -163,14 +166,14 @@ Mapped to Anthropic's reference where overlap exists. Build only when needed
 | Slug | Role | Status |
 | --- | --- | --- |
 | `paper-broker` | stub fills, no LLM | ✅ live |
-| `smart-router` | venue selection (TWAP/VWAP/IS) | planned |
-| `tca-agent` | post-trade cost analysis | planned |
+| `smart-router` | venue selection (TWAP/VWAP/IS) | ✅ live |
+| `tca-agent` | post-trade cost analysis (writes `tca` collection) | ✅ live |
 
 ### Governance
 
 | Slug | Role | Status |
 | --- | --- | --- |
-| `budget-controller` | kills agents over LLM/data spend | planned |
+| `budget-controller` | throttles/kills loop over 24h `budget_ledger` spend (cap from `MERIDIAN_BUDGET_DAILY_USD`, default $25) | ✅ live |
 | `audit-logger` | immutable trail | satisfied by `agent_events` + `governance_events` for now |
 | `orchestrator` | LangGraph supervisor | currently a plain function chain in `tech-loop.ts` |
 
