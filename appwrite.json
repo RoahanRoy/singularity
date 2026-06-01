@@ -100,6 +100,15 @@
                     "type": "datetime",
                     "required": false,
                     "array": false
+                },
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false,
+                    "default": "US"
                 }
             ],
             "indexes": [
@@ -122,6 +131,13 @@
                     "type": "key",
                     "attributes": [
                         "role"
+                    ]
+                },
+                {
+                    "key": "by_market",
+                    "type": "key",
+                    "attributes": [
+                        "market"
                     ]
                 }
             ]
@@ -166,6 +182,15 @@
                     "type": "double",
                     "required": true,
                     "array": false
+                },
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false,
+                    "default": "US"
                 }
             ],
             "indexes": [
@@ -174,6 +199,13 @@
                     "type": "unique",
                     "attributes": [
                         "name"
+                    ]
+                },
+                {
+                    "key": "by_market",
+                    "type": "key",
+                    "attributes": [
+                        "market"
                     ]
                 }
             ]
@@ -333,6 +365,15 @@
                     "required": false,
                     "array": false,
                     "encrypt": false
+                },
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false,
+                    "default": "US"
                 }
             ],
             "indexes": [
@@ -439,6 +480,15 @@
                     "required": false,
                     "array": false,
                     "encrypt": false
+                },
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false,
+                    "default": "US"
                 }
             ],
             "indexes": [
@@ -530,6 +580,23 @@
                     "required": false,
                     "array": false,
                     "encrypt": false
+                },
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false,
+                    "default": "US"
+                },
+                {
+                    "key": "kite_account_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
                 }
             ],
             "indexes": [
@@ -538,6 +605,13 @@
                     "type": "unique",
                     "attributes": [
                         "ticker"
+                    ]
+                },
+                {
+                    "key": "by_market",
+                    "type": "key",
+                    "attributes": [
+                        "market"
                     ]
                 }
             ]
@@ -612,6 +686,15 @@
                     "type": "datetime",
                     "required": false,
                     "array": false
+                },
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false,
+                    "default": "US"
                 }
             ],
             "indexes": [
@@ -651,25 +734,128 @@
                 "delete(\"any\")"
             ],
             "attributes": [
-                { "key": "trade_id", "type": "string", "size": 64, "required": true, "array": false, "encrypt": false },
-                { "key": "ticker", "type": "string", "size": 16, "required": true, "array": false, "encrypt": false },
-                { "key": "venue", "type": "string", "size": 32, "required": true, "array": false, "encrypt": false },
-                { "key": "algo", "type": "string", "size": 16, "required": true, "array": false, "encrypt": false },
-                { "key": "arrival_price", "type": "double", "required": true, "array": false },
-                { "key": "fill_price", "type": "double", "required": true, "array": false },
-                { "key": "benchmark_price", "type": "double", "required": true, "array": false },
-                { "key": "benchmark_kind", "type": "string", "size": 16, "required": true, "array": false, "encrypt": false },
-                { "key": "slippage_bps", "type": "double", "required": true, "array": false },
-                { "key": "fees_bps", "type": "double", "required": true, "array": false },
-                { "key": "impact_bps", "type": "double", "required": true, "array": false },
-                { "key": "venue_score", "type": "double", "required": true, "array": false },
-                { "key": "notes", "type": "string", "size": 1024, "required": false, "array": false, "encrypt": false },
-                { "key": "occurred_at", "type": "datetime", "required": true, "array": false }
+                {
+                    "key": "trade_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "ticker",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "venue",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "algo",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "arrival_price",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "fill_price",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "benchmark_price",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "benchmark_kind",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "slippage_bps",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "fees_bps",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "impact_bps",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "venue_score",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "notes",
+                    "type": "string",
+                    "size": 1024,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "occurred_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
             ],
             "indexes": [
-                { "key": "by_trade", "type": "key", "attributes": ["trade_id"] },
-                { "key": "by_ticker", "type": "key", "attributes": ["ticker"] },
-                { "key": "by_time", "type": "key", "attributes": ["occurred_at"], "orders": ["DESC"] }
+                {
+                    "key": "by_trade",
+                    "type": "key",
+                    "attributes": [
+                        "trade_id"
+                    ]
+                },
+                {
+                    "key": "by_ticker",
+                    "type": "key",
+                    "attributes": [
+                        "ticker"
+                    ]
+                },
+                {
+                    "key": "by_time",
+                    "type": "key",
+                    "attributes": [
+                        "occurred_at"
+                    ],
+                    "orders": [
+                        "DESC"
+                    ]
+                }
             ]
         },
         {
@@ -728,6 +914,15 @@
                     "type": "datetime",
                     "required": true,
                     "array": false
+                },
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false,
+                    "default": "US"
                 }
             ],
             "indexes": [
@@ -982,6 +1177,15 @@
                     "type": "datetime",
                     "required": true,
                     "array": false
+                },
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false,
+                    "default": "US"
                 }
             ],
             "indexes": [
@@ -993,6 +1197,13 @@
                     ],
                     "orders": [
                         "DESC"
+                    ]
+                },
+                {
+                    "key": "by_market",
+                    "type": "key",
+                    "attributes": [
+                        "market"
                     ]
                 }
             ]
@@ -1460,6 +1671,118 @@
                     "type": "unique",
                     "attributes": [
                         "name"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "kite_accounts",
+            "$permissions": [
+                "read(\"users\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "databaseId": "meridian",
+            "name": "kite_accounts",
+            "enabled": true,
+            "documentSecurity": false,
+            "attributes": [
+                {
+                    "key": "operator_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "label",
+                    "type": "string",
+                    "size": 128,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "kite_user_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "api_key",
+                    "type": "string",
+                    "size": 64,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "access_token",
+                    "type": "string",
+                    "size": 256,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "public_token",
+                    "type": "string",
+                    "size": 256,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "status",
+                    "type": "string",
+                    "size": 24,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false,
+                    "default": "connected"
+                },
+                {
+                    "key": "equity_cash",
+                    "type": "double",
+                    "required": false,
+                    "array": false,
+                    "default": 0
+                },
+                {
+                    "key": "holdings_count",
+                    "type": "integer",
+                    "required": false,
+                    "array": false,
+                    "min": 0,
+                    "max": 100000,
+                    "default": 0
+                },
+                {
+                    "key": "last_synced_at",
+                    "type": "string",
+                    "size": 32,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_user",
+                    "type": "key",
+                    "attributes": [
+                        "kite_user_id"
+                    ]
+                },
+                {
+                    "key": "by_status",
+                    "type": "key",
+                    "attributes": [
+                        "status"
                     ]
                 }
             ]

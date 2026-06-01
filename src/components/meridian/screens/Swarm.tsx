@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Panel, UTCClock } from "../primitives";
-import { clusters as fallbackClusters, feedSeed } from "@/lib/meridian/data";
+import { useMarket } from "../MarketContext";
+import { clusters as clustersUS, clustersIN, feedSeed, feedSeedIN } from "@/lib/meridian/data";
 import {
   listAgents,
   listClusters,
@@ -263,11 +264,14 @@ function SwarmFeed({
   events,
   live,
   clusterById,
+  market,
 }: {
   events: AgentEvent[];
   live: boolean;
   clusterById: Map<string, string>;
+  market: "US" | "IN";
 }) {
+  const seed = market === "IN" ? feedSeedIN : feedSeed;
   const items: FeedRow[] =
     events.length > 0
       ? events.map((e) => ({
@@ -277,7 +281,7 @@ function SwarmFeed({
           msg: e.summary,
           t: fmtAgo(e.occurred_at),
         }))
-      : feedSeed.slice(0, 8).map((s, i) => ({
+      : seed.slice(0, 8).map((s, i) => ({
           id: "seed-" + i,
           cluster: s.c,
           agent: s.a,
@@ -311,18 +315,22 @@ type UIList = {
   color: "amber" | "cyan";
 };
 
+function fallbackList(market: "US" | "IN"): UIList[] {
+  const src = market === "IN" ? clustersIN : clustersUS;
+  return src.map((c) => ({
+    id: c.id,
+    themeId: c.id,
+    name: c.name,
+    agents: c.agents,
+    conv: c.conv,
+    color: c.color,
+  }));
+}
+
 export function SwarmScreen() {
+  const { market } = useMarket();
   const [sel, setSel] = useState("earnings");
-  const [list, setList] = useState<UIList[]>(() =>
-    fallbackClusters.map((c) => ({
-      id: c.id,
-      themeId: c.id,
-      name: c.name,
-      agents: c.agents,
-      conv: c.conv,
-      color: c.color,
-    })),
-  );
+  const [list, setList] = useState<UIList[]>(() => fallbackList(market));
   const [agents, setAgents] = useState<DbAgent[]>([]);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [live, setLive] = useState(false);
@@ -331,10 +339,12 @@ export function SwarmScreen() {
   const agentPosRef = useRef<Map<string, { x: number; y: number; color: string }>>(new Map());
   const clusterAnchorsRef = useRef<ClusterAnchor[]>([]);
 
-  // Load clusters once. Order by size, map onto the fixed anchor slots.
+  // Load clusters for the active desk. Order by size, map onto anchor slots.
+  // Re-runs when the market toggles; resets to that desk's fallback first.
   useEffect(() => {
     let cancelled = false;
-    listClusters()
+    setList(fallbackList(market));
+    listClusters(market)
       .then((rows: DbCluster[]) => {
         if (cancelled || rows.length === 0) return;
         const ui: UIList[] = rows.map((c) => ({
@@ -351,17 +361,21 @@ export function SwarmScreen() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [market]);
 
-  // Load + subscribe agents.
+  // Load + subscribe agents for the active desk.
   useEffect(() => {
     let cancelled = false;
-    listAgents().then((rows) => {
+    setAgents([]);
+    listAgents(200, market).then((rows) => {
       if (cancelled) return;
       setAgents(rows);
     }).catch(() => {});
     const unsub = subscribeAgents((a) => {
       if (cancelled) return;
+      // The realtime channel is collection-wide; keep only this desk's agents.
+      const agentMarket = a.market ?? "US";
+      if (agentMarket !== market) return;
       setAgents((prev) => {
         const ix = prev.findIndex((x) => x.$id === a.$id);
         if (ix < 0) return [...prev, a];
@@ -371,7 +385,7 @@ export function SwarmScreen() {
       });
     });
     return () => { cancelled = true; unsub(); };
-  }, []);
+  }, [market]);
 
   // Load + subscribe events; drive pulses + hot edges from real events.
   useEffect(() => {
@@ -501,7 +515,7 @@ export function SwarmScreen() {
       </div>
 
       <Panel title="Activity Stream" meta={live ? "↓ live" : "↓ idle"} bodyClassName="tight">
-        <SwarmFeed events={events} live={live} clusterById={clusterById} />
+        <SwarmFeed events={events} live={live} clusterById={clusterById} market={market} />
       </Panel>
     </div>
   );

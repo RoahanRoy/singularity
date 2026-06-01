@@ -2,13 +2,22 @@
 
 import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type ModelRoute, type Pipeline, type ComputeNode, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc } from "./schema";
+import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type ModelRoute, type Pipeline, type ComputeNode, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc, type KiteAccount, type Market } from "./schema";
 
-export async function listAgents(limit = 200): Promise<Agent[]> {
+/**
+ * Market filter. When a desk is passed we constrain to that desk's rows.
+ * Legacy rows are tagged "US" once the schema migration runs, so the US desk
+ * stays intact and the India desk only ever sees India-tagged data.
+ */
+function marketFilter(market?: Market): string[] {
+  return market ? [Query.equal("market", market)] : [];
+}
+
+export async function listAgents(limit = 200, market?: Market): Promise<Agent[]> {
   const res = await databases.listDocuments<Agent & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.agents,
-    [Query.limit(limit)],
+    [...marketFilter(market), Query.limit(limit)],
   );
   return res.documents;
 }
@@ -22,11 +31,11 @@ export function subscribeAgents(onChange: (a: Agent) => void) {
   });
 }
 
-export async function listClusters(): Promise<Cluster[]> {
+export async function listClusters(market?: Market): Promise<Cluster[]> {
   const res = await databases.listDocuments<Cluster & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.clusters,
-    [Query.orderDesc("agent_count"), Query.limit(50)],
+    [...marketFilter(market), Query.orderDesc("agent_count"), Query.limit(50)],
   );
   return res.documents;
 }
@@ -76,20 +85,20 @@ export async function listMemos(limit = 6): Promise<Memo[]> {
   return res.documents;
 }
 
-export async function listPositions(limit = 25): Promise<Position[]> {
+export async function listPositions(limit = 25, market?: Market): Promise<Position[]> {
   const res = await databases.listDocuments<Position & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.positions,
-    [Query.orderDesc("market_value"), Query.limit(limit)],
+    [...marketFilter(market), Query.orderDesc("market_value"), Query.limit(limit)],
   );
   return res.documents;
 }
 
-export async function listPendingTrades(limit = 10): Promise<Trade[]> {
+export async function listPendingTrades(limit = 10, market?: Market): Promise<Trade[]> {
   const res = await databases.listDocuments<Trade & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.trades,
-    [Query.equal("status", "pending"), Query.orderDesc("$createdAt"), Query.limit(limit)],
+    [...marketFilter(market), Query.equal("status", "pending"), Query.orderDesc("$createdAt"), Query.limit(limit)],
   );
   return res.documents;
 }
@@ -179,21 +188,21 @@ export async function listBudgetLedger(limit = 50): Promise<BudgetLedger[]> {
   return res.documents;
 }
 
-export async function listScenarios(limit = 12): Promise<Scenario[]> {
+export async function listScenarios(limit = 12, market?: Market): Promise<Scenario[]> {
   const res = await databases.listDocuments<Scenario & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.scenarios,
-    [Query.orderDesc("run_at"), Query.limit(limit)],
+    [...marketFilter(market), Query.orderDesc("run_at"), Query.limit(limit)],
   );
   return res.documents;
 }
 
 /** Oldest → newest, so the series can be charted left-to-right. */
-export async function listFundSnapshots(limit = 200): Promise<FundSnapshot[]> {
+export async function listFundSnapshots(limit = 200, market?: Market): Promise<FundSnapshot[]> {
   const res = await databases.listDocuments<FundSnapshot & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.fund_snapshots,
-    [Query.orderDesc("captured_at"), Query.limit(limit)],
+    [...marketFilter(market), Query.orderDesc("captured_at"), Query.limit(limit)],
   );
   return res.documents.slice().reverse();
 }
@@ -252,7 +261,7 @@ export async function listAuditLog(limit = 50): Promise<AuditLog[]> {
  * it and reports back via agent_status.
  */
 export async function enqueueAgentCommand(
-  target: "responder" | "tech",
+  target: "responder" | "tech" | "india",
   action: "start" | "stop" | "restart",
   requestedBy: string | null = null,
 ): Promise<AgentCommand> {
@@ -286,6 +295,26 @@ export function subscribeAgentStatus(onChange: (row: AgentStatusDoc) => void) {
   const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.agent_status}.documents`;
   return client.subscribe<AgentStatusDoc & Models.Document>(channel, (msg) => {
     if (msg.events.some((e) => e.endsWith(".create") || e.endsWith(".update"))) {
+      onChange(msg.payload);
+    }
+  });
+}
+
+/** Connected Zerodha Kite accounts backing the India fund. */
+export async function listKiteAccounts(limit = 25): Promise<KiteAccount[]> {
+  const res = await databases.listDocuments<KiteAccount & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.kite_accounts,
+    [Query.orderDesc("$createdAt"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
+/** Realtime Kite-account updates (status / last-synced changes after a sync). */
+export function subscribeKiteAccounts(onChange: (row: KiteAccount) => void) {
+  const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.kite_accounts}.documents`;
+  return client.subscribe<KiteAccount & Models.Document>(channel, (msg) => {
+    if (msg.events.some((e) => e.endsWith(".create") || e.endsWith(".update") || e.endsWith(".delete"))) {
       onChange(msg.payload);
     }
   });

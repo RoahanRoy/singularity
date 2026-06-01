@@ -23,9 +23,13 @@ export const COLLECTIONS = {
   audit_log: "audit_log",
   agent_commands: "agent_commands",
   agent_status: "agent_status",
+  kite_accounts: "kite_accounts",
 } as const;
 
 type Base = { $id: string; $createdAt: string; $updatedAt: string };
+
+/** Which desk a row belongs to. Untagged legacy rows are treated as "US". */
+export type Market = "US" | "IN";
 
 export type Agent = Base & {
   name: string;
@@ -35,6 +39,7 @@ export type Agent = Base & {
   model: string;
   conviction: number;
   last_action_at: string | null;
+  market?: Market | null;
 };
 
 export type Cluster = Base & {
@@ -42,6 +47,7 @@ export type Cluster = Base & {
   theme: string;
   agent_count: number;
   health: number;
+  market?: Market | null;
 };
 
 export type AgentEvent = Base & {
@@ -60,6 +66,7 @@ export type Filing = Base & {
   source_url: string;
   status: "queued" | "parsing" | "indexed" | "failed";
   vector_id: string | null;
+  market?: Market | null;
 };
 
 export type Memo = Base & {
@@ -72,6 +79,7 @@ export type Memo = Base & {
   vector_id: string | null;
   entities_json: string | null;
   filing_id: string | null;
+  market?: Market | null;
 };
 
 export type MemoEntity = {
@@ -88,6 +96,8 @@ export type Position = Base & {
   unrealized_pnl: number;
   weight: number;
   factor_exposures_json: string | null;
+  market?: Market | null;
+  kite_account_id?: string | null;
 };
 
 export type Trade = Base & {
@@ -99,6 +109,7 @@ export type Trade = Base & {
   agent_id: string;
   status: "pending" | "filled" | "rejected" | "cancelled";
   filled_at: string | null;
+  market?: Market | null;
 };
 
 export type Scenario = Base & {
@@ -108,6 +119,7 @@ export type Scenario = Base & {
   nav_delta: number;
   worst_position: string | null;
   run_at: string;
+  market?: Market | null;
 };
 
 export type GovernanceEvent = Base & {
@@ -138,6 +150,7 @@ export type FundSnapshot = Base & {
   nav_usd: number;
   pnl_daily: number;
   captured_at: string;
+  market?: Market | null;
 };
 
 export type ModelRoute = Base & {
@@ -182,8 +195,26 @@ export type AuditLog = Base & {
   occurred_at: string;
 };
 
-/** The two workers the operator can drive. */
-export type AgentWorker = "responder" | "tech";
+/** The workers the operator can drive. */
+export type AgentWorker = "responder" | "tech" | "india";
+
+/**
+ * A connected Zerodha Kite account. Single-operator app, so the daily-expiring
+ * access token is stored server-side. On a 401 from Kite the status flips to
+ * `needs_reauth` and the operator re-runs the login flow.
+ */
+export type KiteAccount = Base & {
+  operator_id: string | null;
+  label: string;
+  kite_user_id: string;
+  api_key: string;
+  access_token: string;
+  public_token: string | null;
+  status: "connected" | "needs_reauth" | "error";
+  equity_cash: number;
+  holdings_count: number;
+  last_synced_at: string | null;
+};
 
 /**
  * A control command enqueued by the Operator Console (possibly served from
