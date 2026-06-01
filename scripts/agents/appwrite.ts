@@ -20,9 +20,10 @@ const client = new Client().setEndpoint(endpoint).setProject(projectId).setKey(a
 export const db = new Databases(client);
 export { ID, Query };
 
-export type ClusterRef = { name: string; theme: string };
+export type Market = "US" | "IN";
+export type ClusterRef = { name: string; theme: string; market?: Market };
 
-const DEFAULT_CLUSTER: ClusterRef = { name: "Tech — Equities US", theme: "equities" };
+const DEFAULT_CLUSTER: ClusterRef = { name: "Tech — Equities US", theme: "equities", market: "US" };
 const CLUSTER_CACHE = new Map<string, string>();
 
 /**
@@ -34,13 +35,15 @@ export async function ensureAgent(
   role: "research" | "execution" | "risk" | "ops",
   cluster: ClusterRef = DEFAULT_CLUSTER,
 ) {
-  const clusterId = await ensureCluster(cluster.name, cluster.theme);
+  const market: Market = cluster.market ?? "US";
+  const clusterId = await ensureCluster(cluster.name, cluster.theme, market);
   const existing = await db.listDocuments(DB, "agents", [Query.equal("name", name), Query.limit(1)]);
   const row = existing.documents[0];
   if (row) {
-    if (row.cluster_id !== clusterId) {
-      await db.updateDocument(DB, "agents", row.$id, { cluster_id: clusterId });
-    }
+    const patch: Record<string, unknown> = {};
+    if (row.cluster_id !== clusterId) patch.cluster_id = clusterId;
+    if (row.market !== market) patch.market = market;
+    if (Object.keys(patch).length) await db.updateDocument(DB, "agents", row.$id, patch);
     return row.$id;
   }
   const doc = await db.createDocument(DB, "agents", ID.unique(), {
@@ -51,11 +54,12 @@ export async function ensureAgent(
     model: "claude-sonnet-4-6",
     conviction: 0,
     last_action_at: null,
+    market,
   });
   return doc.$id;
 }
 
-async function ensureCluster(name: string, theme: string) {
+async function ensureCluster(name: string, theme: string, market: Market = "US") {
   const cached = CLUSTER_CACHE.get(name);
   if (cached) return cached;
   const existing = await db.listDocuments(DB, "clusters", [Query.equal("name", name), Query.limit(1)]);
@@ -64,7 +68,7 @@ async function ensureCluster(name: string, theme: string) {
     return existing.documents[0].$id;
   }
   const doc = await db.createDocument(DB, "clusters", ID.unique(), {
-    name, theme, agent_count: 0, health: 0.9,
+    name, theme, agent_count: 0, health: 0.9, market,
   });
   CLUSTER_CACHE.set(name, doc.$id);
   return doc.$id;

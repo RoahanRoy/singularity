@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Panel } from "../primitives";
 import { useOperator } from "../AuthGate";
+import { useMarket } from "../MarketContext";
+import { fmtMoney } from "@/lib/meridian/format";
 import {
   listOperatorMessages,
   sendOperatorMessage,
@@ -216,10 +218,12 @@ function GovernanceFeed() {
 }
 
 function PortfolioPosture() {
+  const { market } = useMarket();
   const [positions, setPositions] = useState<Position[] | null>(null);
   useEffect(() => {
     const cancelled = { v: false };
-    listPositions(100)
+    setPositions(null);
+    listPositions(100, market)
       .then((r) => {
         if (!cancelled.v) setPositions(r);
       })
@@ -227,7 +231,7 @@ function PortfolioPosture() {
         if (!cancelled.v) setPositions([]);
       });
     return () => { cancelled.v = true; };
-  }, []);
+  }, [market]);
 
   if (positions === null) {
     return <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>loading…</div>;
@@ -243,9 +247,7 @@ function PortfolioPosture() {
   const maxIdx = weights.indexOf(maxWeight);
   const top = positions[maxIdx];
 
-  const fmtUsd = (n: number) =>
-    (n < 0 ? "-$" : "$") +
-    Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  const fmtUsd = (n: number) => fmtMoney(n, market);
   const fmtPct = (n: number) => `${(n * 100).toFixed(2)}%`;
 
   return (
@@ -372,13 +374,14 @@ function PolicyChanges() {
   );
 }
 
-type WorkerName = "responder" | "tech";
+type WorkerName = "responder" | "tech" | "india";
 
 const AGENT_LABEL: Record<WorkerName, string> = {
   responder: "Operator responder",
   tech: "Tech research loop",
+  india: "India research loop",
 };
-const AGENT_ORDER: WorkerName[] = ["responder", "tech"];
+const AGENT_ORDER: WorkerName[] = ["responder", "tech", "india"];
 
 // The dispatcher republishes status every ~2s; if the freshest row is older
 // than this, treat it as offline (nobody is home to run the agents).

@@ -13,7 +13,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 
-export type AgentName = "responder" | "tech";
+export type AgentName = "responder" | "tech" | "india";
 
 export type AgentStatus = {
   name: AgentName;
@@ -38,6 +38,7 @@ type SupervisorState = {
 const SCRIPTS: Record<AgentName, string> = {
   responder: "scripts/agents/responder.ts",
   tech: "scripts/agents/tech-loop.ts",
+  india: "scripts/agents/india-loop.ts",
 };
 
 const MAX_LOG_LINES = 200;
@@ -53,6 +54,7 @@ function getState(): SupervisorState {
       agents: {
         responder: freshRecord(),
         tech: freshRecord(),
+        india: freshRecord(),
       },
     };
   }

@@ -17,7 +17,7 @@ import { loadPrompt } from "./prompts";
 import { db, DB, ID, Query, emit, setStatus, ensureAgent, recountClusters, writeAudit, ensureRiskLimits, type ClusterRef } from "./appwrite";
 import { fetchLatestFiling, type EdgarFiling } from "./edgar";
 import { fetchTranscript } from "./transcript";
-import { sectorOf, type Sector } from "./universe";
+import { sectorOf, indiaSectorOf, type Sector } from "./universe";
 
 const AUTO_APPROVE = process.env.MERIDIAN_AUTO_APPROVE === "1";
 const BUDGET_DAILY_LIMIT_USD = Number(process.env.MERIDIAN_BUDGET_DAILY_USD || 25);
@@ -135,6 +135,8 @@ export type Ctx = {
   memoId?: string;
   reviseCount?: number;
   agentIds: Record<string, string>;
+  /** Which desk this cycle belongs to. Defaults to "US". */
+  market?: "US" | "IN";
 };
 
 // 1. Filing pipeline ---------------------------------------------------------
@@ -155,6 +157,21 @@ export type Ctx = {
 // chain is unchanged. Each stage is also exported for testing.
 
 async function edgarReader(ctx: Ctx): Promise<EdgarFiling> {
+  // India desk: there is no EDGAR-equivalent fetch, so we run LLM-only
+  // fundamental analysis. The reader returns a thin, clearly-labelled context
+  // object (no filing bytes) and the downstream summarizer/analyst reason from
+  // the model's own knowledge of the NSE-listed company.
+  if (ctx.market === "IN") {
+    return {
+      ticker: ctx.ticker,
+      cik: "NSE",
+      form_type: "NSE-RESULT",
+      filed_at: new Date().toISOString().slice(0, 10),
+      source_url: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(ctx.ticker)}`,
+      primary_doc_url: "llm-only://india",
+      raw_excerpt: `[NO FILING FETCH — INDIA LLM-ONLY MODE] Analyse the NSE-listed company "${ctx.ticker}" from your own knowledge: business model, recent quarterly trajectory, sector context, balance-sheet posture and key risks. Mark any specific figure you are unsure of as [UNSOURCED].`,
+    };
+  }
   if (process.env.MERIDIAN_FAKE_EDGAR === "1") {
     return {
       ticker: ctx.ticker,
@@ -182,7 +199,7 @@ ${edgar.raw_excerpt}
   return extractJson<{ summary: string; highlights: string[] }>(raw);
 }
 
-async function indexFiling(edgar: EdgarFiling, summary: string): Promise<string> {
+async function indexFiling(edgar: EdgarFiling, summary: string, market: "US" | "IN" = "US"): Promise<string> {
   const doc = await db.createDocument(DB, "filings", ID.unique(), {
     ticker: edgar.ticker,
     form_type: edgar.form_type,
@@ -190,6 +207,7 @@ async function indexFiling(edgar: EdgarFiling, summary: string): Promise<string>
     source_url: edgar.source_url,
     status: "indexed",
     vector_id: null,
+    market,
   });
   void summary;
   return doc.$id;
@@ -217,7 +235,7 @@ export async function parser(ctx: Ctx): Promise<Ctx> {
   const { summary, highlights } = await summarize(edgar);
   await emit(id, "thought", `Summarized ${edgar.form_type} for ${ctx.ticker}`, { highlights });
 
-  const filingId = await indexFiling(edgar, summary);
+  const filingId = await indexFiling(edgar, summary, ctx.market ?? "US");
   await setStatus(id, "idle");
 
   return {
@@ -241,7 +259,7 @@ export const _filingPipeline = { edgarReader, summarize, indexFiling };
 // distinct row in the `agents` collection so the Swarm screen shows them
 // separately. The orchestrator picks the right analyst from `sectorOf(ticker)`.
 export async function analyst(ctx: Ctx, reviseConcerns?: string[]): Promise<Ctx> {
-  const sector = sectorOf(ctx.ticker);
+  const sector = ctx.market === "IN" ? indiaSectorOf(ctx.ticker) : sectorOf(ctx.ticker);
   const id = ctx.agentIds[SECTOR_AGENT_ID_KEY[sector]] ?? ctx.agentIds.analyst_tech;
   const prompt = loadPrompt(SECTOR_PROMPT[sector]);
   await setStatus(id, "thinking");
@@ -283,6 +301,7 @@ export async function analyst(ctx: Ctx, reviseConcerns?: string[]): Promise<Ctx>
     vector_id: null,
     entities_json: entitiesJson,
     filing_id: ctx.filing?.id ?? null,
+    market: ctx.market ?? "US",
   });
   await emit(id, "memo", `${memo.title} (conv ${memo.conviction?.toFixed(2)})`, {
     memo_id: doc.$id,
@@ -716,6 +735,7 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
     agent_id: id,
     status: "filled",
     filled_at: new Date().toISOString(),
+    market: ctx.market ?? "US",
   });
   await emit(id, "trade",
     `FILL BUY ${ctx.size!.qty} ${ctx.ticker} @ ${price.toFixed(2)} via ${ctx.route?.algo ?? "default"}`,
@@ -941,30 +961,59 @@ const C: Record<string, ClusterRef> = {
   governance:  { name: "Governance",                theme: "risk"     },
 };
 
-export async function bootstrapAgents(): Promise<Ctx["agentIds"]> {
+// India desk cluster set. Distinct names (so rows never collide with the US
+// desk) and every cluster tagged market:"IN" so the Swarm screen filters them.
+const C_IN: Record<string, ClusterRef> = {
+  tech:        { name: "IT Services — NSE",        theme: "equities",  market: "IN" },
+  healthcare:  { name: "Pharma & Health — NSE",    theme: "equities",  market: "IN" },
+  energy:      { name: "Energy & Materials — NSE", theme: "equities",  market: "IN" },
+  financials:  { name: "Banks & NBFC — NSE",       theme: "equities",  market: "IN" },
+  consumer:    { name: "FMCG & Auto — NSE",        theme: "equities",  market: "IN" },
+  industrials: { name: "Industrials — NSE",        theme: "equities",  market: "IN" },
+  research:    { name: "Research — India",         theme: "earnings",  market: "IN" },
+  quant:       { name: "Quant Research — India",   theme: "signals",   market: "IN" },
+  ops:         { name: "Portfolio Ops — India",    theme: "event",     market: "IN" },
+  committee:   { name: "Investment Committee — India", theme: "event", market: "IN" },
+  treasury:    { name: "Treasury — India",         theme: "financing", market: "IN" },
+  risk:        { name: "Risk — India",             theme: "risk",      market: "IN" },
+  execution:   { name: "Execution — India",        theme: "exec",      market: "IN" },
+  governance:  { name: "Governance — India",       theme: "risk",      market: "IN" },
+};
+
+async function bootstrapFor(c: Record<string, ClusterRef>, suffix = ""): Promise<Ctx["agentIds"]> {
+  const s = suffix ? ` ${suffix}` : "";
   const ids = {
-    parser:              await ensureAgent("Filing Parser",        "research",  C.research),
-    earningsReviewer:    await ensureAgent("Earnings Reviewer",    "research",  C.research),
-    analyst_tech:        await ensureAgent("Tech Analyst",         "research",  C.tech),
-    analyst_healthcare:  await ensureAgent("Healthcare Analyst",   "research",  C.healthcare),
-    analyst_energy:      await ensureAgent("Energy Analyst",       "research",  C.energy),
-    analyst_financials:  await ensureAgent("Financials Analyst",   "research",  C.financials),
-    analyst_consumer:    await ensureAgent("Consumer Analyst",     "research",  C.consumer),
-    analyst_industrials: await ensureAgent("Industrials Analyst",  "research",  C.industrials),
-    quant:               await ensureAgent("Quant Researcher",     "research",  C.quant),
-    critic:              await ensureAgent("Red Team Critic",      "research",  C.research),
-    valuationReviewer:   await ensureAgent("Valuation Reviewer",   "research",  C.research),
-    cio:                 await ensureAgent("CIO / Committee",      "ops",       C.committee),
-    pm:                  await ensureAgent("PM",                   "ops",       C.ops),
-    treasury:            await ensureAgent("Treasury",             "ops",       C.treasury),
-    risk:                await ensureAgent("Risk Officer",         "risk",      C.risk),
-    compliance:          await ensureAgent("Compliance",           "ops",       C.ops),
-    smartRouter:         await ensureAgent("Smart Router",         "execution", C.execution),
-    broker:              await ensureAgent("Paper Broker",         "execution", C.execution),
-    tca:                 await ensureAgent("TCA",                  "ops",       C.execution),
-    attribution:         await ensureAgent("Attribution & Recon",  "ops",       C.ops),
-    budgetController:    await ensureAgent("Budget Controller",    "ops",       C.governance),
+    parser:              await ensureAgent(`Filing Parser${s}`,        "research",  c.research),
+    earningsReviewer:    await ensureAgent(`Earnings Reviewer${s}`,    "research",  c.research),
+    analyst_tech:        await ensureAgent(`Tech Analyst${s}`,         "research",  c.tech),
+    analyst_healthcare:  await ensureAgent(`Healthcare Analyst${s}`,   "research",  c.healthcare),
+    analyst_energy:      await ensureAgent(`Energy Analyst${s}`,       "research",  c.energy),
+    analyst_financials:  await ensureAgent(`Financials Analyst${s}`,   "research",  c.financials),
+    analyst_consumer:    await ensureAgent(`Consumer Analyst${s}`,     "research",  c.consumer),
+    analyst_industrials: await ensureAgent(`Industrials Analyst${s}`,  "research",  c.industrials),
+    quant:               await ensureAgent(`Quant Researcher${s}`,     "research",  c.quant),
+    critic:              await ensureAgent(`Red Team Critic${s}`,      "research",  c.research),
+    valuationReviewer:   await ensureAgent(`Valuation Reviewer${s}`,   "research",  c.research),
+    cio:                 await ensureAgent(`CIO / Committee${s}`,      "ops",       c.committee),
+    pm:                  await ensureAgent(`PM${s}`,                   "ops",       c.ops),
+    treasury:            await ensureAgent(`Treasury${s}`,             "ops",       c.treasury),
+    risk:                await ensureAgent(`Risk Officer${s}`,         "risk",      c.risk),
+    compliance:          await ensureAgent(`Compliance${s}`,           "ops",       c.ops),
+    smartRouter:         await ensureAgent(`Smart Router${s}`,         "execution", c.execution),
+    broker:              await ensureAgent(`Paper Broker${s}`,         "execution", c.execution),
+    tca:                 await ensureAgent(`TCA${s}`,                  "ops",       c.execution),
+    attribution:         await ensureAgent(`Attribution & Recon${s}`,  "ops",       c.ops),
+    budgetController:    await ensureAgent(`Budget Controller${s}`,    "ops",       c.governance),
   };
   await recountClusters();
   return ids;
+}
+
+export function bootstrapAgents(): Promise<Ctx["agentIds"]> {
+  return bootstrapFor(C);
+}
+
+/** India desk roster — same node keys, India-tagged clusters and " · IN" names. */
+export function bootstrapAgentsIndia(): Promise<Ctx["agentIds"]> {
+  return bootstrapFor(C_IN, "· IN");
 }

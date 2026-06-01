@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "agents:tech": "tsx scripts/agents/tech-loop.ts",
+    "agents:india": "tsx scripts/agents/india-loop.ts",
     "agents:responder": "tsx scripts/agents/responder.ts",
     "agents:dispatch": "tsx scripts/agents/dispatcher.ts"
   },
