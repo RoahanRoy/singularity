@@ -851,6 +851,12 @@
                     "array": false
                 },
                 {
+                    "key": "tokens",
+                    "type": "integer",
+                    "required": false,
+                    "array": false
+                },
+                {
                     "key": "meta_json",
                     "type": "string",
                     "size": 4096,

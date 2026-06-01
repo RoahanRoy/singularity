@@ -122,6 +122,7 @@ export type BudgetLedger = Base & {
   category: "llm" | "data" | "compute" | "venue_fees";
   provider: string;
   amount_usd: number;
+  tokens: number | null;
   meta_json: string | null;
   occurred_at: string;
 };

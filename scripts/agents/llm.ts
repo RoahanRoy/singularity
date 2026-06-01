@@ -15,6 +15,30 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { recordSpend } from "./appwrite";
 
+/** Token counts reported by the SDK `result` message. */
+type TokenUsage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+};
+
+/**
+ * Total tokens actually consumed on the subscription for this call — the honest
+ * "real usage" figure the budget gate counts (vs the SDK's API-equivalent $,
+ * which you don't pay on a Pro/Max plan). Sums every token class the model
+ * processed: fresh input, output, and cache read/write.
+ */
+function totalTokens(u: TokenUsage | null): number {
+  if (!u) return 0;
+  return (
+    (u.input_tokens || 0) +
+    (u.output_tokens || 0) +
+    (u.cache_creation_input_tokens || 0) +
+    (u.cache_read_input_tokens || 0)
+  );
+}
+
 type AskOpts = {
   system: string;
   user: string;
@@ -26,7 +50,7 @@ type AskOpts = {
 export async function ask({ system, user, model = "sonnet", label }: AskOpts): Promise<string> {
   const out: string[] = [];
   let costUsd = 0;
-  let usage: unknown = null;
+  let usage: TokenUsage | null = null;
   let modelUsage: unknown = null;
 
   const iter = query({
@@ -45,7 +69,7 @@ export async function ask({ system, user, model = "sonnet", label }: AskOpts): P
       }
     } else if (msg.type === "result") {
       costUsd = msg.total_cost_usd || 0;
-      usage = msg.usage;
+      usage = (msg.usage as TokenUsage) ?? null;
       modelUsage = msg.modelUsage;
     }
   }
@@ -54,7 +78,7 @@ export async function ask({ system, user, model = "sonnet", label }: AskOpts): P
     label: label ?? null,
     usage,
     modelUsage,
-  });
+  }, totalTokens(usage));
 
   return out.join("").trim();
 }

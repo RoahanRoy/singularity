@@ -23,8 +23,8 @@
 import { nextTicker, sectorOf } from "./universe";
 import {
   bootstrapAgents,
-  parser, earningsReview, analyst, critic, valuation,
-  pm, risk, riskOverlay, compliance, smartRouter, broker, tca,
+  parser, earningsReview, analyst, quant, critic, valuation, cio,
+  pm, treasury, risk, riskOverlay, compliance, smartRouter, broker, tca, attribution,
   budgetController,
   type Ctx,
 } from "./nodes";
@@ -64,15 +64,19 @@ async function runCycle(agentIds: AgentIds): Promise<void> {
   ctx = await parser(ctx);
   ctx = await earningsReview(ctx);
   ctx = await analyst(ctx);
+  ctx = await quant(ctx);
   ctx = await critic(ctx);
   ctx = await valuation(ctx);
+  ctx = await cio(ctx);
   ctx = await pm(ctx);
+  ctx = await treasury(ctx);
   ctx = await risk(ctx);
   ctx = await riskOverlay(ctx);
   ctx = await compliance(ctx);
   ctx = await smartRouter(ctx);
   ctx = await broker(ctx);
   ctx = await tca(ctx);
+  ctx = await attribution(ctx);
 
   console.log(`\n=== Done. Trade: ${ctx.trade?.status ?? "no fill"} ===`);
 }
@@ -92,7 +96,7 @@ async function main() {
     try {
       const verdict = await budgetController(agentIds);
       if (verdict.verdict === "kill") {
-        console.log(`[loop] budget KILL — $${verdict.spend_24h_usd.toFixed(4)} of $${verdict.limit_24h_usd} (${verdict.pct_of_limit.toFixed(1)}%). Stopping.`);
+        console.log(`[loop] budget KILL — ${verdict.tokens_24h.toLocaleString()} of ${verdict.token_limit_24h.toLocaleString()} tokens (${verdict.pct_of_limit.toFixed(1)}%). Stopping.`);
         break;
       }
       throttleMs = verdict.verdict === "throttle"

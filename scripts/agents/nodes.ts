@@ -21,6 +21,12 @@ import { sectorOf, type Sector } from "./universe";
 
 const AUTO_APPROVE = process.env.MERIDIAN_AUTO_APPROVE === "1";
 const BUDGET_DAILY_LIMIT_USD = Number(process.env.MERIDIAN_BUDGET_DAILY_USD || 25);
+// Real subscription usage gate: total tokens processed in the rolling 24h.
+// On a Pro/Max plan you pay nothing per call, so we cap actual token throughput
+// rather than the SDK's API-equivalent dollars. Default ~5M tokens/day.
+const BUDGET_DAILY_TOKENS = Number(process.env.MERIDIAN_BUDGET_DAILY_TOKENS || 5_000_000);
+const fmtTok = (n: number) =>
+  n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
 
 const SECTOR_PROMPT: Record<Sector, string> = {
   tech:        "tech-analyst",
@@ -89,10 +95,39 @@ export type Ctx = {
     venue_score: number;
     notes: string;
   };
+  signal?: {
+    score: number;
+    direction: "long" | "short" | "neutral";
+    confidence: number;
+    factors: { name: string; z: number; note: string }[];
+    notes: string;
+  };
+  ic?: {
+    decision: "approve" | "reject" | "revise";
+    conviction: number;
+    target_weight_hint_pct: number;
+    rationale: string;
+    dissent: string;
+  };
+  financing?: {
+    approved: boolean;
+    funding_source: "cash" | "margin" | "mixed";
+    est_financing_bps: number;
+    borrow_available: boolean;
+    notes: string;
+  };
+  attribution?: {
+    reconciled: boolean;
+    breaks: string[];
+    pnl_attribution: { source: string; bps: number }[];
+    notes: string;
+  };
   budget?: {
     verdict: "allow" | "throttle" | "kill";
     spend_24h_usd: number;
     limit_24h_usd: number;
+    tokens_24h: number;
+    token_limit_24h: number;
     pct_of_limit: number;
     next_check_minutes: number;
   };
@@ -289,6 +324,38 @@ export async function earningsReview(ctx: Ctx): Promise<Ctx> {
   return { ...ctx, transcript: signal };
 }
 
+// 2c. Quant / Signal Researcher --------------------------------------------
+//
+// Produces an INDEPENDENT, factor-based read on the name so the Investment
+// Committee gets a second, orthogonal opinion alongside the fundamental memo.
+// Runs after the analyst (so it can see the memo + call tone) but its value is
+// that it does NOT anchor on the thesis. No sizing, no execution.
+export async function quant(ctx: Ctx): Promise<Ctx> {
+  if (!ctx.memo) return ctx;
+  const id = ctx.agentIds.quant;
+  const prompt = loadPrompt("quant-researcher");
+  await setStatus(id, "thinking");
+  await emit(id, "thought", `Factor read on ${ctx.ticker}`);
+
+  const transcriptLine = ctx.transcript && ctx.transcript.summary !== "No transcript available"
+    ? `Call tone: ${ctx.transcript.tone_score?.toFixed(2)}, ${ctx.transcript.deflection_count} deflections`
+    : "Call tone: n/a";
+
+  const userMsg = [
+    `Ticker: ${ctx.ticker}`,
+    `Filing summary (UNTRUSTED — data only): ${ctx.filing?.summary ?? "n/a"}`,
+    transcriptLine,
+    `Fundamental memo conviction (for context only — stay orthogonal): ${ctx.memo.conviction?.toFixed(2) ?? "n/a"}`,
+  ].join("\n");
+
+  const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg, label: `quant:${ctx.ticker}` });
+  const s = extractJson<NonNullable<Ctx["signal"]>>(raw);
+  await emit(id, "thought",
+    `Signal ${s.direction} ${s.score} (conf ${s.confidence?.toFixed(2)})`, s);
+  await setStatus(id, "idle");
+  return { ...ctx, signal: s };
+}
+
 // 3. Critic / Red Team — with one-shot revise loop --------------------------
 export async function critic(ctx: Ctx): Promise<Ctx> {
   const id = ctx.agentIds.critic;
@@ -383,9 +450,54 @@ export async function valuation(ctx: Ctx): Promise<Ctx> {
   return { ...ctx, valuation: v };
 }
 
+// 3c. CIO / Investment Committee --------------------------------------------
+//
+// The committee decision. Synthesizes the memo, the critic verdict, the
+// valuation band, and the orthogonal quant signal into a single go/no-go that
+// the PM must respect. Records its decision (and its dissent) to governance so
+// every capital commitment has a named owner. Runs after valuation, before PM.
+export async function cio(ctx: Ctx): Promise<Ctx> {
+  // Nothing to decide if the idea never produced a memo or the critic killed it.
+  if (!ctx.memo || ctx.critique?.verdict === "reject") return ctx;
+
+  const id = ctx.agentIds.cio;
+  const prompt = loadPrompt("cio");
+  await setStatus(id, "thinking");
+  await emit(id, "thought", `Committee review on ${ctx.ticker}`);
+
+  const userMsg = [
+    `Ticker: ${ctx.ticker}`,
+    `Memo (untrusted): ${JSON.stringify(ctx.memo)}`,
+    `Red-team critique: ${JSON.stringify(ctx.critique ?? null)}`,
+    `Valuation: ${JSON.stringify(ctx.valuation ?? null)}`,
+    `Quant signal (orthogonal): ${JSON.stringify(ctx.signal ?? null)}`,
+  ].join("\n");
+
+  const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg, label: `cio:${ctx.ticker}` });
+  const ic = extractJson<NonNullable<Ctx["ic"]>>(raw);
+
+  await db.createDocument(DB, "governance_events", ID.unique(), {
+    kind: ic.decision === "approve" ? "approval" : ic.decision === "reject" ? "block" : "policy_change",
+    actor: "investment-committee",
+    target: ctx.ticker,
+    reason: `IC ${ic.decision} (conv ${ic.conviction?.toFixed(2)}): ${ic.rationale}`.slice(0, 500),
+    occurred_at: new Date().toISOString(),
+  });
+  await emit(id, ic.decision === "approve" ? "thought" : "alert",
+    `IC ${ic.decision} ${ctx.ticker} (conv ${ic.conviction?.toFixed(2)}) — dissent: ${ic.dissent}`, ic);
+  await setStatus(id, "idle");
+  return { ...ctx, ic };
+}
+
 // 4. PM ---------------------------------------------------------------------
 export async function pm(ctx: Ctx): Promise<Ctx> {
   const id = ctx.agentIds.pm;
+  // Investment Committee gate: a reject kills the idea; a revise stages it.
+  if (ctx.ic && ctx.ic.decision !== "approve") {
+    await emit(id, "alert", `${ctx.ic.decision === "reject" ? "BLOCKED" : "STAGED"} ${ctx.ticker} — IC ${ctx.ic.decision}: ${ctx.ic.rationale}`.slice(0, 200));
+    if (ctx.memoId) await db.updateDocument(DB, "memos", ctx.memoId, { status: ctx.ic.decision === "reject" ? "rejected" : "review" });
+    return ctx;
+  }
   // Valuation gate: a `rich` verdict overrides conviction and stages for review.
   if (ctx.valuation?.verdict === "rich") {
     await emit(id, "alert", `STAGED ${ctx.ticker} — valuation rich (${ctx.valuation.implied_upside_pct?.toFixed(1)}% upside)`);
@@ -400,7 +512,9 @@ export async function pm(ctx: Ctx): Promise<Ctx> {
     model: prompt.meta.model,
     system: prompt.body,
     user: `Memo: ${JSON.stringify(ctx.memo)}
-Critic score: ${ctx.critique?.score}`,
+Critic score: ${ctx.critique?.score}
+Quant signal: ${ctx.signal ? `${ctx.signal.direction} ${ctx.signal.score} (conf ${ctx.signal.confidence})` : "n/a"}
+IC decision: approve (conviction ${ctx.ic?.conviction ?? "n/a"}, soft weight ceiling ${ctx.ic?.target_weight_hint_pct ?? "n/a"}%)`,
     label: `pm:${ctx.ticker}`,
   });
   const size = extractJson<NonNullable<Ctx["size"]>>(raw);
@@ -409,10 +523,44 @@ Critic score: ${ctx.critique?.score}`,
   return { ...ctx, size };
 }
 
+// 4b. Treasury / Financing --------------------------------------------------
+//
+// Once the PM has sized an approved trade, Treasury decides how it is funded
+// (cash / margin / borrow) and the financing drag. An unfundable position —
+// e.g. a short with no locatable borrow — is blocked here, before risk and
+// execution ever see it. No view on the thesis; fundability only.
+export async function treasury(ctx: Ctx): Promise<Ctx> {
+  if (!ctx.size || ctx.size.qty === 0) return ctx;
+
+  const id = ctx.agentIds.treasury;
+  const prompt = loadPrompt("treasury");
+  await setStatus(id, "thinking");
+
+  const userMsg = [
+    `Ticker: ${ctx.ticker}`,
+    `Side: buy`,
+    `Qty: ${ctx.size.qty}`,
+    `Weight pct: ${ctx.size.weight_pct}`,
+    `Conviction: ${ctx.memo?.conviction ?? 0}`,
+  ].join("\n");
+
+  const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg, label: `treasury:${ctx.ticker}` });
+  const f = extractJson<NonNullable<Ctx["financing"]>>(raw);
+  await emit(id, f.approved ? "thought" : "alert",
+    `Financing ${f.approved ? "OK" : "BLOCK"} ${ctx.ticker} — ${f.funding_source}, ${f.est_financing_bps?.toFixed(1)}bps`, f);
+  await setStatus(id, "idle");
+  return { ...ctx, financing: f };
+}
+
 // 5. Risk -------------------------------------------------------------------
 export async function risk(ctx: Ctx): Promise<Ctx> {
   const id = ctx.agentIds.risk;
   if (!ctx.size || ctx.size.qty === 0) return ctx;
+  // Treasury gate: an unfundable position never reaches risk/execution.
+  if (ctx.financing && !ctx.financing.approved) {
+    await emit(id, "alert", `BLOCKED ${ctx.ticker} — treasury could not fund (${ctx.financing.notes})`.slice(0, 200));
+    return ctx;
+  }
 
   const prompt = loadPrompt("risk-officer");
   await setStatus(id, "thinking");
@@ -638,73 +786,139 @@ export async function tca(ctx: Ctx): Promise<Ctx> {
   return { ...ctx, tca: t };
 }
 
+// 8b. Attribution & Reconciliation ------------------------------------------
+//
+// Closes the loop after the fill. Reconciles intended vs executed, confirms the
+// trade ties out, and attributes the new position's expected return to its
+// factor/alpha sources (with TCA fees and treasury financing as cost lines).
+// Records, never acts. Writes a reconciliation break to audit_log if found.
+export async function attribution(ctx: Ctx): Promise<Ctx> {
+  if (!ctx.trade || ctx.trade.status !== "filled") return ctx;
+
+  const id = ctx.agentIds.attribution;
+  const prompt = loadPrompt("attribution");
+  await setStatus(id, "thinking");
+
+  const userMsg = [
+    `Intended: BUY ${ctx.size?.qty ?? 0} ${ctx.ticker}`,
+    `Executed: ${ctx.trade.status} ${ctx.size?.qty ?? 0} ${ctx.ticker} @ ${ctx.trade.fill_price ?? "n/a"}`,
+    `TCA: slippage ${ctx.tca?.slippage_bps ?? "n/a"}bps, fees ${ctx.tca?.fees_bps ?? "n/a"}bps`,
+    `Financing: ${ctx.financing ? `${ctx.financing.est_financing_bps}bps (${ctx.financing.funding_source})` : "n/a"}`,
+    `Quant signal: ${ctx.signal ? JSON.stringify(ctx.signal.factors) : "n/a"}`,
+    `Memo conviction: ${ctx.memo?.conviction ?? "n/a"}`,
+  ].join("\n");
+
+  const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg, label: `attribution:${ctx.ticker}` });
+  const a = extractJson<NonNullable<Ctx["attribution"]>>(raw);
+
+  await writeAudit("attribution", "post_trade_recon", ctx.ticker,
+    a.reconciled ? "allow" : "block",
+    a.reconciled
+      ? `Reconciled ${ctx.ticker}; ${a.pnl_attribution?.length ?? 0} attribution lines.`
+      : `RECON BREAK ${ctx.ticker}: ${a.breaks?.join("; ")}`);
+
+  await emit(id, a.reconciled ? "thought" : "alert",
+    a.reconciled
+      ? `Reconciled ${ctx.ticker} — ${a.notes}`.slice(0, 200)
+      : `RECON BREAK ${ctx.ticker}: ${a.breaks?.join("; ")}`.slice(0, 200),
+    a);
+  await setStatus(id, "idle");
+  return { ...ctx, attribution: a };
+}
+
 // 9. Budget Controller ------------------------------------------------------
 //
 // Polled by the orchestrator (not chained per ticker). Reads the budget_ledger
 // for the rolling 24h window and returns an allow/throttle/kill verdict the
-// loop MUST obey. Pure spend gate — no quality discretion.
+// loop MUST obey. This is a single REASONING agent: it reads the usage summary
+// and reasons about the verdict (it may throttle EARLY if one category spikes),
+// but a deterministic token clamp is the non-negotiable backstop — the loop can
+// never run more leniently than the hard bands, even if the LLM errs or the call
+// fails. Gates on REAL subscription usage (tokens processed), not the SDK's
+// API-equivalent dollars, which you don't actually pay on a Pro/Max plan.
+const SEVERITY: Record<"allow" | "throttle" | "kill", number> = { allow: 0, throttle: 1, kill: 2 };
+
 export async function budgetController(
   agentIds: Record<string, string>,
 ): Promise<NonNullable<Ctx["budget"]>> {
   const id = agentIds.budgetController;
-  const prompt = loadPrompt("budget-controller");
   await setStatus(id, "thinking");
 
   const sinceIso = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   let spend = 0;
-  const byCat: Record<string, number> = {};
+  let tokens = 0;
+  const tokByCat: Record<string, number> = {};
   try {
     const rows = await db.listDocuments(DB, "budget_ledger", [
       Query.greaterThan("occurred_at", sinceIso),
       Query.limit(500),
     ]);
-    for (const r of rows.documents as unknown as Array<{ amount_usd: number; category: string }>) {
+    for (const r of rows.documents as unknown as Array<{ amount_usd: number; tokens: number | null; category: string }>) {
       spend += Number(r.amount_usd) || 0;
-      byCat[r.category] = (byCat[r.category] || 0) + (Number(r.amount_usd) || 0);
+      const t = Number(r.tokens) || 0;
+      tokens += t;
+      tokByCat[r.category] = (tokByCat[r.category] || 0) + t;
     }
   } catch (err) {
     console.warn(`[budget] could not read budget_ledger:`, (err as Error).message);
   }
 
-  const userMsg = [
-    `24h spend (USD): ${spend.toFixed(4)}`,
-    `24h cap (USD): ${BUDGET_DAILY_LIMIT_USD}`,
-    `By category: ${JSON.stringify(byCat)}`,
-  ].join("\n");
-
-  const raw = await ask({
-    model: prompt.meta.model,
-    system: prompt.body,
-    user: userMsg,
-    label: "budget-controller",
-  });
-  const b = extractJson<NonNullable<Ctx["budget"]>>(raw);
-
-  // Defensive clamp — never trust the LLM with the kill switch alone.
-  const pct = BUDGET_DAILY_LIMIT_USD > 0 ? (spend / BUDGET_DAILY_LIMIT_USD) * 100 : 0;
-  const deterministicVerdict: "allow" | "throttle" | "kill" =
+  const pct = BUDGET_DAILY_TOKENS > 0 ? (tokens / BUDGET_DAILY_TOKENS) * 100 : 0;
+  // Deterministic clamp — the floor the LLM can tighten but never loosen.
+  const clamp: "allow" | "throttle" | "kill" =
     pct >= 100 ? "kill" : pct >= 70 ? "throttle" : "allow";
-  const finalVerdict =
-    deterministicVerdict === "kill" || b.verdict === "kill"
-      ? "kill"
-      : deterministicVerdict === "throttle" || b.verdict === "throttle"
-        ? "throttle"
-        : "allow";
+
+  // Reasoning pass: let the controller agent weigh the breakdown and decide.
+  // Skipped once we are already at the hard kill — a kill switch that burns
+  // tokens to confirm it should kill is self-defeating.
+  let llmVerdict: "allow" | "throttle" | "kill" = clamp;
+  let llmNext = clamp === "allow" ? 30 : clamp === "throttle" ? 15 : 0;
+  let reasoning = "";
+  if (clamp !== "kill") {
+    try {
+      const prompt = loadPrompt("budget-controller");
+      const byCat = Object.entries(tokByCat)
+        .map(([c, t]) => `${c}: ${fmtTok(t)}`)
+        .join(", ") || "none";
+      const userMsg = [
+        `24h tokens processed: ${tokens} (${fmtTok(tokens)})`,
+        `By category: ${byCat}`,
+        `24h token cap: ${BUDGET_DAILY_TOKENS} (${fmtTok(BUDGET_DAILY_TOKENS)})`,
+        `pct_of_limit: ${pct.toFixed(1)}%`,
+        `Informational only — real $ spend (API-equivalent, not paid on a subscription): $${spend.toFixed(4)}`,
+      ].join("\n");
+      const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg, label: "budget" });
+      const j = extractJson<{ verdict: "allow" | "throttle" | "kill"; next_check_minutes: number; reasoning: string }>(raw);
+      if (j.verdict === "allow" || j.verdict === "throttle" || j.verdict === "kill") llmVerdict = j.verdict;
+      if (Number.isFinite(j.next_check_minutes)) llmNext = j.next_check_minutes;
+      reasoning = j.reasoning ?? "";
+    } catch (err) {
+      // On any failure, fall back to the deterministic clamp (fail-safe, not fail-open).
+      console.warn(`[budget] reasoning pass failed, using clamp:`, (err as Error).message);
+    }
+  }
+
+  // Final verdict = the MORE conservative of clamp and the agent's call.
+  const finalVerdict = SEVERITY[llmVerdict] >= SEVERITY[clamp] ? llmVerdict : clamp;
+  const next_check_minutes = finalVerdict === "kill" ? 0 : finalVerdict === "throttle" ? Math.max(1, llmNext || 15) : (llmNext || 30);
 
   const out: NonNullable<Ctx["budget"]> = {
     verdict: finalVerdict,
     spend_24h_usd: spend,
     limit_24h_usd: BUDGET_DAILY_LIMIT_USD,
+    tokens_24h: tokens,
+    token_limit_24h: BUDGET_DAILY_TOKENS,
     pct_of_limit: pct,
-    next_check_minutes: b.next_check_minutes ?? (finalVerdict === "allow" ? 30 : finalVerdict === "throttle" ? 15 : 0),
+    next_check_minutes,
   };
 
-  await writeAudit("budget-controller", "spend_check", "loop", finalVerdict === "kill" ? "block" : "allow",
-    `24h $${spend.toFixed(4)} / $${BUDGET_DAILY_LIMIT_USD} (${pct.toFixed(1)}%) → ${finalVerdict}`);
+  const human = `${fmtTok(tokens)} / ${fmtTok(BUDGET_DAILY_TOKENS)} tok (${pct.toFixed(1)}%)`;
+  await writeAudit("budget-controller", "usage_check", "loop", finalVerdict === "kill" ? "block" : "allow",
+    `24h ${human} → ${finalVerdict}${finalVerdict !== clamp ? ` (agent tightened from ${clamp})` : ""} · $${spend.toFixed(4)} real`);
 
   await emit(id, finalVerdict === "kill" ? "alert" : "thought",
-    `Budget ${finalVerdict} — $${spend.toFixed(4)} / $${BUDGET_DAILY_LIMIT_USD} (${pct.toFixed(1)}%)`,
-    out);
+    `Budget ${finalVerdict} — ${human}${reasoning ? ` · ${reasoning}` : ""}`.slice(0, 200),
+    { ...out, tokByCat, clamp, llmVerdict, reasoning });
   await setStatus(id, "idle");
   return out;
 }
@@ -718,7 +932,10 @@ const C: Record<string, ClusterRef> = {
   consumer:    { name: "Consumer — Equities US",    theme: "equities" },
   industrials: { name: "Industrials — Equities US", theme: "equities" },
   research:    { name: "Research",                  theme: "earnings" },
+  quant:       { name: "Quant Research",            theme: "signals"  },
   ops:         { name: "Portfolio Ops",             theme: "event"    },
+  committee:   { name: "Investment Committee",      theme: "event"    },
+  treasury:    { name: "Treasury",                  theme: "financing"},
   risk:        { name: "Risk",                      theme: "risk"     },
   execution:   { name: "Execution",                 theme: "exec"     },
   governance:  { name: "Governance",                theme: "risk"     },
@@ -734,14 +951,18 @@ export async function bootstrapAgents(): Promise<Ctx["agentIds"]> {
     analyst_financials:  await ensureAgent("Financials Analyst",   "research",  C.financials),
     analyst_consumer:    await ensureAgent("Consumer Analyst",     "research",  C.consumer),
     analyst_industrials: await ensureAgent("Industrials Analyst",  "research",  C.industrials),
+    quant:               await ensureAgent("Quant Researcher",     "research",  C.quant),
     critic:              await ensureAgent("Red Team Critic",      "research",  C.research),
     valuationReviewer:   await ensureAgent("Valuation Reviewer",   "research",  C.research),
+    cio:                 await ensureAgent("CIO / Committee",      "ops",       C.committee),
     pm:                  await ensureAgent("PM",                   "ops",       C.ops),
+    treasury:            await ensureAgent("Treasury",             "ops",       C.treasury),
     risk:                await ensureAgent("Risk Officer",         "risk",      C.risk),
     compliance:          await ensureAgent("Compliance",           "ops",       C.ops),
     smartRouter:         await ensureAgent("Smart Router",         "execution", C.execution),
     broker:              await ensureAgent("Paper Broker",         "execution", C.execution),
     tca:                 await ensureAgent("TCA",                  "ops",       C.execution),
+    attribution:         await ensureAgent("Attribution & Recon",  "ops",       C.ops),
     budgetController:    await ensureAgent("Budget Controller",    "ops",       C.governance),
   };
   await recountClusters();

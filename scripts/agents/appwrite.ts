@@ -120,6 +120,7 @@ export async function recordSpend(
   provider: string,
   amountUsd: number,
   meta?: unknown,
+  tokens?: number,
 ): Promise<void> {
   if (!Number.isFinite(amountUsd) || amountUsd < 0) return;
   try {
@@ -127,6 +128,7 @@ export async function recordSpend(
       category,
       provider,
       amount_usd: Number(amountUsd.toFixed(6)),
+      tokens: Number.isFinite(tokens) && (tokens as number) >= 0 ? Math.round(tokens as number) : null,
       meta_json: meta ? JSON.stringify(meta).slice(0, 4000) : null,
       occurred_at: new Date().toISOString(),
     });
