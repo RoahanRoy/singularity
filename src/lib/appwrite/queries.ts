@@ -2,7 +2,25 @@
 
 import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type ModelRoute, type Pipeline, type ComputeNode, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc } from "./schema";
+import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type ModelRoute, type Pipeline, type ComputeNode, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc } from "./schema";
+
+export async function listAgents(limit = 200): Promise<Agent[]> {
+  const res = await databases.listDocuments<Agent & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.agents,
+    [Query.limit(limit)],
+  );
+  return res.documents;
+}
+
+export function subscribeAgents(onChange: (a: Agent) => void) {
+  const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.agents}.documents`;
+  return client.subscribe<Agent & Models.Document>(channel, (msg) => {
+    if (msg.events.some((e) => e.endsWith(".create") || e.endsWith(".update"))) {
+      onChange(msg.payload);
+    }
+  });
+}
 
 export async function listClusters(): Promise<Cluster[]> {
   const res = await databases.listDocuments<Cluster & Models.Document>(
