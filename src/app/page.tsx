@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Shell, type ScreenId } from "@/components/meridian/Shell";
 import { AuthGate } from "@/components/meridian/AuthGate";
+import { MarketProvider } from "@/components/meridian/MarketContext";
 import { SwarmScreen } from "@/components/meridian/screens/Swarm";
 import { ResearchScreen } from "@/components/meridian/screens/Research";
 import { PortfolioScreen } from "@/components/meridian/screens/Portfolio";
@@ -22,9 +23,11 @@ export default function Home() {
   const Screen = SCREENS[active];
   return (
     <AuthGate>
-      <Shell active={active} setActive={setActive}>
-        <Screen />
-      </Shell>
+      <MarketProvider>
+        <Shell active={active} setActive={setActive}>
+          <Screen />
+        </Shell>
+      </MarketProvider>
     </AuthGate>
   );
 }

@@ -1,7 +1,8 @@
 "use client";
 
 import { ReactNode, useEffect, useState } from "react";
-import { ticker } from "@/lib/meridian/data";
+import { ticker, tickerIN } from "@/lib/meridian/data";
+import { useMarket } from "./MarketContext";
 
 export function Panel({
   title,
@@ -49,6 +50,26 @@ export function UTCClock() {
   );
 }
 
+/** Local exchange clock — UTC for US (NYSE), IST for India (NSE). */
+export function ExchangeClock({ market }: { market: "US" | "IN" }) {
+  const [t, setT] = useState<Date | null>(null);
+  useEffect(() => {
+    setT(new Date());
+    const id = setInterval(() => setT(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  if (market !== "IN") return <UTCClock />;
+  if (!t) return <span suppressHydrationWarning>00:00:00 IST</span>;
+  // IST is UTC+5:30 — derive from the UTC epoch so it's locale-independent.
+  const ist = new Date(t.getTime() + (5 * 60 + 30) * 60 * 1000);
+  const z = (n: number) => String(n).padStart(2, "0");
+  return (
+    <span suppressHydrationWarning>
+      {z(ist.getUTCHours())}:{z(ist.getUTCMinutes())}:{z(ist.getUTCSeconds())} IST
+    </span>
+  );
+}
+
 export function Sparkline({
   data,
   color = "var(--ink-1)",
@@ -78,7 +99,9 @@ export function Sparkline({
 }
 
 export function MarketTicker() {
-  const items = [...ticker, ...ticker];
+  const { market } = useMarket();
+  const src = market === "IN" ? tickerIN : ticker;
+  const items = [...src, ...src];
   return (
     <div className="ticker marquee-wrap">
       <div className="marquee">

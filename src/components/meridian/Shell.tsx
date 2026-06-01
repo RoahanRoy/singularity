@@ -3,8 +3,9 @@
 import { ReactNode, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { MarketTicker, UTCClock } from "./primitives";
+import { MarketTicker, ExchangeClock } from "./primitives";
 import { useOperator } from "./AuthGate";
+import { useMarket } from "./MarketContext";
 import { signOutOperator } from "@/lib/auth/operator";
 
 export type ScreenId = "swarm" | "research" | "portfolio" | "console" | "compute";
@@ -26,13 +27,14 @@ const CRUMBS: Record<ScreenId, [string, string]> = {
 };
 
 function Rail({ active, setActive }: { active: ScreenId; setActive: (id: ScreenId) => void }) {
+  const { market } = useMarket();
   return (
     <aside className="rail">
       <div className="rail-brand">
         <div className="mark" />
         <div>
           <div className="name">MERIDIAN</div>
-          <div className="sub">AUTONOMOUS CAPITAL INTELLIGENCE</div>
+          <div className="sub">{market === "IN" ? "INDIA DESK · NSE / BSE" : "AUTONOMOUS CAPITAL INTELLIGENCE"}</div>
         </div>
       </div>
 
@@ -62,10 +64,20 @@ function Rail({ active, setActive }: { active: ScreenId; setActive: (id: ScreenI
           lineHeight: 1.95,
         }}
       >
-        <div><span className="amber">●</span> Flagship · $1.28B</div>
-        <div><span className="amber">●</span> Macro Overlay · $0.41B</div>
-        <div><span className="amber">●</span> Vol Arbitrage · $0.18B</div>
-        <div style={{ color: "var(--ink-4)" }}>+ 2 paused</div>
+        {market === "IN" ? (
+          <>
+            <div><span className="amber">●</span> India Fund · KITE</div>
+            <div><span className="amber">●</span> NSE Equities · live</div>
+            <div style={{ color: "var(--ink-4)" }}>connect a Kite account →</div>
+          </>
+        ) : (
+          <>
+            <div><span className="amber">●</span> Flagship · $1.28B</div>
+            <div><span className="amber">●</span> Macro Overlay · $0.41B</div>
+            <div><span className="amber">●</span> Vol Arbitrage · $0.18B</div>
+            <div style={{ color: "var(--ink-4)" }}>+ 2 paused</div>
+          </>
+        )}
       </div>
 
       <div className="rail-section">Posture</div>
@@ -131,8 +143,46 @@ function RailFoot() {
   );
 }
 
+function MarketToggle() {
+  const { market, setMarket } = useMarket();
+  const base: React.CSSProperties = {
+    background: "transparent",
+    border: 0,
+    padding: "3px 9px",
+    font: "inherit",
+    fontFamily: "var(--mono)",
+    fontSize: 11,
+    letterSpacing: "0.08em",
+    cursor: "pointer",
+    color: "var(--ink-3)",
+    borderRadius: 4,
+  };
+  const on: React.CSSProperties = { ...base, color: "var(--ink-0)", background: "var(--line-soft)" };
+  return (
+    <div
+      role="group"
+      aria-label="Market"
+      style={{
+        display: "inline-flex",
+        border: "1px solid var(--line-strong)",
+        borderRadius: 6,
+        padding: 1,
+        gap: 1,
+      }}
+    >
+      <button style={market === "US" ? on : base} onClick={() => setMarket("US")} aria-pressed={market === "US"}>
+        🇺🇸 US
+      </button>
+      <button style={market === "IN" ? on : base} onClick={() => setMarket("IN")} aria-pressed={market === "IN"}>
+        🇮🇳 IN
+      </button>
+    </div>
+  );
+}
+
 function TopBar({ active }: { active: ScreenId }) {
   const [a, b] = CRUMBS[active];
+  const { market } = useMarket();
   return (
     <header className="topbar">
       <div className="crumbs">
@@ -142,12 +192,13 @@ function TopBar({ active }: { active: ScreenId }) {
       </div>
       <MarketTicker />
       <div className="topbar-right">
+        <MarketToggle />
         <span className="pill">
           <span className="pulse" />
-          MARKETS OPEN · NYSE
+          MARKETS OPEN · {market === "IN" ? "NSE" : "NYSE"}
         </span>
         <span className="mono">
-          <UTCClock />
+          <ExchangeClock market={market} />
         </span>
       </div>
     </header>
