@@ -273,13 +273,14 @@ async function seedTrades(clusterIds: Record<string, string>) {
   console.log("trades +", PENDING_TRADES.length);
 }
 
+const OPERATOR = process.env.MERIDIAN_OPERATOR_NAME || "Operator";
 const GOV_EVENTS = [
-  { kind: "approval"      as const, actor: "K. Park",            target: "trade:NVDA buy 4200",  reason: "within auto-execute cap" },
+  { kind: "approval"      as const, actor: OPERATOR,             target: "trade:NVDA buy 4200",  reason: "within auto-execute cap" },
   { kind: "block"         as const, actor: "risk/r-04",          target: "trade:TSM call spread", reason: "VaR breach projected" },
-  { kind: "override"      as const, actor: "K. Park",            target: "rule:china-semi-cap",   reason: "PM authorized 5% headroom" },
+  { kind: "override"      as const, actor: OPERATOR,             target: "rule:china-semi-cap",   reason: "PM authorized 5% headroom" },
   { kind: "approval"      as const, actor: "exec/x-19",          target: "memo:TSM Q4",           reason: "quorum 5/6" },
   { kind: "policy_change" as const, actor: "governance/gov-01",  target: "rule:voice-trade",      reason: "disabled for session" },
-  { kind: "approval"      as const, actor: "K. Park",            target: "spawn:8 forensic agts", reason: "budget $480 within cap" },
+  { kind: "approval"      as const, actor: OPERATOR,             target: "spawn:8 forensic agts", reason: "budget $480 within cap" },
 ];
 
 async function seedGovEvents() {

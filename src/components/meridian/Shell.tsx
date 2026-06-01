@@ -155,10 +155,12 @@ function TopBar({ active }: { active: ScreenId }) {
 }
 
 function StatusBar() {
+  const op = useOperator();
+  const operatorName = op?.name || op?.email || "—";
   return (
     <footer className="status">
       <div className="cell"><span className="k">Session</span><span className="v mono">#2,841</span></div>
-      <div className="cell"><span className="k">Operator</span><span className="v">K. Park</span></div>
+      <div className="cell"><span className="k">Operator</span><span className="v">{operatorName}</span></div>
       <div className="cell"><span className="k">Net</span><span className="v mono">+$10.45M</span><span className="ok">▲ 0.82%</span></div>
       <div className="cell"><span className="k">Agents</span><span className="v mono">4,552 / 6,128</span></div>
       <div className="cell"><span className="k">Inference</span><span className="v mono">48,221 /s</span></div>
