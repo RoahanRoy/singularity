@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Panel } from "../primitives";
+import { useMarket } from "../MarketContext";
+import { KiteAccountsPanel } from "../KiteAccounts";
+import { fmtMoney, fmtFullMoney } from "@/lib/meridian/format";
 import {
   listPositions,
   listPendingTrades,
@@ -16,21 +19,10 @@ import type {
   Scenario,
   FactorExposure,
   ScenarioBranch,
+  Market,
 } from "@/lib/appwrite/schema";
 
 // ── helpers ────────────────────────────────────────────────────────────────
-
-function fmtUsd(n: number): string {
-  const abs = Math.abs(n);
-  if (abs >= 1e9) return (n / 1e9).toFixed(2) + "B";
-  if (abs >= 1e6) return (n / 1e6).toFixed(2) + "M";
-  if (abs >= 1e3) return (n / 1e3).toFixed(1) + "K";
-  return n.toFixed(0);
-}
-
-function fmtFullUsd(n: number): string {
-  return "$" + Math.round(n).toLocaleString();
-}
 
 function std(xs: number[]): number {
   if (xs.length < 2) return 0;
@@ -312,7 +304,7 @@ function VoteList({ navUsd }: { navUsd: number }) {
 
 // ── Positions list ───────────────────────────────────────────────────────────
 
-function PositionsList({ rows, loaded }: { rows: Position[]; loaded: boolean }) {
+function PositionsList({ rows, loaded, market }: { rows: Position[]; loaded: boolean; market: Market }) {
   if (loaded && rows.length === 0) {
     return (
       <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11, padding: "12px 16px" }}>
@@ -358,14 +350,14 @@ function PositionsList({ rows, loaded }: { rows: Position[]; loaded: boolean }) 
         >
           <span style={{ color: "var(--ink-0)" }}>{p.ticker}</span>
           <span style={{ color: "var(--ink-2)" }}>{p.qty.toLocaleString()}</span>
-          <span style={{ color: "var(--ink-1)", textAlign: "right" }}>${fmtUsd(p.market_value)}</span>
+          <span style={{ color: "var(--ink-1)", textAlign: "right" }}>{fmtMoney(p.market_value, market)}</span>
           <span
             style={{
               color: p.unrealized_pnl >= 0 ? "var(--green)" : "var(--red)",
               textAlign: "right",
             }}
           >
-            {p.unrealized_pnl >= 0 ? "+" : "−"}${fmtUsd(Math.abs(p.unrealized_pnl))}
+            {p.unrealized_pnl >= 0 ? "+" : "−"}{fmtMoney(Math.abs(p.unrealized_pnl), market)}
           </span>
           <span style={{ color: "var(--ink-2)", textAlign: "right" }}>
             {(p.weight * 100).toFixed(2)}%
@@ -443,6 +435,7 @@ function deriveKpis(snapshots: FundSnapshot[], positions: Position[], navUsd: nu
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 export function PortfolioScreen() {
+  const { market } = useMarket();
   const [positions, setPositions] = useState<Position[]>([]);
   const [snapshots, setSnapshots] = useState<FundSnapshot[]>([]);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
@@ -450,17 +443,21 @@ export function PortfolioScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    listPositions(50)
+    setPosLoaded(false);
+    setPositions([]);
+    setSnapshots([]);
+    setScenarios([]);
+    listPositions(50, market)
       .then((p) => { if (!cancelled) { setPositions(p); setPosLoaded(true); } })
       .catch(() => { if (!cancelled) setPosLoaded(true); });
-    listFundSnapshots(200)
+    listFundSnapshots(200, market)
       .then((s) => { if (!cancelled) setSnapshots(s); })
       .catch(() => {});
-    listScenarios(12)
+    listScenarios(12, market)
       .then((s) => { if (!cancelled) setScenarios(s); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, []);
+  }, [market]);
 
   // NAV = sum of position market values (live book)
   const navUsd = useMemo(
@@ -492,10 +489,10 @@ export function PortfolioScreen() {
         <div className="panel-body tight" style={{ overflow: "auto" }}>
           <div className="bigstat">
             <span className="k">Net Asset Value</span>
-            <span className="v">{navForDisplay ? fmtFullUsd(navForDisplay) : "—"}</span>
+            <span className="v">{navForDisplay ? fmtFullMoney(navForDisplay, market) : "—"}</span>
             <span className={"d " + (todayPnl >= 0 ? "up" : "down")}>
               {todayPnl >= 0 ? "+" : "−"}{Math.abs(todayPct * 100).toFixed(2)}% today ·{" "}
-              {todayPnl >= 0 ? "+" : "−"}${fmtUsd(Math.abs(todayPnl))}
+              {todayPnl >= 0 ? "+" : "−"}{fmtMoney(Math.abs(todayPnl), market)}
             </span>
           </div>
           <div style={{ padding: "10px 16px" }}>
@@ -573,8 +570,14 @@ export function PortfolioScreen() {
       </Panel>
 
       <Panel title="Positions · Live" meta="ranked by MV" bodyClassName="tight">
-        <PositionsList rows={positions} loaded={posLoaded} />
+        <PositionsList rows={positions} loaded={posLoaded} market={market} />
       </Panel>
+
+      {market === "IN" && (
+        <Panel title="KITE Accounts · India" meta="Zerodha · real holdings" bodyClassName="tight">
+          <KiteAccountsPanel />
+        </Panel>
+      )}
     </div>
   );
 }
