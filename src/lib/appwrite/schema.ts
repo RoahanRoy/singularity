@@ -24,6 +24,7 @@ export const COLLECTIONS = {
   agent_commands: "agent_commands",
   agent_status: "agent_status",
   kite_accounts: "kite_accounts",
+  news: "news",
 } as const;
 
 type Base = { $id: string; $createdAt: string; $updatedAt: string };
@@ -240,6 +241,19 @@ export type AgentStatusDoc = Base & {
   exit_code: number | null;
   last_log: string | null;
   updated_at: string;
+};
+
+/** A news article indexed by the news agent, keyed by URL. */
+export type NewsItem = Base & {
+  ticker: string;
+  market: Market | null;
+  source: string;
+  title: string;
+  url: string;
+  summary: string | null;
+  sentiment: "positive" | "negative" | "neutral" | string | null;
+  published_at: string;
+  fetched_at: string;
 };
 
 /** A single factor exposure entry stored on a position's factor_exposures_json. */

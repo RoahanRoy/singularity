@@ -1786,6 +1786,123 @@
                     ]
                 }
             ]
+        },
+        {
+            "$id": "news",
+            "databaseId": "meridian",
+            "name": "news",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")",
+                "create(\"users\")",
+                "update(\"users\")",
+                "delete(\"users\")"
+            ],
+            "attributes": [
+                {
+                    "key": "ticker",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "source",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "title",
+                    "type": "string",
+                    "size": 512,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "url",
+                    "type": "string",
+                    "size": 1024,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "summary",
+                    "type": "string",
+                    "size": 4096,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "sentiment",
+                    "type": "string",
+                    "size": 16,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "published_at",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "fetched_at",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_ticker",
+                    "type": "key",
+                    "attributes": [
+                        "ticker"
+                    ]
+                },
+                {
+                    "key": "by_market",
+                    "type": "key",
+                    "attributes": [
+                        "market"
+                    ]
+                },
+                {
+                    "key": "by_published_at",
+                    "type": "key",
+                    "attributes": [
+                        "published_at"
+                    ]
+                },
+                {
+                    "key": "by_url",
+                    "type": "unique",
+                    "attributes": [
+                        "url"
+                    ]
+                }
+            ]
         }
     ]
 }

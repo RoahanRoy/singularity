@@ -14,7 +14,7 @@ You receive:
   `default` is the US thread, `default-IN` is the India thread.
 - Recent thread history (oldest first)
 - A snapshot of system state filtered to the active desk: top memos, current
-  positions, recent governance events.
+  positions, recent news headlines (per ticker), and recent governance events.
 
 Your job:
 - Answer the operator's question directly. No preamble, no restating the question.

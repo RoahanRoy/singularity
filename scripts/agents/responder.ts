@@ -41,6 +41,7 @@ type Memo = {
   conviction: number;
   status: string;
   thesis: string;
+  market?: "US" | "IN" | null;
 };
 
 type Position = {
@@ -49,6 +50,7 @@ type Position = {
   market_value: number;
   unrealized_pnl: number;
   weight: number;
+  market?: "US" | "IN" | null;
 };
 
 type GovernanceEvent = {
@@ -106,9 +108,24 @@ function tickerIsIndian(t: string | null | undefined): boolean {
   return up.endsWith(".NS") || up.endsWith(".BO") || up.endsWith(".NSE") || up.endsWith(".BSE");
 }
 
-function inMarket(t: string | null | undefined, m: Market): boolean {
-  if (m === "IN") return tickerIsIndian(t);
-  return !tickerIsIndian(t); // US bucket = "anything not tagged Indian"
+/**
+ * Bucket a row to the active desk. Prefers the explicit `market` field
+ * (written by the India loop), falls back to ticker-suffix heuristic for
+ * legacy rows that pre-date that field.
+ */
+function fmtAgo(iso: string): string {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return `${s.toFixed(0)}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86_400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86_400)}d ago`;
+}
+
+function inMarket(row: { ticker?: string | null; market?: Market | null | undefined }, m: Market): boolean {
+  if (row.market === "IN") return m === "IN";
+  if (row.market === "US") return m === "US";
+  // unknown market field — fall back to suffix heuristic.
+  return m === "IN" ? tickerIsIndian(row.ticker) : !tickerIsIndian(row.ticker);
 }
 
 async function snapshot(market: Market): Promise<string> {
@@ -121,7 +138,7 @@ async function snapshot(market: Market): Promise<string> {
       Query.orderDesc("$createdAt"),
       Query.limit(20),
     ]);
-    const docs = (memos.documents as unknown as Memo[]).filter((m) => inMarket(m.ticker, market)).slice(0, 5);
+    const docs = (memos.documents as unknown as Memo[]).filter((m) => inMarket(m, market)).slice(0, 5);
     if (docs.length) {
       lines.push("Recent memos:");
       for (const m of docs) {
@@ -141,7 +158,7 @@ async function snapshot(market: Market): Promise<string> {
       Query.orderDesc("market_value"),
       Query.limit(40),
     ]);
-    const docs = (positions.documents as unknown as Position[]).filter((p) => inMarket(p.ticker, market));
+    const docs = (positions.documents as unknown as Position[]).filter((p) => inMarket(p, market));
     if (docs.length) {
       const totalMv = docs.reduce((s, p) => s + (p.market_value || 0), 0);
       const totalPnl = docs.reduce((s, p) => s + (p.unrealized_pnl || 0), 0);
@@ -157,6 +174,29 @@ async function snapshot(market: Market): Promise<string> {
     }
   } catch (err) {
     lines.push(`Positions: (fetch failed: ${(err as Error).message})`);
+  }
+
+  try {
+    const news = await db.listDocuments(DB, "news", [
+      Query.orderDesc("published_at"),
+      Query.limit(40),
+    ]);
+    type N = { ticker: string; market?: string; source: string; title: string; published_at: string };
+    const all = news.documents as unknown as N[];
+    const docs = all
+      .filter((n) => (n.market ? n.market === market : true))
+      .slice(0, 8);
+    if (docs.length) {
+      lines.push("Recent news (newest first):");
+      for (const n of docs) {
+        const ago = fmtAgo(n.published_at);
+        lines.push(`  - [${n.ticker}] ${n.title} · ${n.source} · ${ago}`);
+      }
+    } else {
+      lines.push(`Recent news: none indexed for the ${market} desk (run \`npm run agents:news\`)`);
+    }
+  } catch (err) {
+    lines.push(`News: (fetch failed: ${(err as Error).message})`);
   }
 
   try {
