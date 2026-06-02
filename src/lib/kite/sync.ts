@@ -49,11 +49,19 @@ export async function syncAccount(accountId: string): Promise<SyncResult> {
   const totalPnl = holdings.reduce((s, h) => s + h.pnl, 0);
   const denom = investedMV || 1;
 
-  // Replace this account's cached positions.
+  // Replace this account's cached positions. Carry forward any factor exposures
+  // computed by the India enrichment (keyed by ticker) so a re-sync doesn't wipe
+  // them — they're slow-moving betas, not part of the brokerage's truth.
   const existing = await databases.listDocuments(DATABASE_ID, COLLECTIONS.positions, [
     Query.equal("kite_account_id", accountId),
     Query.limit(500),
   ]);
+  const priorFactors = new Map<string, string | null>();
+  for (const d of existing.documents) {
+    const t = String((d as { ticker?: string }).ticker ?? "");
+    const fx = (d as { factor_exposures_json?: string | null }).factor_exposures_json ?? null;
+    if (t) priorFactors.set(t, fx);
+  }
   await Promise.all(
     existing.documents.map((d) =>
       databases.deleteDocument(DATABASE_ID, COLLECTIONS.positions, d.$id).catch(() => {}),
@@ -65,25 +73,35 @@ export async function syncAccount(accountId: string): Promise<SyncResult> {
       .filter((h) => h.quantity !== 0)
       .map((h) => {
         const mv = h.last_price * h.quantity;
+        const ticker = h.tradingsymbol.slice(0, 16);
         return databases.createDocument(DATABASE_ID, COLLECTIONS.positions, ID.unique(), {
-          ticker: h.tradingsymbol.slice(0, 16),
+          ticker,
           qty: h.quantity,
           avg_cost: Number(h.average_price.toFixed(2)),
           market_value: Number(mv.toFixed(2)),
           unrealized_pnl: Number(h.pnl.toFixed(2)),
           weight: Number((mv / denom).toFixed(6)),
-          factor_exposures_json: null,
+          factor_exposures_json: priorFactors.get(ticker) ?? null,
           market: "IN",
           kite_account_id: accountId,
         });
       }),
   );
 
-  // Time series point for the India fund.
+  // Time series point for the India fund. pnl_daily is the day-over-day NAV
+  // change vs the most recent IN snapshot (a real session delta), not the
+  // holdings' lifetime unrealized P&L.
+  const lastSnap = await databases.listDocuments(DATABASE_ID, COLLECTIONS.fund_snapshots, [
+    Query.equal("market", "IN"),
+    Query.orderDesc("captured_at"),
+    Query.limit(1),
+  ]);
+  const prevNav = (lastSnap.documents[0] as { nav_usd?: number } | undefined)?.nav_usd;
+  const dayPnl = typeof prevNav === "number" ? navInr - prevNav : totalPnl;
   await databases
     .createDocument(DATABASE_ID, COLLECTIONS.fund_snapshots, ID.unique(), {
       nav_usd: Number(navInr.toFixed(2)),
-      pnl_daily: Number(totalPnl.toFixed(2)),
+      pnl_daily: Number(dayPnl.toFixed(2)),
       captured_at: new Date().toISOString(),
       market: "IN",
     })

@@ -88,6 +88,11 @@ const FACTOR_LABELS: Record<string, string> = {
   GOLD: "GOLD",
   OIL: "OIL / ENERGY",
   VOL_VIX: "VOL (VIX)",
+  // India desk (betas vs free Yahoo proxies)
+  NIFTY_MKT: "NIFTY (MKT)",
+  IN_BANKS: "NIFTY BANK",
+  IN_IT: "NIFTY IT",
+  FX_USDINR: "FX · USDINR",
 };
 const FACTOR_ORDER = Object.keys(FACTOR_LABELS);
 
@@ -233,14 +238,15 @@ function tradeToVote(t: Trade, navUsd: number): Vote {
   };
 }
 
-function VoteList({ navUsd }: { navUsd: number }) {
+function VoteList({ navUsd, market }: { navUsd: number; market: Market }) {
   const [items, setItems] = useState<Vote[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    setLoaded(false);
     const load = () =>
-      listPendingTrades(8)
+      listPendingTrades(8, market)
         .then((rows) => {
           if (cancelled) return;
           setItems(rows.map((t) => tradeToVote(t, navUsd)));
@@ -257,7 +263,7 @@ function VoteList({ navUsd }: { navUsd: number }) {
       cancelled = true;
       unsub();
     };
-  }, [navUsd]);
+  }, [navUsd, market]);
 
   if (loaded && items.length === 0) {
     return (
@@ -420,13 +426,19 @@ function deriveKpis(snapshots: FundSnapshot[], positions: Position[], navUsd: nu
 
   const pct = (x: number) => (x >= 0 ? "+" : "−") + Math.abs(x * 100).toFixed(2) + "%";
 
+  // Series-derived KPIs need a return series; without one, show "—" rather than
+  // a misleading 0.00. Net/Gross exposure come from the live book and always show.
+  const hasHistory = returns.length >= 2;
+  const series = (label: string, value: string, tone: "up" | "down" | ""): Kpi =>
+    hasHistory ? [label, value, tone] : [label, "—", ""];
+
   return [
-    ["YTD", pct(ytd), ytd >= 0 ? "up" : "down"],
-    ["MTD", pct(mtd), mtd >= 0 ? "up" : "down"],
-    ["Sharpe", sharpe.toFixed(2), ""],
-    ["Sortino", sortino.toFixed(2), ""],
-    ["Max DD", pct(maxDD), "down"],
-    ["Vol (ann)", (annVol * 100).toFixed(1) + "%", ""],
+    series("YTD", pct(ytd), ytd >= 0 ? "up" : "down"),
+    series("MTD", pct(mtd), mtd >= 0 ? "up" : "down"),
+    series("Sharpe", sharpe.toFixed(2), ""),
+    series("Sortino", sortino.toFixed(2), ""),
+    series("Max DD", pct(maxDD), "down"),
+    series("Vol (ann)", (annVol * 100).toFixed(1) + "%", ""),
     ["Net Exp", (netExp * 100).toFixed(0) + "%", ""],
     ["Gross Exp", (grossExp * 100).toFixed(0) + "%", ""],
   ];
@@ -566,7 +578,7 @@ export function PortfolioScreen() {
       </Panel>
 
       <Panel title="Agent Vote · Pending Reallocation" meta="motions · quorum 0.55" bodyClassName="tight">
-        <VoteList navUsd={navForDisplay} />
+        <VoteList navUsd={navForDisplay} market={market} />
       </Panel>
 
       <Panel title="Positions · Live" meta="ranked by MV" bodyClassName="tight">
