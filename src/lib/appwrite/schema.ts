@@ -254,6 +254,7 @@ export type NewsItem = Base & {
   sentiment: "positive" | "negative" | "neutral" | string | null;
   published_at: string;
   fetched_at: string;
+  url_hash: string;
 };
 
 /** A single factor exposure entry stored on a position's factor_exposures_json. */

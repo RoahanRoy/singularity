@@ -2,8 +2,8 @@
  * MERIDIAN — News ingestion agent.
  *
  * Fetches Google News RSS per ticker and indexes results into the `news`
- * Appwrite collection. Free, no API key. Items are deduped by URL via a
- * unique index, so re-running is safe.
+ * Appwrite collection. Free, no API key. Items are deduped via a unique
+ * index on sha256(url), so re-running is safe.
  *
  * Run with:
  *   npm run agents:news               continuous (every NEWS_INTERVAL_MS)
@@ -14,6 +14,7 @@
  *   MERIDIAN_NEWS_MARKETS        comma-list of markets to ingest (default "US,IN")
  *   MERIDIAN_NEWS_PER_TICKER     max items kept per ticker per pass (default 5)
  */
+import { createHash } from "node:crypto";
 import { db, DB, ID } from "./appwrite";
 import { FULL_UNIVERSE, INDIA_UNIVERSE } from "./universe";
 
@@ -91,13 +92,16 @@ async function fetchTickerNews(ticker: string, market: "US" | "IN"): Promise<Rss
 }
 
 async function indexItem(ticker: string, market: "US" | "IN", item: RssItem): Promise<"new" | "dup"> {
+  const url = item.link.slice(0, 1024);
+  const url_hash = createHash("sha256").update(url).digest("hex");
   try {
     await db.createDocument(DB, "news", ID.unique(), {
       ticker,
       market,
       source: item.source.slice(0, 64),
       title: item.title.slice(0, 512),
-      url: item.link.slice(0, 1024),
+      url,
+      url_hash,
       summary: null,
       sentiment: null,
       published_at: item.pubDate,
@@ -106,7 +110,7 @@ async function indexItem(ticker: string, market: "US" | "IN", item: RssItem): Pr
     return "new";
   } catch (err) {
     const msg = (err as Error).message || "";
-    // unique index on `url` rejects duplicates — treat as a quiet no-op.
+    // unique index on `url_hash` rejects duplicates — treat as a quiet no-op.
     if (/already exists|duplicate|conflict/i.test(msg)) return "dup";
     throw err;
   }

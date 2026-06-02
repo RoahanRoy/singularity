@@ -1871,6 +1871,14 @@
                     "required": true,
                     "array": false,
                     "encrypt": false
+                },
+                {
+                    "key": "url_hash",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
                 }
             ],
             "indexes": [
@@ -1896,10 +1904,10 @@
                     ]
                 },
                 {
-                    "key": "by_url",
+                    "key": "by_url_hash",
                     "type": "unique",
                     "attributes": [
-                        "url"
+                        "url_hash"
                     ]
                 }
             ]
