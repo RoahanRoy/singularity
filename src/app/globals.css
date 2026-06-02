@@ -249,6 +249,12 @@
 .meridian-root .topbar-right { display: flex; align-items: center; gap: 14px; justify-content: flex-end; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); letter-spacing: 0.08em; }
 .meridian-root .topbar-right .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 99px; color: var(--ink-1); }
 .meridian-root .topbar-right .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 var(--green); animation: md-pulse 2.2s infinite; }
+.meridian-root .topbar-right .pill.pre   .pulse,
+.meridian-root .topbar-right .pill.after .pulse { background: var(--md-accent); animation: none; box-shadow: none; }
+.meridian-root .topbar-right .pill.closed .pulse { background: var(--ink-4); animation: none; box-shadow: none; }
+.meridian-root .topbar-right .pill.pre,
+.meridian-root .topbar-right .pill.after { color: var(--md-accent); }
+.meridian-root .topbar-right .pill.closed { color: var(--ink-3); }
 @keyframes md-pulse {
   0% { box-shadow: 0 0 0 0 oklch(0.74 0.10 155 / 0.5); }
   70% { box-shadow: 0 0 0 8px oklch(0.74 0.10 155 / 0); }

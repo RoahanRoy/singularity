@@ -58,29 +58,34 @@ export function subscribeAgentEvents(onCreate: (ev: AgentEvent) => void) {
   });
 }
 
-export async function listFilings(limit = 12): Promise<Filing[]> {
+export async function listFilings(limit = 12, market?: Market): Promise<Filing[]> {
   const res = await databases.listDocuments<Filing & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.filings,
-    [Query.orderDesc("filed_at"), Query.limit(limit)],
+    [...marketFilter(market), Query.orderDesc("filed_at"), Query.limit(limit)],
   );
   return res.documents;
 }
 
-export function subscribeFilings(onCreate: (f: Filing) => void) {
+/**
+ * Subscribe to new filings, optionally restricted to a desk. Appwrite's
+ * realtime channel can't filter server-side, so we drop foreign-desk payloads
+ * client-side. Legacy rows without a `market` field are treated as "US".
+ */
+export function subscribeFilings(onCreate: (f: Filing) => void, market?: Market) {
   const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.filings}.documents`;
   return client.subscribe<Filing & Models.Document>(channel, (msg) => {
-    if (msg.events.some((e) => e.endsWith(".create"))) {
-      onCreate(msg.payload);
-    }
+    if (!msg.events.some((e) => e.endsWith(".create"))) return;
+    if (market && (msg.payload.market ?? "US") !== market) return;
+    onCreate(msg.payload);
   });
 }
 
-export async function listMemos(limit = 6): Promise<Memo[]> {
+export async function listMemos(limit = 6, market?: Market): Promise<Memo[]> {
   const res = await databases.listDocuments<Memo & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.memos,
-    [Query.orderDesc("$createdAt"), Query.limit(limit)],
+    [...marketFilter(market), Query.orderDesc("$createdAt"), Query.limit(limit)],
   );
   return res.documents;
 }
@@ -130,11 +135,11 @@ export function subscribeTrades(onChange: (t: Trade) => void) {
   });
 }
 
-export async function getTopMemo(): Promise<Memo | null> {
+export async function getTopMemo(market?: Market): Promise<Memo | null> {
   const res = await databases.listDocuments<Memo & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.memos,
-    [Query.orderDesc("conviction"), Query.limit(1)],
+    [...marketFilter(market), Query.orderDesc("conviction"), Query.limit(1)],
   );
   return res.documents[0] ?? null;
 }

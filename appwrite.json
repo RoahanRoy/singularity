@@ -395,6 +395,13 @@
                     "attributes": [
                         "status"
                     ]
+                },
+                {
+                    "key": "by_market",
+                    "type": "key",
+                    "attributes": [
+                        "market"
+                    ]
                 }
             ]
         },
@@ -518,6 +525,13 @@
                     "type": "key",
                     "attributes": [
                         "filing_id"
+                    ]
+                },
+                {
+                    "key": "by_market",
+                    "type": "key",
+                    "attributes": [
+                        "market"
                     ]
                 }
             ]

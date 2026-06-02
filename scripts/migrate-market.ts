@@ -65,7 +65,7 @@ async function ensureIndex(col: string, key: string, attr: string) {
 }
 
 const MARKET_COLS = ["agents", "clusters", "filings", "memos", "positions", "trades", "scenarios", "fund_snapshots"];
-const INDEXED = ["positions", "clusters", "agents", "fund_snapshots"];
+const INDEXED = ["positions", "clusters", "agents", "fund_snapshots", "filings", "memos"];
 
 async function ensureKiteAccounts() {
   let exists = true;

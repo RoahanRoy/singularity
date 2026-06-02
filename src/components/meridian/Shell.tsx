@@ -1,9 +1,9 @@
 "use client";
 
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { MarketTicker, ExchangeClock } from "./primitives";
+import { MarketTicker, ExchangeClock, exchangeStatus, type ExchangeStatus } from "./primitives";
 import { useOperator } from "./AuthGate";
 import { useMarket } from "./MarketContext";
 import { signOutOperator } from "@/lib/auth/operator";
@@ -180,6 +180,40 @@ function MarketToggle() {
   );
 }
 
+const STATUS_LABEL: Record<ExchangeStatus, string> = {
+  open: "MARKETS OPEN",
+  pre: "PRE-OPEN",
+  after: "AFTER HOURS",
+  closed: "MARKETS CLOSED",
+};
+
+function MarketsPill({ market }: { market: "US" | "IN" }) {
+  // Recompute on the client every 30s so the pill flips as sessions open/close.
+  // SSR renders nothing; the effect hydrates the real status.
+  const [status, setStatus] = useState<ExchangeStatus | null>(null);
+  useEffect(() => {
+    const tick = () => setStatus(exchangeStatus(market));
+    tick();
+    const id = setInterval(tick, 30_000);
+    return () => clearInterval(id);
+  }, [market]);
+  const exch = market === "IN" ? "NSE" : "NYSE";
+  if (!status) {
+    return (
+      <span className="pill" suppressHydrationWarning>
+        <span className="pulse" />· {exch}
+      </span>
+    );
+  }
+  const cls = status === "open" ? "pill" : `pill ${status}`;
+  return (
+    <span className={cls} suppressHydrationWarning>
+      <span className="pulse" />
+      {STATUS_LABEL[status]} · {exch}
+    </span>
+  );
+}
+
 function TopBar({ active }: { active: ScreenId }) {
   const [a, b] = CRUMBS[active];
   const { market } = useMarket();
@@ -193,10 +227,7 @@ function TopBar({ active }: { active: ScreenId }) {
       <MarketTicker />
       <div className="topbar-right">
         <MarketToggle />
-        <span className="pill">
-          <span className="pulse" />
-          MARKETS OPEN · {market === "IN" ? "NSE" : "NYSE"}
-        </span>
+        <MarketsPill market={market} />
         <span className="mono">
           <ExchangeClock market={market} />
         </span>

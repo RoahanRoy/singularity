@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { Panel, Tag } from "../primitives";
+import { useMarket } from "../MarketContext";
 import { listFilings, subscribeFilings, getTopMemo, listMemosByFiling } from "@/lib/appwrite/queries";
 import type { Filing, Memo, MemoEntity } from "@/lib/appwrite/schema";
+import type { Market } from "@/lib/meridian/format";
 
-const FALLBACK_ENTITIES: MemoEntity[] = [
+const FALLBACK_ENTITIES_US: MemoEntity[] = [
   { name: "Taiwan Semiconductor (TSM)", role: "subject",    weight: 1.0  },
   { name: "Apple (AAPL)",               role: "customer",   weight: 0.78 },
   { name: "NVIDIA (NVDA)",              role: "customer",   weight: 0.74 },
@@ -14,6 +16,17 @@ const FALLBACK_ENTITIES: MemoEntity[] = [
   { name: "Intel Foundry",              role: "competitor", weight: 0.44 },
   { name: "Mediatek (2454.TW)",         role: "peer",       weight: 0.41 },
   { name: "Sumco Corporation",          role: "input",      weight: 0.33 },
+];
+
+const FALLBACK_ENTITIES_IN: MemoEntity[] = [
+  { name: "Reliance Industries (RELIANCE)", role: "subject",    weight: 1.0  },
+  { name: "Jio Platforms",                  role: "subject",    weight: 0.82 },
+  { name: "Reliance Retail",                role: "subject",    weight: 0.71 },
+  { name: "BPCL / HPCL",                    role: "peer",       weight: 0.58 },
+  { name: "TCS (TCS.NS)",                   role: "peer",       weight: 0.46 },
+  { name: "Bharti Airtel (BHARTIARTL)",     role: "competitor", weight: 0.62 },
+  { name: "Saudi Aramco",                   role: "input",      weight: 0.44 },
+  { name: "RBI · MPC stance",               role: "input",      weight: 0.39 },
 ];
 
 function parseEntities(raw: string | null | undefined): MemoEntity[] | null {
@@ -34,12 +47,20 @@ function parseEntities(raw: string | null | undefined): MemoEntity[] | null {
 
 type Doc = { id: string; src: string; tk: string; ttl: string; when: string };
 
-const FALLBACK_DOCS: Doc[] = [
+const FALLBACK_DOCS_US: Doc[] = [
   { id: "f-0", src: "10-K",          tk: "NVDA", ttl: "Annual Report — segment commentary on China-restricted SKUs and supply mix.", when: "0.4s" },
   { id: "f-1", src: "EARNINGS CALL", tk: "TSM",  ttl: "Q4 2025 transcript — capex language softens; mgmt deflects two questions on inventory.", when: "12s" },
   { id: "f-2", src: "8-K",           tk: "AVGO", ttl: "Executive departure disclosure — CFO transition, no successor named.", when: "1m 4s" },
   { id: "f-3", src: "13F",           tk: "BX",   ttl: "Reported holdings reveal -$340M reduction in semiconductor names.", when: "3m 12s" },
   { id: "f-4", src: "S-1",           tk: "—",    ttl: "Newly filed: vertical-AI infra company, lead investors include sovereign vehicle.", when: "8m" },
+];
+
+const FALLBACK_DOCS_IN: Doc[] = [
+  { id: "in-0", src: "Q-Results",   tk: "HDFCBANK", ttl: "Q4 FY26 results — NIM 3.52%, deposit-cost glide flagged, credit cost stable.", when: "0.6s" },
+  { id: "in-1", src: "Bd-Meeting",  tk: "RELIANCE", ttl: "Outcome of Board Meeting — interim dividend declared, capex framework reaffirmed.", when: "18s" },
+  { id: "in-2", src: "Press-Rel",   tk: "INFY",     ttl: "Large-deal TCV softens; FY27 revenue band guided in CC at 1.5–3.5%.", when: "2m 4s" },
+  { id: "in-3", src: "PIT-Discl",   tk: "ICICIBANK", ttl: "Insider trading disclosure — designated person window-trade, 0.001% of float.", when: "4m 22s" },
+  { id: "in-4", src: "Shareholding", tk: "ITC",     ttl: "Quarterly shareholding pattern — FII +18bps, BAT stake unchanged at 25.0%.", when: "11m" },
 ];
 
 function fmtAgo(iso: string): string {
@@ -198,7 +219,7 @@ function FilingDetail({ filing }: { filing: Filing }) {
   );
 }
 
-function TranscriptView() {
+function TranscriptViewUS() {
   return (
     <div className="transcript-grid">
       <div className="transcript">
@@ -278,11 +299,94 @@ function TranscriptView() {
   );
 }
 
-function EntityPanel() {
+function TranscriptViewIN() {
+  return (
+    <div className="transcript-grid">
+      <div className="transcript">
+        <div className="t-row">
+          <div className="t-main">
+            <div className="speaker">CFO · HDFCBANK · Q4 FY26 earnings call · prepared remarks</div>
+            <p>
+              Net interest margin came in at <mark>3.52%</mark> for the quarter, broadly in line with our glide path.
+              Deposit accretion remained <mark className="cyan">healthy at ₹1.42 lakh crore</mark>, and we continue to see
+              the merged book&apos;s cost of funds normalise quarter on quarter. Credit cost was stable at 41 bps.
+            </p>
+          </div>
+          <aside className="t-gutter">
+            <div className="callout inline">
+              <span className="lbl">Forensic · earnings/in-22</span>
+              <div>
+                Use of <span className="amber">&quot;broadly in line&quot;</span> 6× this call vs. mean 1.8×. Hedge
+                pattern matches Q3 FY26 deposit-rate guidance. Confidence <b>0.79</b>.
+              </div>
+            </div>
+          </aside>
+        </div>
+
+        <div className="t-row">
+          <div className="t-main">
+            <div className="speaker">Analyst — Kotak Institutional</div>
+            <p>
+              Could you quantify the impact of the latest <mark>RBI liquidity withdrawal</mark> on your deposit-cost glide
+              over H1 FY27, and how should we think about NIM trajectory if the MPC stays on hold?
+            </p>
+          </div>
+          <aside className="t-gutter" />
+        </div>
+
+        <div className="t-row">
+          <div className="t-main">
+            <div className="speaker">CFO</div>
+            <p>
+              We are <mark className="red">not in a position to put a precise number on it today.</mark> Directionally,
+              we expect NIM to remain in the <mark>3.45–3.55%</mark> band through H1, with some sensitivity to the
+              external benchmark repo if RBI moves. The retail book continues to re-price faster than the corporate book.
+            </p>
+          </div>
+          <aside className="t-gutter">
+            <div className="callout inline">
+              <span className="lbl">Tone delta · vs. Q3 FY26</span>
+              <div>
+                Management certainty score <span className="amber">−0.18σ</span>. One deflection logged on MPC
+                sensitivity. Cross-ref ICICIBANK, AXISBANK NIM commentary.
+              </div>
+            </div>
+          </aside>
+        </div>
+
+        <div className="t-row">
+          <div className="t-main">
+            <div className="speaker">MD &amp; CEO</div>
+            <p>
+              I want to add — our <mark className="cyan">unsecured retail book quality remains the best in the system</mark>,
+              and we are not seeing any of the stress that has been reported elsewhere in fintech-led personal loans.
+            </p>
+          </div>
+          <aside className="t-gutter">
+            <div className="callout inline">
+              <span className="lbl">Trade thesis · auto-generated</span>
+              <div>
+                Pair: long <span className="amber">HDFCBANK</span> / short <span className="amber">BANKNIFTY 1M
+                ATM call spread</span>. Sized 0.3% NAV. Awaits PM review.
+              </div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TranscriptView({ market }: { market: Market }) {
+  return market === "IN" ? <TranscriptViewIN /> : <TranscriptViewUS />;
+}
+
+function EntityPanel({ market }: { market: Market }) {
   const [memo, setMemo] = useState<Memo | null>(null);
   useEffect(() => {
     let cancelled = false;
-    getTopMemo()
+    setMemo(null);
+    getTopMemo(market)
       .then((m) => {
         if (!cancelled) setMemo(m);
       })
@@ -290,13 +394,19 @@ function EntityPanel() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [market]);
 
-  const title = memo?.title ?? "TSM — Q4 print, demand softness signal";
+  const fallbackTitle = market === "IN"
+    ? "RELIANCE — Q4 print, retail margin mix improving"
+    : "TSM — Q4 print, demand softness signal";
+  const fallbackThesis = market === "IN"
+    ? "Three India-desk agents converged on a constructive read of Reliance Retail margin commentary, supported by Jio ARPU stability and easing O2C spreads. Suggested expression: long RELIANCE vs. short NIFTY 1M call spread. Risk-managed via INDIAVIX overlay."
+    : "Three independent agents converged on a softening-demand interpretation of management's tone, supported by alt-data divergence in NA capex shipments and a thinning options skew on TSM 1M. Suggested expression: long SOXX vs. short TSM call spread. Risk-managed via VIX overlay.";
+  const fallbackEntities = market === "IN" ? FALLBACK_ENTITIES_IN : FALLBACK_ENTITIES_US;
+
+  const title = memo?.title ?? fallbackTitle;
   const conv = memo?.conviction ?? 0.74;
-  const thesis =
-    memo?.thesis ??
-    "Three independent agents converged on a softening-demand interpretation of management's tone, supported by alt-data divergence in NA capex shipments and a thinning options skew on TSM 1M. Suggested expression: long SOXX vs. short TSM call spread. Risk-managed via VIX overlay.";
+  const thesis = memo?.thesis ?? fallbackThesis;
 
   const pendingV = { color: "var(--ink-4)" } as const;
   const pendingHint = { color: "var(--ink-4)", fontSize: 9.5, marginLeft: 4 } as const;
@@ -332,7 +442,7 @@ function EntityPanel() {
           {parseEntities(memo?.entities_json) ? "from memo" : "sample"}
         </span>
       </div>
-      {(parseEntities(memo?.entities_json) ?? FALLBACK_ENTITIES).map((e, i) => (
+      {(parseEntities(memo?.entities_json) ?? fallbackEntities).map((e, i) => (
         <div key={i} className="entity">
           <div className="name">{e.name}</div>
           <div className="row">
@@ -347,12 +457,15 @@ function EntityPanel() {
 }
 
 export function ResearchScreen() {
+  const { market } = useMarket();
   const [filings, setFilings] = useState<Filing[]>([]);
   const [sel, setSel] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    listFilings(12)
+    setFilings([]);
+    setSel(null);
+    listFilings(12, market)
       .then((rows) => {
         if (cancelled) return;
         setFilings(rows);
@@ -361,31 +474,36 @@ export function ResearchScreen() {
     const unsub = subscribeFilings((f) => {
       if (cancelled) return;
       setFilings((prev) => [f, ...prev.filter((p) => p.$id !== f.$id)].slice(0, 12));
-    });
+    }, market);
     return () => {
       cancelled = true;
       unsub();
     };
-  }, []);
+  }, [market]);
 
+  const fallbackDocs = market === "IN" ? FALLBACK_DOCS_IN : FALLBACK_DOCS_US;
   const liveDocs: Doc[] = filings.map(filingToDoc);
-  const docs: Doc[] = liveDocs.length ? liveDocs : FALLBACK_DOCS;
+  const docs: Doc[] = liveDocs.length ? liveDocs : fallbackDocs;
 
   const selectedId = sel ?? docs[1]?.id ?? docs[0]?.id ?? null;
   const selectedDoc = docs.find((d) => d.id === selectedId) ?? null;
   const selectedFiling = selectedDoc ? filings.find((f) => f.$id === selectedDoc.id) ?? null : null;
   const isFallback = !selectedFiling;
 
+  const fallbackHeadTitle = market === "IN"
+    ? "HDFCBANK · Q4 FY26 Earnings Call · Reasoning Overlay"
+    : "TSM · Q4 2025 Earnings Call · Reasoning Overlay";
+
   const headTitle = selectedFiling
     ? `${selectedFiling.ticker} · ${selectedFiling.form_type}`
-    : "TSM · Q4 2025 Earnings Call · Reasoning Overlay";
+    : fallbackHeadTitle;
   const headMeta = selectedFiling
     ? `status: ${selectedFiling.status}`
     : "3 agents synthesizing · 0.74 conv.";
 
   return (
     <div className="research">
-      <Panel title="Ingest Queue" meta={`${liveDocs.length || FALLBACK_DOCS.length} loaded`} bodyClassName="tight">
+      <Panel title="Ingest Queue" meta={`${liveDocs.length || fallbackDocs.length} loaded`} bodyClassName="tight">
         <DocList docs={docs} selected={selectedId} setSel={setSel} />
       </Panel>
 
@@ -395,12 +513,12 @@ export function ResearchScreen() {
           <span className="meta">{headMeta}</span>
         </div>
         <div className="panel-body" style={{ position: "relative" }}>
-          {isFallback || !selectedFiling ? <TranscriptView /> : <FilingDetail filing={selectedFiling} />}
+          {isFallback || !selectedFiling ? <TranscriptView market={market} /> : <FilingDetail filing={selectedFiling} />}
         </div>
       </div>
 
       <Panel title="Synthesis" meta="auto" bodyClassName="tight">
-        <EntityPanel />
+        <EntityPanel market={market} />
       </Panel>
     </div>
   );
