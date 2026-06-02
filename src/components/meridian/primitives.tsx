@@ -1,7 +1,7 @@
 "use client";
 
-import { ReactNode, useEffect, useState } from "react";
-import { ticker, tickerIN } from "@/lib/meridian/data";
+import { ReactNode, useEffect, useMemo, useState } from "react";
+import { ticker, tickerIN, yahooSymbols, type Tick } from "@/lib/meridian/data";
 import { useMarket } from "./MarketContext";
 
 export function Panel({
@@ -98,12 +98,55 @@ export function Sparkline({
   );
 }
 
+type Quote = { price: number; changePct: number };
+
 export function MarketTicker() {
   const { market } = useMarket();
-  const src = market === "IN" ? tickerIN : ticker;
-  const items = [...src, ...src];
+  const seed = market === "IN" ? tickerIN : ticker;
+  const [quotes, setQuotes] = useState<Record<string, Quote>>({});
+  const [live, setLive] = useState(false);
+
+  // Yahoo symbols for the symbols on the active desk that have a mapping.
+  const symbolParam = useMemo(
+    () => seed.map((t) => yahooSymbols[t.s]).filter(Boolean).join(","),
+    [seed],
+  );
+
+  useEffect(() => {
+    if (!symbolParam) return;
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const res = await fetch(`/api/market?symbols=${encodeURIComponent(symbolParam)}`, {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { quotes: Record<string, Quote> };
+        if (cancelled) return;
+        setQuotes(data.quotes ?? {});
+        if (Object.keys(data.quotes ?? {}).length > 0) setLive(true);
+      } catch {
+        /* keep last good / seed values */
+      }
+    };
+    pull();
+    const id = setInterval(pull, 20_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [symbolParam]);
+
+  // Merge live quotes over the seed list; symbols without a live quote keep seed.
+  const merged: Tick[] = seed.map((t) => {
+    const q = quotes[yahooSymbols[t.s]];
+    return q ? { s: t.s, p: q.price, d: q.changePct } : t;
+  });
+
+  const items = [...merged, ...merged];
   return (
-    <div className="ticker marquee-wrap">
+    <div className="ticker marquee-wrap" title={live ? "Live — Yahoo Finance" : "Indicative seed prices"}>
+      <span className={"ticker-live" + (live ? " on" : "")} aria-hidden />
       <div className="marquee">
         {items.map((it, i) => (
           <span className="item" key={i}>

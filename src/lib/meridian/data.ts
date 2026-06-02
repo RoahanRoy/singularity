@@ -67,6 +67,26 @@ const rawTicksIN: [string, number, number][] = [
 
 export const tickerIN: Tick[] = rawTicksIN.map(([s, p, d]) => ({ s, p, d }));
 
+/**
+ * Maps each marquee symbol to its Yahoo Finance ticker so the top ticker can
+ * pull live quotes (price + day change) from the free chart endpoint. Symbols
+ * without a clean free mapping (e.g. JGB10Y, MCX contracts) are omitted and
+ * keep their seed value as a fallback.
+ */
+export const yahooSymbols: Record<string, string> = {
+  // US desk
+  ES: "ES=F", NQ: "NQ=F", RTY: "RTY=F",
+  DXY: "DX-Y.NYB", UST10Y: "^TNX",
+  XAU: "GC=F", WTI: "CL=F", BRENT: "BZ=F",
+  NVDA: "NVDA", TSM: "TSM", ASML: "ASML",
+  VIX: "^VIX", MOVE: "^MOVE",
+  // India desk
+  NIFTY: "^NSEI", SENSEX: "^BSESN", BANKNIFTY: "^NSEBANK", NIFTYIT: "^CNXIT",
+  USDINR: "INR=X", INDIAVIX: "^INDIAVIX",
+  RELIANCE: "RELIANCE.NS", TCS: "TCS.NS", HDFCBANK: "HDFCBANK.NS",
+  INFY: "INFY.NS", ICICIBANK: "ICICIBANK.NS", ITC: "ITC.NS",
+};
+
 // India-desk clusters (NSE). Mirrors the US set's shape so the Swarm screen
 // renders them identically; infra clusters (alt/exec/risk) are shared.
 export const clustersIN: Cluster[] = [

@@ -243,6 +243,9 @@
 .meridian-root .ticker .sym { color: var(--ink-0); }
 .meridian-root .ticker .up { color: var(--green); }
 .meridian-root .ticker .down { color: var(--red); }
+.meridian-root .ticker-live { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3, #5a606b); }
+.meridian-root .ticker-live.on { background: var(--green); box-shadow: 0 0 0 0 color-mix(in oklab, var(--green) 70%, transparent); animation: md-pulse 2.4s ease-out infinite; }
+@keyframes md-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--green) 60%, transparent); } 70% { box-shadow: 0 0 0 5px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
 .meridian-root .topbar-right { display: flex; align-items: center; gap: 14px; justify-content: flex-end; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); letter-spacing: 0.08em; }
 .meridian-root .topbar-right .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 99px; color: var(--ink-1); }
 .meridian-root .topbar-right .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 var(--green); animation: md-pulse 2.2s infinite; }
