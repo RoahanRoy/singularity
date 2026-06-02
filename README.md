@@ -58,6 +58,7 @@ Required environment (`.env.local`):
 - `APPWRITE_API_KEY` — server-only, for schema + seed scripts
 - `UPSTASH_VECTOR_REST_URL` / `_TOKEN` — embeddings
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` — LLM calls (agent loop only)
+- `CRON_SECRET` — bearer token guarding the weekly India-enrichment cron (`/api/cron/enrich-india`). Set the same value in the Vercel project's env vars; Vercel attaches it to scheduled requests. Generate one with `openssl rand -hex 32`.
 
 Provision the database, then run the app:
 
