@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/enrich-india",
+      "schedule": "0 4 * * 1"
+    }
+  ]
+}
