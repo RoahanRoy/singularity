@@ -24,7 +24,11 @@ import type {
   AgentStatusDoc,
 } from "@/lib/appwrite/schema";
 
-const THREAD = "default";
+const THREAD_US = "default";
+const THREAD_IN = "default-IN";
+function threadFor(market: "US" | "IN"): string {
+  return market === "IN" ? THREAD_IN : THREAD_US;
+}
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -51,10 +55,12 @@ function ConsoleChat({
   operatorName,
   operatorInitials,
   onActivity,
+  thread,
 }: {
   operatorName: string;
   operatorInitials: string;
   onActivity: (iso: string) => void;
+  thread: string;
 }) {
   const feedRef = useRef<HTMLDivElement>(null);
   const [msgs, setMsgs] = useState<OperatorMessage[]>([]);
@@ -64,7 +70,9 @@ function ConsoleChat({
 
   useEffect(() => {
     const cancelled = { v: false };
-    listOperatorMessages(THREAD, 200)
+    setMsgs([]);
+    setLoaded(false);
+    listOperatorMessages(thread, 200)
       .then((rows) => {
         if (cancelled.v) return;
         setMsgs(rows);
@@ -75,7 +83,7 @@ function ConsoleChat({
       .catch(() => {
         if (!cancelled.v) setLoaded(true);
       });
-    const unsub = subscribeOperatorMessages(THREAD, (m) => {
+    const unsub = subscribeOperatorMessages(thread, (m) => {
       if (cancelled.v) return;
       setMsgs((prev) => (prev.some((x) => x.$id === m.$id) ? prev : [...prev, m]));
       onActivity(m.$createdAt);
@@ -84,7 +92,7 @@ function ConsoleChat({
       cancelled.v = true;
       unsub();
     };
-  }, [onActivity]);
+  }, [onActivity, thread]);
 
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
@@ -96,7 +104,7 @@ function ConsoleChat({
     setSending(true);
     setDraft("");
     try {
-      await sendOperatorMessage(text);
+      await sendOperatorMessage(text, "operator", thread);
     } catch {
       setDraft(text);
     } finally {
@@ -166,7 +174,7 @@ function ConsoleChat({
           </button>
         </div>
         <div className="hints">
-          <span className="h">thread · {THREAD}</span>
+          <span className="h">thread · {thread}</span>
           <span style={{ marginLeft: "auto", color: "var(--ink-4)" }}>
             {msgs.length} message{msgs.length === 1 ? "" : "s"}
           </span>
@@ -550,6 +558,8 @@ function Governance() {
 
 export function ConsoleScreen() {
   const operator = useOperator();
+  const { market } = useMarket();
+  const thread = threadFor(market);
   const operatorName = operator?.name || operator?.email || "anonymous";
   const operatorInitials = useMemo(() => initials(operatorName), [operatorName]);
 
@@ -566,14 +576,16 @@ export function ConsoleScreen() {
     <div className="console-grid">
       <div className="panel" style={{ borderTop: 0, borderBottom: 0, borderLeft: 0 }}>
         <div className="panel-head">
-          <span className="title">Operator Console · thread {THREAD}</span>
+          <span className="title">Operator Console · thread {thread}</span>
           <span className="meta">{operatorName} · supervised · {lastLabel}</span>
         </div>
         <div className="panel-body tight" style={{ overflow: "hidden", display: "flex", minHeight: 0 }}>
           <ConsoleChat
+            key={thread}
             operatorName={operatorName}
             operatorInitials={operatorInitials}
             onActivity={setLastActivity}
+            thread={thread}
           />
         </div>
       </div>
