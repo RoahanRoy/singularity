@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Panel, Tag } from "../primitives";
 import { useMarket } from "../MarketContext";
-import { listFilings, subscribeFilings, getTopMemo, listMemosByFiling } from "@/lib/appwrite/queries";
+import { listFilings, subscribeFilings, getTopMemo, listMemosByFiling, listPositions } from "@/lib/appwrite/queries";
 import type { Filing, Memo, MemoEntity } from "@/lib/appwrite/schema";
 import type { Market } from "@/lib/meridian/format";
 
@@ -45,7 +45,7 @@ function parseEntities(raw: string | null | undefined): MemoEntity[] | null {
   }
 }
 
-type Doc = { id: string; src: string; tk: string; ttl: string; when: string };
+type Doc = { id: string; src: string; tk: string; ttl: string; when: string; held?: boolean };
 
 const FALLBACK_DOCS_US: Doc[] = [
   { id: "f-0", src: "10-K",          tk: "NVDA", ttl: "Annual Report — segment commentary on China-restricted SKUs and supply mix.", when: "0.4s" },
@@ -109,7 +109,22 @@ function DocList({
           <div key={d.id} className={"doc " + (d.id === selected ? "sel" : "")} onClick={() => setSel(d.id)}>
             <div className="row">
               <span className="src">{d.src}</span>
-              <span className="tk mono">{d.tk}</span>
+              <span className="tk mono">
+                {d.tk}
+                {d.held && (
+                  <span
+                    style={{
+                      marginLeft: 6,
+                      color: "var(--md-accent)",
+                      fontSize: 9,
+                      letterSpacing: "0.14em",
+                    }}
+                    title="On the book"
+                  >
+                    ● HELD
+                  </span>
+                )}
+              </span>
             </div>
             <div className="ttl mono" title={d.ttl}>{s.primary}</div>
             <div className="when">
@@ -459,16 +474,24 @@ function EntityPanel({ market }: { market: Market }) {
 export function ResearchScreen() {
   const { market } = useMarket();
   const [filings, setFilings] = useState<Filing[]>([]);
+  const [heldTickers, setHeldTickers] = useState<Set<string>>(new Set());
   const [sel, setSel] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setFilings([]);
+    setHeldTickers(new Set());
     setSel(null);
     listFilings(12, market)
       .then((rows) => {
         if (cancelled) return;
         setFilings(rows);
+      })
+      .catch(() => {});
+    listPositions(200, market)
+      .then((rows) => {
+        if (cancelled) return;
+        setHeldTickers(new Set(rows.map((p) => p.ticker.toUpperCase())));
       })
       .catch(() => {});
     const unsub = subscribeFilings((f) => {
@@ -482,8 +505,14 @@ export function ResearchScreen() {
   }, [market]);
 
   const fallbackDocs = market === "IN" ? FALLBACK_DOCS_IN : FALLBACK_DOCS_US;
-  const liveDocs: Doc[] = filings.map(filingToDoc);
+  const liveDocs: Doc[] = filings.map((f) => ({
+    ...filingToDoc(f),
+    held: heldTickers.has(f.ticker.toUpperCase()),
+  }));
+  // Stable sort: held filings float to the top, original recency order preserved within each group.
+  liveDocs.sort((a, b) => Number(!!b.held) - Number(!!a.held));
   const docs: Doc[] = liveDocs.length ? liveDocs : fallbackDocs;
+  const heldCount = liveDocs.filter((d) => d.held).length;
 
   const selectedId = sel ?? docs[1]?.id ?? docs[0]?.id ?? null;
   const selectedDoc = docs.find((d) => d.id === selectedId) ?? null;
@@ -503,7 +532,15 @@ export function ResearchScreen() {
 
   return (
     <div className="research">
-      <Panel title="Ingest Queue" meta={`${liveDocs.length || fallbackDocs.length} loaded`} bodyClassName="tight">
+      <Panel
+        title="Ingest Queue"
+        meta={
+          liveDocs.length
+            ? `${liveDocs.length} loaded · ${heldCount} on book`
+            : `${fallbackDocs.length} loaded`
+        }
+        bodyClassName="tight"
+      >
         <DocList docs={docs} selected={selectedId} setSel={setSel} />
       </Panel>
 

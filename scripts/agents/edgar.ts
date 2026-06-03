@@ -21,7 +21,9 @@ const TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json";
 const TICKER_MAP_CACHE = path.resolve(".edgar-tickers.json");
 const TICKER_MAP_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7d
 
-const FORMS_OF_INTEREST = ["10-Q", "10-K", "8-K"] as const;
+// 10-K/10-Q/8-K cover US domestic filers. 20-F (annual) and 6-K (interim
+// reports / press releases) cover foreign private issuers — TSM, ASML, etc.
+const FORMS_OF_INTEREST = ["10-Q", "10-K", "8-K", "20-F", "6-K"] as const;
 
 export type EdgarFiling = {
   ticker: string;
