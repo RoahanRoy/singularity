@@ -21,6 +21,7 @@
  *   MERIDIAN_TECH_ERROR_BACKOFF_MS   pause after a failed cycle (default 15000)
  */
 import { nextTicker, sectorOf } from "./universe";
+import { db, DB, Query } from "./appwrite";
 import {
   bootstrapAgents,
   parser, earningsReview, analyst, quant, critic, valuation, cio,
@@ -55,10 +56,27 @@ function sleep(ms: number): Promise<void> {
 
 type AgentIds = Awaited<ReturnType<typeof bootstrapAgents>>;
 
+/** Current held US tickers from the book. Mirrors india-loop's heldTickers(). */
+async function heldTickers(): Promise<string[]> {
+  try {
+    const res = await db.listDocuments(DB, "positions", [
+      Query.equal("market", "US"),
+      Query.limit(200),
+    ]);
+    return res.documents
+      .map((d) => String(d.ticker ?? "").toUpperCase())
+      .filter(Boolean);
+  } catch (err) {
+    console.warn(`[tech] could not read held book (${(err as Error).message})`);
+    return [];
+  }
+}
+
 async function runCycle(agentIds: AgentIds): Promise<void> {
-  const ticker = nextTicker();
+  const held = await heldTickers();
+  const ticker = nextTicker(held);
   const sector = sectorOf(ticker);
-  console.log(`\n=== MERIDIAN loop — ${ticker} (${sector}) ===\n`);
+  console.log(`\n=== MERIDIAN loop — ${ticker} (${sector}) · book=${held.length} names ===\n`);
 
   let ctx: Ctx = { ticker, agentIds };
   ctx = await parser(ctx);

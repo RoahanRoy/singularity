@@ -84,10 +84,15 @@ export function nextIndiaTicker(held: readonly string[] = []): string {
   return pool[i % pool.length];
 }
 
-/** Round-robin across the full multi-sector universe. */
-export function nextTicker(): string {
+/**
+ * Round-robin across the held US book (preferred) or the full multi-sector
+ * universe as a fallback when nothing is connected yet. Mirrors the India
+ * loop's nextIndiaTicker() so the analyst chain walks the actual portfolio.
+ */
+export function nextTicker(held: readonly string[] = []): string {
+  const pool = held.length ? held : FULL_UNIVERSE;
   let i = 0;
-  if (fs.existsSync(CURSOR)) i = (Number(fs.readFileSync(CURSOR, "utf8")) + 1) % FULL_UNIVERSE.length;
+  if (fs.existsSync(CURSOR)) i = (Number(fs.readFileSync(CURSOR, "utf8")) + 1) % pool.length;
   fs.writeFileSync(CURSOR, String(i));
-  return FULL_UNIVERSE[i];
+  return pool[i % pool.length];
 }
