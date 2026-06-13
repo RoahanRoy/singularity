@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Panel } from "../primitives";
 import { useMarket } from "../MarketContext";
 import { KiteAccountsPanel } from "../KiteAccounts";
+import { IbkrAccountsPanel } from "../IbkrAccounts";
 import { fmtMoney, fmtFullMoney } from "@/lib/meridian/format";
 import {
   listPositions,
@@ -588,6 +589,12 @@ export function PortfolioScreen() {
       {market === "IN" && (
         <Panel title="KITE Accounts · India" meta="Zerodha · real holdings" bodyClassName="tight">
           <KiteAccountsPanel />
+        </Panel>
+      )}
+
+      {market === "US" && (
+        <Panel title="IBKR Accounts · US" meta="Interactive Brokers · real holdings" bodyClassName="tight">
+          <IbkrAccountsPanel />
         </Panel>
       )}
     </div>
