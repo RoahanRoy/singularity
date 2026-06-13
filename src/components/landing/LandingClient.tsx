@@ -13,6 +13,18 @@ const Scene = dynamic(() => import("./Scene"), {
 
 const NAV = ["Platform", "Research", "Approach", "Contact"];
 
+// Scattered HUD "scan" markers over the centerpiece (decorative).
+const HUD = [
+  { x: "16%", y: "30%", l: "REF·014" },
+  { x: "30%", y: "62%", l: "S·07" },
+  { x: "52%", y: "22%", l: "x1.408" },
+  { x: "63%", y: "48%", l: "351" },
+  { x: "70%", y: "70%", l: "IST" },
+  { x: "44%", y: "78%", l: "Δ·09" },
+  { x: "24%", y: "46%", l: "" },
+  { x: "58%", y: "64%", l: "" },
+];
+
 const STRATEGIES = [
   {
     n: "01",
@@ -156,10 +168,6 @@ export default function LandingClient() {
 
   return (
     <div className="lp">
-      {/* fixed WebGL centerpiece */}
-      <div className="lp-canvas" aria-hidden>
-        <Scene />
-      </div>
       <div className="lp-grain" aria-hidden />
 
       {/* nav */}
@@ -183,8 +191,24 @@ export default function LandingClient() {
 
       <main className="lp-main" id="top">
         {/* hero */}
-        <header className="lp-hero lp-wrap" ref={heroRef}>
-          <div className="lp-hero-inner">
+        <header className="lp-hero" ref={heroRef}>
+          {/* WebGL centerpiece — scoped to the hero so it scrolls away */}
+          <div className="lp-hero-canvas" aria-hidden>
+            <Scene />
+            <div className="lp-hud">
+              {HUD.map((h, i) => (
+                <span
+                  key={i}
+                  className={`lp-hud-mark${h.l ? "" : " is-bare"}`}
+                  style={{ left: h.x, top: h.y }}
+                >
+                  {h.l && <i>{h.l}</i>}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="lp-hero-inner lp-wrap">
             <span className="lp-eyebrow" data-reveal>
               Meridian · Autonomous Capital Intelligence
             </span>
@@ -211,7 +235,7 @@ export default function LandingClient() {
             </div>
           </div>
 
-          <div className="lp-hero-foot">
+          <div className="lp-hero-foot lp-wrap">
             <div className="lp-scroll-hint">
               <span className="bar" aria-hidden />
               Scroll to explore
