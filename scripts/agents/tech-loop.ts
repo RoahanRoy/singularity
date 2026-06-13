@@ -19,6 +19,8 @@
  *   MERIDIAN_TECH_ONCE=1             run a single cycle and exit (for testing)
  *   MERIDIAN_TECH_INTERVAL_MS        pause between cycles (default 60000)
  *   MERIDIAN_TECH_ERROR_BACKOFF_MS   pause after a failed cycle (default 15000)
+ *   MERIDIAN_SYNC_BASE               base URL of the running app for IBKR sync
+ *                                    (default http://localhost:3000)
  */
 import { nextTicker, sectorOf } from "./universe";
 import { db, DB, Query } from "./appwrite";
@@ -33,6 +35,7 @@ import {
 const RUN_ONCE = process.env.MERIDIAN_TECH_ONCE === "1";
 const INTERVAL_MS = Number(process.env.MERIDIAN_TECH_INTERVAL_MS || 60_000);
 const ERROR_BACKOFF_MS = Number(process.env.MERIDIAN_TECH_ERROR_BACKOFF_MS || 15_000);
+const SYNC_BASE = (process.env.MERIDIAN_SYNC_BASE || "http://localhost:3000").replace(/\/$/, "");
 
 let stopping = false;
 function requestStop(sig: string) {
@@ -56,6 +59,16 @@ function sleep(ms: number): Promise<void> {
 
 type AgentIds = Awaited<ReturnType<typeof bootstrapAgents>>;
 
+/** Refresh connected IBKR holdings via the app's sync route. Best-effort. */
+async function refreshHoldings(): Promise<void> {
+  try {
+    const res = await fetch(`${SYNC_BASE}/api/ibkr/sync`, { method: "POST" });
+    if (!res.ok) console.warn(`[tech] sync route ${res.status} (continuing)`);
+  } catch (err) {
+    console.warn(`[tech] holdings sync skipped (${(err as Error).message})`);
+  }
+}
+
 /** Current held US tickers from the book. Mirrors india-loop's heldTickers(). */
 async function heldTickers(): Promise<string[]> {
   try {
@@ -73,6 +86,7 @@ async function heldTickers(): Promise<string[]> {
 }
 
 async function runCycle(agentIds: AgentIds): Promise<void> {
+  await refreshHoldings();
   const held = await heldTickers();
   const ticker = nextTicker(held);
   const sector = sectorOf(ticker);
