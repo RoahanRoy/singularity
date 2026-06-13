@@ -43,4 +43,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .agents-cursor
+.agents-cursor-india
 .edgar-tickers.json
+
+# IBKR Client Portal Gateway (downloaded artifact, not source)
+/Client Portal/

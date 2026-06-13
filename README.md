@@ -59,6 +59,17 @@ Required environment (`.env.local`):
 - `UPSTASH_VECTOR_REST_URL` / `_TOKEN` — embeddings
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` — LLM calls (agent loop only)
 - `CRON_SECRET` — bearer token guarding the weekly India-enrichment cron (`/api/cron/enrich-india`). Set the same value in the Vercel project's env vars; Vercel attaches it to scheduled requests. Generate one with `openssl rand -hex 32`.
+- `IBKR_GATEWAY_URL` — base URL of your local Interactive Brokers **Client Portal Gateway** (default `https://localhost:5000`). Only set if your gateway runs elsewhere. See **Connecting IBKR** below.
+
+### Connecting IBKR (US desk)
+
+The US desk pulls your real positions from Interactive Brokers the same way the India desk pulls from Zerodha — read-only, projected onto the `positions` + `fund_snapshots` book (`market="US"`). IBKR has no hosted OAuth redirect, so the brokerage session lives in a **local gateway** you run:
+
+1. Download and start IBKR's **Client Portal Gateway** (Java). It listens on `https://localhost:5000` with a self-signed cert.
+2. Open `https://localhost:5000` in a browser and complete the IBKR SSO login (accept the self-signed cert warning).
+3. In the app, switch the desk to **US**, open **Portfolio OS**, and the **IBKR Accounts** panel shows the gateway state. Once it reads *"Gateway authenticated"*, click **+ Connect IBKR account**.
+
+The app talks REST to the gateway server-side; it stores no IBKR password or token — only which account id the authenticated gateway exposes. The gateway session goes stale after inactivity (status flips to `needs_reauth`); re-login in the gateway and hit **reconnect**. Because the gateway is local-only, this flow runs on your laptop, not on Vercel. Endpoints: `/api/ibkr/status` (gateway auth), `/api/ibkr/connect` (register + first sync), `/api/ibkr/sync` (re-pull holdings).
 
 Provision the database, then run the app:
 
