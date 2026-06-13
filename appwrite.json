@@ -611,6 +611,14 @@
                     "required": false,
                     "array": false,
                     "encrypt": false
+                },
+                {
+                    "key": "ibkr_account_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
                 }
             ],
             "indexes": [
@@ -1790,6 +1798,94 @@
                     "type": "key",
                     "attributes": [
                         "kite_user_id"
+                    ]
+                },
+                {
+                    "key": "by_status",
+                    "type": "key",
+                    "attributes": [
+                        "status"
+                    ]
+                }
+            ]
+        },
+        {
+            "$id": "ibkr_accounts",
+            "$permissions": [
+                "read(\"users\")",
+                "create(\"any\")",
+                "update(\"any\")",
+                "delete(\"any\")"
+            ],
+            "databaseId": "meridian",
+            "name": "ibkr_accounts",
+            "enabled": true,
+            "documentSecurity": false,
+            "attributes": [
+                {
+                    "key": "operator_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "label",
+                    "type": "string",
+                    "size": 128,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "ibkr_account_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "status",
+                    "type": "string",
+                    "size": 24,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false,
+                    "default": "connected"
+                },
+                {
+                    "key": "equity_cash",
+                    "type": "double",
+                    "required": false,
+                    "array": false,
+                    "default": 0
+                },
+                {
+                    "key": "holdings_count",
+                    "type": "integer",
+                    "required": false,
+                    "array": false,
+                    "min": 0,
+                    "max": 100000,
+                    "default": 0
+                },
+                {
+                    "key": "last_synced_at",
+                    "type": "string",
+                    "size": 32,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_account",
+                    "type": "key",
+                    "attributes": [
+                        "ibkr_account_id"
                     ]
                 },
                 {

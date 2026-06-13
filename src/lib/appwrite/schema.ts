@@ -24,6 +24,7 @@ export const COLLECTIONS = {
   agent_commands: "agent_commands",
   agent_status: "agent_status",
   kite_accounts: "kite_accounts",
+  ibkr_accounts: "ibkr_accounts",
   news: "news",
 } as const;
 
@@ -99,6 +100,7 @@ export type Position = Base & {
   factor_exposures_json: string | null;
   market?: Market | null;
   kite_account_id?: string | null;
+  ibkr_account_id?: string | null;
 };
 
 export type Trade = Base & {
@@ -211,6 +213,23 @@ export type KiteAccount = Base & {
   api_key: string;
   access_token: string;
   public_token: string | null;
+  status: "connected" | "needs_reauth" | "error";
+  equity_cash: number;
+  holdings_count: number;
+  last_synced_at: string | null;
+};
+
+/**
+ * A connected Interactive Brokers account. The brokerage session lives in the
+ * operator's local Client Portal Gateway (not here), so unlike KiteAccount
+ * there is no stored token — this row just records which IBKR account id the
+ * authenticated gateway exposes. On a dropped gateway session the status flips
+ * to `needs_reauth` and the operator re-logs into the gateway.
+ */
+export type IbkrAccount = Base & {
+  operator_id: string | null;
+  label: string;
+  ibkr_account_id: string;
   status: "connected" | "needs_reauth" | "error";
   equity_cash: number;
   holdings_count: number;
