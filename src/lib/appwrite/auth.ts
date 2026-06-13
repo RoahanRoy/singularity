@@ -23,7 +23,7 @@ export async function signUp(formData: FormData) {
     expires: new Date(session.expire),
   });
 
-  redirect("/");
+  redirect("/desk");
 }
 
 export async function signIn(formData: FormData) {
@@ -42,7 +42,7 @@ export async function signIn(formData: FormData) {
     expires: new Date(session.expire),
   });
 
-  redirect("/");
+  redirect("/desk");
 }
 
 export async function signOut() {

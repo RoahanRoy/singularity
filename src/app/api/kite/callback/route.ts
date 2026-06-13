@@ -20,7 +20,7 @@ export async function GET(req: Request) {
   const base = appBase(req);
 
   if (status !== "success" || !requestToken) {
-    return Response.redirect(`${base}/?market=IN&kite=error`, 302);
+    return Response.redirect(`${base}/desk?market=IN&kite=error`, 302);
   }
 
   try {
@@ -46,9 +46,9 @@ export async function GET(req: Request) {
     const accountId = await upsertAccount(session, usedApiKey);
     // First sync is best-effort — the account is connected either way.
     await syncAccount(accountId).catch(() => {});
-    return Response.redirect(`${base}/?market=IN&kite=connected`, 302);
+    return Response.redirect(`${base}/desk?market=IN&kite=connected`, 302);
   } catch (err) {
     console.error("[kite/callback]", (err as Error).message);
-    return Response.redirect(`${base}/?market=IN&kite=error`, 302);
+    return Response.redirect(`${base}/desk?market=IN&kite=error`, 302);
   }
 }

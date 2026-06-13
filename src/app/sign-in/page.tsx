@@ -32,7 +32,7 @@ export default function SignInPage() {
       } else {
         await bootstrapOperatorOnce(email, password, name || "Operator");
       }
-      router.replace("/");
+      router.replace("/desk");
     } catch (e2) {
       const msg = e2 instanceof Error ? e2.message : "Sign-in failed.";
       setErr(msg);

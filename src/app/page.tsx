@@ -1,33 +1,18 @@
-"use client";
+import type { Metadata } from "next";
+import LandingClient from "@/components/landing/LandingClient";
 
-import { useState } from "react";
-import { Shell, type ScreenId } from "@/components/meridian/Shell";
-import { AuthGate } from "@/components/meridian/AuthGate";
-import { MarketProvider } from "@/components/meridian/MarketContext";
-import { SwarmScreen } from "@/components/meridian/screens/Swarm";
-import { ResearchScreen } from "@/components/meridian/screens/Research";
-import { PortfolioScreen } from "@/components/meridian/screens/Portfolio";
-import { ConsoleScreen } from "@/components/meridian/screens/Console";
-import { ComputeScreen } from "@/components/meridian/screens/Compute";
+export const metadata: Metadata = {
+  title: "Meridian · Autonomous Capital Intelligence",
+  description:
+    "An AI-native hedge fund operating system. A swarm of agents researches, allocates, and executes across global markets — supervised by a small team of humans.",
+  openGraph: {
+    title: "Meridian · Autonomous Capital Intelligence",
+    description:
+      "Autonomous capital, intelligently deployed. Markets move in microseconds — so does Meridian.",
+    type: "website",
+  },
+};
 
-const SCREENS = {
-  swarm: SwarmScreen,
-  research: ResearchScreen,
-  portfolio: PortfolioScreen,
-  console: ConsoleScreen,
-  compute: ComputeScreen,
-} as const;
-
-export default function Home() {
-  const [active, setActive] = useState<ScreenId>("swarm");
-  const Screen = SCREENS[active];
-  return (
-    <AuthGate>
-      <MarketProvider>
-        <Shell active={active} setActive={setActive}>
-          <Screen />
-        </Shell>
-      </MarketProvider>
-    </AuthGate>
-  );
+export default function LandingPage() {
+  return <LandingClient />;
 }
