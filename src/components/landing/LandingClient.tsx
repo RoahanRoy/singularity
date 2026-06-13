@@ -152,10 +152,28 @@ function useLenis() {
 
 export default function LandingClient() {
   const [stuck, setStuck] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
   const heroRef = useRef<HTMLElement>(null);
 
   useLenis();
   useScrollReveal();
+
+  // restore saved theme, else follow the OS preference
+  useEffect(() => {
+    const stored = window.localStorage.getItem("lp-theme");
+    if (stored === "dark" || stored === "light") {
+      setTheme(stored);
+    } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      setTheme("dark");
+    }
+  }, []);
+
+  const toggleTheme = () =>
+    setTheme((t) => {
+      const next = t === "light" ? "dark" : "light";
+      window.localStorage.setItem("lp-theme", next);
+      return next;
+    });
 
   useEffect(() => {
     const onScroll = () => setStuck(window.scrollY > 40);
@@ -167,7 +185,7 @@ export default function LandingClient() {
   const year = new Date().getFullYear();
 
   return (
-    <div className="lp">
+    <div className="lp" data-theme={theme}>
       <div className="lp-grain" aria-hidden />
 
       {/* nav */}
@@ -183,10 +201,20 @@ export default function LandingClient() {
             </a>
           ))}
         </div>
-        <a className="lp-btn" href="/desk">
-          <span className="dot" aria-hidden />
-          Talk to the operators
-        </a>
+        <div className="lp-nav-right">
+          <button
+            type="button"
+            className="lp-themetoggle"
+            onClick={toggleTheme}
+            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          >
+            {theme === "dark" ? "☀" : "☾"}
+          </button>
+          <a className="lp-btn" href="/desk">
+            <span className="dot" aria-hidden />
+            Talk to the operators
+          </a>
+        </div>
       </nav>
 
       <main className="lp-main" id="top">
