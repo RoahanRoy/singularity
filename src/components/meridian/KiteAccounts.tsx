@@ -20,8 +20,11 @@ function relTime(iso: string | null): string {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+type KiteAppInfo = { slug: string; label: string; apiKey: string };
+
 export function KiteAccountsPanel() {
   const [accounts, setAccounts] = useState<KiteAccount[] | null>(null);
+  const [apps, setApps] = useState<KiteAppInfo[]>([]);
   const [syncing, setSyncing] = useState<string | null>(null);
   const [banner, setBanner] = useState<"connected" | "error" | null>(null);
 
@@ -33,6 +36,20 @@ export function KiteAccountsPanel() {
       return () => clearTimeout(t);
     }
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/kite/apps")
+      .then((r) => r.json())
+      .then((d: { apps?: KiteAppInfo[] }) => { if (!cancelled) setApps(d.apps ?? []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Each configured app is one Personal Kite app (one Zerodha user). Connect and
+  // reconnect must target the right app via ?app=<slug>.
+  const loginHref = (slug?: string) => `/api/kite/login${slug ? `?app=${slug}` : ""}`;
+  const slugForKey = (apiKey: string) => apps.find((a) => a.apiKey === apiKey)?.slug;
 
   useEffect(() => {
     const cancelled = { v: false };
@@ -97,9 +114,23 @@ export function KiteAccountsPanel() {
         </div>
       )}
 
-      <button style={btn} onClick={() => { window.location.href = "/api/kite/login"; }}>
-        + Connect KITE account
-      </button>
+      {apps.length <= 1 ? (
+        <button style={btn} onClick={() => { window.location.href = loginHref(apps[0]?.slug); }}>
+          + Connect KITE account
+        </button>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {apps.map((app) => (
+            <button
+              key={app.slug}
+              style={btn}
+              onClick={() => { window.location.href = loginHref(app.slug); }}
+            >
+              + Connect via {app.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {accounts === null ? (
         <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>loading…</div>
@@ -137,7 +168,7 @@ export function KiteAccountsPanel() {
               {a.status === "needs_reauth" ? (
                 <button
                   style={{ ...btn, background: "var(--amber)", padding: "3px 10px" }}
-                  onClick={() => { window.location.href = "/api/kite/login"; }}
+                  onClick={() => { window.location.href = loginHref(slugForKey(a.api_key)); }}
                 >
                   reconnect
                 </button>

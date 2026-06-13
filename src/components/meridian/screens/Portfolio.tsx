@@ -97,6 +97,16 @@ const FACTOR_LABELS: Record<string, string> = {
 };
 const FACTOR_ORDER = Object.keys(FACTOR_LABELS);
 
+// Kite computes each account's `weight` relative to that account's own book, so
+// across multiple connected accounts the per-row weights no longer sum to 1.
+// Recompute them book-globally from market value so weight% and the weighted
+// factor exposures stay correct regardless of how many accounts feed the book.
+function normalizeWeights(positions: Position[]): Position[] {
+  const total = positions.reduce((s, p) => s + Math.abs(p.market_value || 0), 0);
+  if (total <= 0) return positions;
+  return positions.map((p) => ({ ...p, weight: (p.market_value || 0) / total }));
+}
+
 function aggregateExposures(positions: Position[]): { factor: string; v: number }[] {
   const net: Record<string, number> = {};
   for (const p of positions) {
@@ -460,8 +470,12 @@ export function PortfolioScreen() {
     setPositions([]);
     setSnapshots([]);
     setScenarios([]);
-    listPositions(50, market)
-      .then((p) => { if (!cancelled) { setPositions(p); setPosLoaded(true); } })
+    listPositions(200, market)
+      .then((p) => {
+        if (cancelled) return;
+        setPositions(market === "IN" ? normalizeWeights(p) : p);
+        setPosLoaded(true);
+      })
       .catch(() => { if (!cancelled) setPosLoaded(true); });
     listFundSnapshots(200, market)
       .then((s) => { if (!cancelled) setSnapshots(s); })

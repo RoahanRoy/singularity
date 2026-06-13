@@ -17,16 +17,49 @@ const KITE_LOGIN = "https://kite.zerodha.com/connect/login";
 const KITE_API = "https://api.kite.trade";
 const KITE_VERSION = "3";
 
-function apiKey(): string {
-  const k = process.env.KITE_API_KEY;
-  if (!k) throw new Error("KITE_API_KEY is not set");
-  return k;
+/**
+ * A registered Kite Connect app. Zerodha's Personal apps are single-user (locked
+ * to the Zerodha id that created them), so to aggregate a second account we run a
+ * second Personal app owned by that account. Each app's key+secret live in env
+ * (never the DB); accounts reference their app by `api_key`.
+ *
+ * Env layout: app "1" is KITE_API_KEY / KITE_API_SECRET (+ optional KITE_APP_LABEL);
+ * apps 2..5 are KITE_API_KEY_<n> / KITE_API_SECRET_<n> (+ optional KITE_APP_LABEL_<n>).
+ */
+export type KiteApp = { slug: string; label: string; apiKey: string; apiSecret: string };
+
+function readApp(slug: string, keyEnv: string, secretEnv: string, labelEnv: string): KiteApp | null {
+  const apiKey = process.env[keyEnv];
+  const apiSecret = process.env[secretEnv];
+  if (!apiKey || !apiSecret) return null;
+  return { slug, label: process.env[labelEnv] || `App ${slug}`, apiKey, apiSecret };
 }
 
-function apiSecret(): string {
-  const s = process.env.KITE_API_SECRET;
-  if (!s) throw new Error("KITE_API_SECRET is not set");
-  return s;
+/** Every Kite app configured in the environment, in slug order. */
+export function listApps(): KiteApp[] {
+  const apps: KiteApp[] = [];
+  const first = readApp("1", "KITE_API_KEY", "KITE_API_SECRET", "KITE_APP_LABEL");
+  if (first) apps.push(first);
+  for (let n = 2; n <= 5; n++) {
+    const a = readApp(String(n), `KITE_API_KEY_${n}`, `KITE_API_SECRET_${n}`, `KITE_APP_LABEL_${n}`);
+    if (a) apps.push(a);
+  }
+  return apps;
+}
+
+/** Resolve an app by slug (default: the first configured app). */
+export function getApp(slug?: string): KiteApp {
+  const apps = listApps();
+  if (apps.length === 0) throw new Error("KITE_API_KEY is not set");
+  if (!slug) return apps[0];
+  const found = apps.find((a) => a.slug === slug);
+  if (!found) throw new Error(`Kite app "${slug}" is not configured`);
+  return found;
+}
+
+/** Resolve the app a stored account belongs to, by its api_key. */
+export function getAppByKey(apiKey: string): KiteApp | null {
+  return listApps().find((a) => a.apiKey === apiKey) ?? null;
 }
 
 /** Where Kite sends the operator back after login. */
@@ -35,9 +68,9 @@ export function redirectUrl(): string {
   return `${base.replace(/\/$/, "")}/api/kite/callback`;
 }
 
-/** The hosted Kite login URL the operator is sent to. */
-export function loginUrl(): string {
-  return `${KITE_LOGIN}?v=${KITE_VERSION}&api_key=${encodeURIComponent(apiKey())}`;
+/** The hosted Kite login URL the operator is sent to, for a given app. */
+export function loginUrl(app: KiteApp): string {
+  return `${KITE_LOGIN}?v=${KITE_VERSION}&api_key=${encodeURIComponent(app.apiKey)}`;
 }
 
 export type KiteSession = {
@@ -48,16 +81,16 @@ export type KiteSession = {
 };
 
 /**
- * Exchange a `request_token` (from the login redirect) for an access token.
- * checksum = SHA-256(api_key + request_token + api_secret).
+ * Exchange a `request_token` (from the login redirect) for an access token,
+ * against a specific app. checksum = SHA-256(api_key + request_token + api_secret).
  */
-export async function exchangeToken(requestToken: string): Promise<KiteSession> {
+export async function exchangeToken(requestToken: string, app: KiteApp): Promise<KiteSession> {
   const checksum = createHash("sha256")
-    .update(apiKey() + requestToken + apiSecret())
+    .update(app.apiKey + requestToken + app.apiSecret)
     .digest("hex");
 
   const body = new URLSearchParams({
-    api_key: apiKey(),
+    api_key: app.apiKey,
     request_token: requestToken,
     checksum,
   });
@@ -98,10 +131,10 @@ export type KiteHolding = {
 
 export class KiteAuthError extends Error {}
 
-function authHeader(accessToken: string): Record<string, string> {
+function authHeader(apiKey: string, accessToken: string): Record<string, string> {
   return {
     "X-Kite-Version": KITE_VERSION,
-    Authorization: `token ${apiKey()}:${accessToken}`,
+    Authorization: `token ${apiKey}:${accessToken}`,
   };
 }
 
@@ -109,8 +142,8 @@ function authHeader(accessToken: string): Record<string, string> {
  * Fetch the operator's equity holdings. Throws KiteAuthError on a 403/401 so
  * the caller can flip the stored account to `needs_reauth` (tokens expire daily).
  */
-export async function getHoldings(accessToken: string): Promise<KiteHolding[]> {
-  const res = await fetch(`${KITE_API}/portfolio/holdings`, { headers: authHeader(accessToken) });
+export async function getHoldings(apiKey: string, accessToken: string): Promise<KiteHolding[]> {
+  const res = await fetch(`${KITE_API}/portfolio/holdings`, { headers: authHeader(apiKey, accessToken) });
   if (res.status === 401 || res.status === 403) {
     throw new KiteAuthError("Kite access token expired or invalid");
   }
@@ -134,9 +167,9 @@ export async function getHoldings(accessToken: string): Promise<KiteHolding[]> {
 }
 
 /** Available cash margin (equity segment), used for NAV cash + buying power. */
-export async function getEquityCash(accessToken: string): Promise<number> {
+export async function getEquityCash(apiKey: string, accessToken: string): Promise<number> {
   try {
-    const res = await fetch(`${KITE_API}/user/margins/equity`, { headers: authHeader(accessToken) });
+    const res = await fetch(`${KITE_API}/user/margins/equity`, { headers: authHeader(apiKey, accessToken) });
     if (!res.ok) return 0;
     const json = (await res.json().catch(() => null)) as
       | { status?: string; data?: { net?: number } }

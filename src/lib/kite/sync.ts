@@ -2,7 +2,7 @@ import "server-only";
 import { ID, Query } from "node-appwrite";
 import { createAdminClient, DATABASE_ID } from "@/lib/appwrite/server";
 import { COLLECTIONS } from "@/lib/appwrite/schema";
-import { getHoldings, getEquityCash, KiteAuthError } from "./client";
+import { getHoldings, getEquityCash, getApp, KiteAuthError } from "./client";
 
 export type SyncResult = {
   accountId: string;
@@ -33,11 +33,14 @@ export async function syncAccount(accountId: string): Promise<SyncResult> {
     await databases.updateDocument(DATABASE_ID, COLLECTIONS.kite_accounts, accountId, { status: "needs_reauth" });
     return { accountId, holdings: 0, navInr: 0, pnl: 0, status: "needs_reauth" };
   }
+  // Each account authenticates against its own Kite app; fall back to the
+  // default app for legacy rows whose api_key predates multi-app support.
+  const apiKey = String(account.api_key || "") || getApp().apiKey;
 
   let holdings;
   let cash = 0;
   try {
-    [holdings, cash] = await Promise.all([getHoldings(accessToken), getEquityCash(accessToken)]);
+    [holdings, cash] = await Promise.all([getHoldings(apiKey, accessToken), getEquityCash(apiKey, accessToken)]);
   } catch (err) {
     const status = err instanceof KiteAuthError ? "needs_reauth" : "error";
     await databases.updateDocument(DATABASE_ID, COLLECTIONS.kite_accounts, accountId, { status });
@@ -128,15 +131,21 @@ export async function syncAllAccounts(): Promise<SyncResult[]> {
   return out;
 }
 
-/** Upsert a Kite account after a successful token exchange. */
-export async function upsertAccount(session: {
-  user_id: string;
-  user_name?: string;
-  access_token: string;
-  public_token?: string;
-}): Promise<string> {
+/**
+ * Upsert a Kite account after a successful token exchange. `apiKey` is the key
+ * of the app the account authenticated against — stored so re-syncs and
+ * reconnects use the same app (each Personal app is one Zerodha user).
+ */
+export async function upsertAccount(
+  session: {
+    user_id: string;
+    user_name?: string;
+    access_token: string;
+    public_token?: string;
+  },
+  apiKey: string,
+): Promise<string> {
   const { databases } = createAdminClient();
-  const apiKey = process.env.KITE_API_KEY || "";
 
   const existing = await databases.listDocuments(DATABASE_ID, COLLECTIONS.kite_accounts, [
     Query.equal("kite_user_id", session.user_id),
