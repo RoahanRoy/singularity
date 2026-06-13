@@ -222,7 +222,7 @@ export default function LandingClient() {
         <header className="lp-hero" ref={heroRef}>
           {/* WebGL centerpiece — scoped to the hero so it scrolls away */}
           <div className="lp-hero-canvas" aria-hidden>
-            <Scene />
+            <Scene theme={theme} />
             <div className="lp-hud">
               {HUD.map((h, i) => (
                 <span

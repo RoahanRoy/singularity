@@ -26,6 +26,8 @@ import * as THREE from "three";
 const TEAL = "#2596be";
 const BOULDER = "/models/boulder_01/boulder_01_1k.gltf";
 
+type Theme = "light" | "dark";
+
 /**
  * The real, photogrammetry-scanned boulder (Poly Haven, CC0) — moss-topped
  * granite. We clone it, recentre on the origin and normalise its scale so the
@@ -94,10 +96,12 @@ function Ring({
   cfg,
   geometry,
   background,
+  glassColor,
 }: {
   cfg: RingCfg;
   geometry: THREE.BufferGeometry;
   background: THREE.Color;
+  glassColor: string;
 }) {
   const spin = useRef<THREE.Mesh>(null);
   useFrame((_, delta) => {
@@ -122,23 +126,28 @@ function Ring({
           clearcoat={1}
           clearcoatRoughness={0}
           attenuationDistance={20}
-          attenuationColor="#ffffff"
-          color="#ffffff"
+          attenuationColor={glassColor}
+          color={glassColor}
         />
       </mesh>
     </group>
   );
 }
 
-function Centerpiece() {
+function Centerpiece({ theme }: { theme: Theme }) {
   const rig = useRef<THREE.Group>(null);
   const rockSpin = useRef<THREE.Group>(null);
   const { pointer } = useThree();
   const ribbon = useRibbonGeometry();
-  // light backdrop for the glass to refract — without this the transmission
-  // samples the empty (black) scene and the rings read as black instead of
-  // clear white glass.
-  const glassBg = useMemo(() => new THREE.Color("#eef3f6"), []);
+  // Backdrop the glass refracts — without this the transmission samples the
+  // empty (black) scene and the rings read as black. The colour follows the
+  // page theme so the glass reads as bright in light mode and as smoky/dark
+  // glass against the dark page instead of glaring white.
+  const glassBg = useMemo(
+    () => new THREE.Color(theme === "dark" ? "#10141a" : "#eef3f6"),
+    [theme]
+  );
+  const glassColor = theme === "dark" ? "#aab8c6" : "#ffffff";
 
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
@@ -166,7 +175,13 @@ function Centerpiece() {
         {/* free-floating dispersion rings — each spins on its own axis, all
             carried along by the cursor-tracked rig */}
         {RINGS.map((cfg, i) => (
-          <Ring key={i} cfg={cfg} geometry={ribbon} background={glassBg} />
+          <Ring
+            key={i}
+            cfg={cfg}
+            geometry={ribbon}
+            background={glassBg}
+            glassColor={glassColor}
+          />
         ))}
       </group>
     </Float>
@@ -184,7 +199,8 @@ function Rig() {
   return null;
 }
 
-export default function Scene() {
+export default function Scene({ theme = "light" }: { theme?: Theme }) {
+  const dark = theme === "dark";
   return (
     <Canvas
       gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
@@ -197,13 +213,14 @@ export default function Scene() {
     >
       <AdaptiveDpr pixelated={false} />
       <Suspense fallback={null}>
-        {/* bright key + soft fill — a studio look against the light page */}
-        <ambientLight intensity={0.6} />
-        <directionalLight position={[4, 6, 5]} intensity={2.2} color="#ffffff" />
-        <directionalLight position={[-5, 2, -3]} intensity={0.8} color="#cfe0ee" />
-        <pointLight position={[2, -3, 4]} intensity={1.2} color={TEAL} />
+        {/* bright key + soft fill — a studio look, eased back in dark mode so
+            the rock/rings don't blow out against the dark page */}
+        <ambientLight intensity={dark ? 0.32 : 0.6} />
+        <directionalLight position={[4, 6, 5]} intensity={dark ? 1.5 : 2.2} color="#ffffff" />
+        <directionalLight position={[-5, 2, -3]} intensity={dark ? 0.55 : 0.8} color="#cfe0ee" />
+        <pointLight position={[2, -3, 4]} intensity={dark ? 0.9 : 1.2} color={TEAL} />
 
-        <Centerpiece />
+        <Centerpiece theme={theme} />
 
         {/* self-contained studio environment — drives glass reflections +
             the coloured edges that become chromatic dispersion. No network. */}
