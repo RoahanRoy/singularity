@@ -1,18 +1,15 @@
 /**
- * Remove seed/fake filings (and the seed memo) for tickers NOT in the book.
+ * Prune filings + memos for tickers that aren't currently on the book.
  *
- * Anything on the book stays — even if it was seed-shaped — so the Research
- * Engine keeps a backdrop for held names until the agents repopulate.
+ * Policy (from operator): the Ingest Queue should only show names the
+ * portfolio actually holds. Stale rows — left behind when a position
+ * disappeared, or written by the tech-loop's FULL_UNIVERSE fallback before
+ * any holdings existed — get deleted.
  *
- * Targets:
- *   1. US filings whose `source_url` isn't an http(s) URL (seed.ts batch).
- *   2. IN filings dated 2026-04 with one of the seed-canned form_types
- *      (Q-Results / Bd-Meeting / Press-Rel / PIT-Discl / Shareholding /
- *      AGM-Notice) sourced from nse/bse landing pages — i.e. the
- *      seed-india-filings.ts batch.
- *   3. The seed memo "TSM — Q4 print, demand softness signal".
+ * Held tickers are read live from the `positions` collection (both desks).
+ * Anything whose ticker isn't in that set goes. Dry-run by default;
+ * pass `--yes` to apply.
  *
- * Dry-run by default. Pass `--yes` to actually delete.
  * Run: npx tsx scripts/cleanup-fake-filings.ts [--yes]
  */
 import { db, DB, Query } from "./agents/appwrite";
@@ -40,24 +37,6 @@ async function heldTickers(): Promise<Set<string>> {
   return new Set(rows.map((r) => String(r.ticker ?? "").toUpperCase()).filter(Boolean));
 }
 
-const SEED_IN_FORMS = new Set(["Q-Results", "Bd-Meeting", "Press-Rel", "PIT-Discl", "Shareholding", "AGM-Notice"]);
-
-function isUsFakeFiling(f: Doc): boolean {
-  const url = f.source_url ?? "";
-  return !/^https?:\/\//i.test(url);
-}
-
-function isInSeedFiling(f: Doc): boolean {
-  const form = f.form_type ?? "";
-  const url = f.source_url ?? "";
-  const filed = f.filed_at ?? "";
-  return (
-    SEED_IN_FORMS.has(form) &&
-    /(nseindia|bseindia)\.com/i.test(url) &&
-    filed.startsWith("2026-04")
-  );
-}
-
 async function main() {
   const held = await heldTickers();
   console.log(`held tickers on book: ${held.size}`);
@@ -69,17 +48,19 @@ async function main() {
 
   for (const f of filings) {
     const ticker = String(f.ticker ?? "").toUpperCase();
-    if (held.has(ticker)) continue;
-    if (isUsFakeFiling(f)) toDelete.push({ coll: "filings", doc: f, reason: "US seed (non-URL source)" });
-    else if (isInSeedFiling(f)) toDelete.push({ coll: "filings", doc: f, reason: "IN seed (April-26 canned)" });
+    if (!ticker) {
+      toDelete.push({ coll: "filings", doc: f, reason: "no ticker" });
+      continue;
+    }
+    if (!held.has(ticker)) toDelete.push({ coll: "filings", doc: f, reason: "ticker off-book" });
   }
 
+  // Memos with a ticker get the same treatment. Untickered memos (cross-cutting
+  // notes) are left alone.
   for (const m of memos) {
     const ticker = String(m.ticker ?? "").toUpperCase();
-    if (held.has(ticker)) continue;
-    if (m.title === "TSM — Q4 print, demand softness signal") {
-      toDelete.push({ coll: "memos", doc: m, reason: "TSM seed memo" });
-    }
+    if (!ticker) continue;
+    if (!held.has(ticker)) toDelete.push({ coll: "memos", doc: m, reason: "ticker off-book" });
   }
 
   console.log(`\nplan (${APPLY ? "APPLY" : "dry-run"}):`);
