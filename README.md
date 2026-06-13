@@ -58,6 +58,8 @@ Required environment (`.env.local`):
 - `APPWRITE_API_KEY` — server-only, for schema + seed scripts
 - `UPSTASH_VECTOR_REST_URL` / `_TOKEN` — embeddings
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` — LLM calls (agent loop only)
+- `KITE_API_KEY` / `KITE_API_SECRET` — Zerodha Kite Connect (India desk), server-only. Without these, linking or refreshing a Kite account fails with `KITE_API_KEY is not set`. **Must also be set in Vercel for production** — they have no `NEXT_PUBLIC_` prefix, so they don't ship with the build; add them in the project env vars and redeploy.
+- `KITE_REDIRECT_BASE` — base URL Kite redirects back to after login (e.g. `http://localhost:3000` locally, your `https://…vercel.app` in production; no trailing slash). The Kite app's Redirect URL in the [developer console](https://developers.kite.trade/apps) must be set to `<KITE_REDIRECT_BASE>/api/kite/callback` and match the environment, or the login round-trip fails. Kite access tokens expire daily, so a re-login is expected each trading morning.
 - `CRON_SECRET` — bearer token guarding the weekly India-enrichment cron (`/api/cron/enrich-india`). Set the same value in the Vercel project's env vars; Vercel attaches it to scheduled requests. Generate one with `openssl rand -hex 32`.
 - `IBKR_GATEWAY_URL` — base URL of your local Interactive Brokers **Client Portal Gateway** (default `https://localhost:5000`). Only set if your gateway runs elsewhere. See **Connecting IBKR** below.
 
