@@ -1,8 +1,9 @@
 "use client";
 
 import { ReactNode, useEffect, useMemo, useState } from "react";
-import { ticker, tickerIN, yahooSymbols, type Tick } from "@/lib/meridian/data";
+import { tickerIN, yahooSymbols, type Tick } from "@/lib/meridian/data";
 import { useMarket } from "./MarketContext";
+import { listPositions } from "@/lib/appwrite/queries";
 
 export function Panel({
   title,
@@ -133,14 +134,48 @@ type Quote = { price: number; changePct: number };
 
 export function MarketTicker() {
   const { market } = useMarket();
-  const seed = market === "IN" ? tickerIN : ticker;
+  const [book, setBook] = useState<Tick[]>([]);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [live, setLive] = useState(false);
 
+  // US desk: the marquee tracks the *real* held book — live quotes by ticker,
+  // no hardcoded seed. IN desk keeps its indicative index seeds (Kite-driven).
+  useEffect(() => {
+    if (market !== "US") {
+      setBook([]);
+      return;
+    }
+    let cancelled = false;
+    listPositions(50, "US")
+      .then((rows) => {
+        if (cancelled) return;
+        const seen = new Set<string>();
+        const ticks: Tick[] = [];
+        for (const p of rows) {
+          const s = (p.ticker || "").toUpperCase();
+          if (s && !seen.has(s)) {
+            seen.add(s);
+            ticks.push({ s, p: 0, d: 0 });
+          }
+        }
+        setBook(ticks);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [market]);
+
+  // On the US desk a held ticker maps to itself as a Yahoo symbol; on IN we use
+  // the curated index→Yahoo map.
+  const seed: Tick[] = market === "US" ? book : tickerIN;
+  const toYahoo = (s: string): string | undefined => (market === "US" ? s : yahooSymbols[s]);
+
   // Yahoo symbols for the symbols on the active desk that have a mapping.
   const symbolParam = useMemo(
-    () => seed.map((t) => yahooSymbols[t.s]).filter(Boolean).join(","),
-    [seed],
+    () => seed.map((t) => toYahoo(t.s)).filter(Boolean).join(","),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [seed, market],
   );
 
   useEffect(() => {
@@ -168,11 +203,16 @@ export function MarketTicker() {
     };
   }, [symbolParam]);
 
-  // Merge live quotes over the seed list; symbols without a live quote keep seed.
-  const merged: Tick[] = seed.map((t) => {
-    const q = quotes[yahooSymbols[t.s]];
-    return q ? { s: t.s, p: q.price, d: q.changePct } : t;
-  });
+  // Merge live quotes over the seed list. On US there is no seed price, so a
+  // symbol without a live quote is dropped (no cosmetic fallback); on IN the
+  // indicative seed is kept until a live quote lands.
+  const merged: Tick[] = seed
+    .map((t): Tick | null => {
+      const q = quotes[toYahoo(t.s) ?? ""];
+      if (q) return { s: t.s, p: q.price, d: q.changePct };
+      return market === "US" ? null : t;
+    })
+    .filter((t): t is Tick => t !== null);
 
   const items = [...merged, ...merged];
   return (

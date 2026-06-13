@@ -7,6 +7,8 @@ import { MarketTicker, ExchangeClock, exchangeStatus, type ExchangeStatus } from
 import { useOperator } from "./AuthGate";
 import { useMarket } from "./MarketContext";
 import { signOutOperator } from "@/lib/auth/operator";
+import { listPositions, listIbkrAccounts, listFundSnapshots } from "@/lib/appwrite/queries";
+import { fmtFullMoney } from "@/lib/meridian/format";
 
 export type ScreenId = "swarm" | "research" | "portfolio" | "console" | "compute";
 
@@ -26,8 +28,72 @@ const CRUMBS: Record<ScreenId, [string, string]> = {
   compute:   ["System", "Compute Layer"],
 };
 
+type UsBook = {
+  nav: number;
+  cash: number;
+  leverage: number;
+  cashPct: number;
+  var99: number | null;
+  count: number;
+  connected: boolean;
+};
+
+/**
+ * Live US-desk rail stats, derived from the real IBKR book — NAV/cash from the
+ * connected account, leverage & cash% from the live positions, and a 99%/1d
+ * historical VaR from the fund's NAV return series (— until there's history).
+ */
+function useUsBook(market: string): UsBook | null {
+  const [book, setBook] = useState<UsBook | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (market !== "US") {
+      // Clear off the render path to avoid a synchronous cascading update.
+      Promise.resolve().then(() => {
+        if (!cancelled) setBook(null);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    Promise.all([listPositions(50, "US"), listIbkrAccounts(10), listFundSnapshots(200, "US")])
+      .then(([pos, accts, snaps]) => {
+        if (cancelled) return;
+        const cash = accts.reduce((s, a) => s + (a.equity_cash || 0), 0);
+        const grossMV = pos.reduce((s, p) => s + Math.abs(p.market_value || 0), 0);
+        const netMV = pos.reduce((s, p) => s + (p.market_value || 0), 0);
+        const nav = netMV + cash;
+        const navs = snaps.map((s) => s.nav_usd);
+        const rets: number[] = [];
+        for (let i = 1; i < navs.length; i++) if (navs[i - 1]) rets.push(navs[i] / navs[i - 1] - 1);
+        let var99: number | null = null;
+        if (rets.length >= 2) {
+          const sorted = [...rets].sort((a, b) => a - b);
+          var99 = Math.abs(sorted[Math.floor(0.01 * sorted.length)] ?? sorted[0]);
+        }
+        setBook({
+          nav,
+          cash,
+          leverage: nav ? grossMV / nav : 0,
+          cashPct: nav ? cash / nav : 0,
+          var99,
+          count: pos.length,
+          connected: accts.some((a) => a.ibkr_account_id),
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setBook(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [market]);
+  return book;
+}
+
 function Rail({ active, setActive }: { active: ScreenId; setActive: (id: ScreenId) => void }) {
   const { market } = useMarket();
+  const usBook = useUsBook(market);
   return (
     <aside className="rail">
       <div className="rail-brand">
@@ -70,12 +136,16 @@ function Rail({ active, setActive }: { active: ScreenId; setActive: (id: ScreenI
             <div><span className="amber">●</span> NSE Equities · live</div>
             <div style={{ color: "var(--ink-4)" }}>connect a Kite account →</div>
           </>
+        ) : usBook?.connected ? (
+          <>
+            <div><span className="amber">●</span> IBKR Fund · {fmtFullMoney(usBook.nav, "US")}</div>
+            <div><span className="amber">●</span> US Equities · {usBook.count} live</div>
+            <div style={{ color: "var(--ink-4)" }}>cash {fmtFullMoney(usBook.cash, "US")}</div>
+          </>
         ) : (
           <>
-            <div><span className="amber">●</span> Flagship · $1.28B</div>
-            <div><span className="amber">●</span> Macro Overlay · $0.41B</div>
-            <div><span className="amber">●</span> Vol Arbitrage · $0.18B</div>
-            <div style={{ color: "var(--ink-4)" }}>+ 2 paused</div>
+            <div><span className="amber">●</span> US Fund · IBKR</div>
+            <div style={{ color: "var(--ink-4)" }}>connect an IBKR account →</div>
           </>
         )}
       </div>
@@ -90,9 +160,30 @@ function Rail({ active, setActive }: { active: ScreenId; setActive: (id: ScreenI
           lineHeight: 1.95,
         }}
       >
-        <div>Net leverage <span style={{ color: "var(--ink-0)" }}>2.14×</span></div>
-        <div>VaR (99,1d) <span style={{ color: "var(--ink-0)" }}>1.12%</span></div>
-        <div>Cash <span style={{ color: "var(--ink-0)" }}>4.8%</span></div>
+        {market === "US" && !usBook?.connected ? (
+          <div style={{ color: "var(--ink-4)" }}>— no live book —</div>
+        ) : (
+          <>
+            <div>
+              Net leverage{" "}
+              <span style={{ color: "var(--ink-0)" }}>
+                {usBook ? usBook.leverage.toFixed(2) + "×" : "—"}
+              </span>
+            </div>
+            <div>
+              VaR (99,1d){" "}
+              <span style={{ color: "var(--ink-0)" }}>
+                {usBook?.var99 != null ? (usBook.var99 * 100).toFixed(2) + "%" : "—"}
+              </span>
+            </div>
+            <div>
+              Cash{" "}
+              <span style={{ color: "var(--ink-0)" }}>
+                {usBook ? (usBook.cashPct * 100).toFixed(1) + "%" : "—"}
+              </span>
+            </div>
+          </>
+        )}
       </div>
 
       <RailFoot />

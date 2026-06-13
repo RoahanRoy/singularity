@@ -44,15 +44,9 @@ export const clusters: Cluster[] = [
   { id: "risk",        name: "Risk & Topology",     agents: 142,  conv: 0.88, color: "cyan" },
 ];
 
-const rawTicks: [string, number, number][] = [
-  ["ES", 5274.25, 0.42], ["NQ", 18430.5, 0.71], ["RTY", 2106.3, -0.15],
-  ["DXY", 102.41, -0.08], ["UST10Y", 4.183, 0.024], ["JGB10Y", 0.992, -0.011],
-  ["XAU", 2412.10, 0.32], ["WTI", 78.44, 1.18], ["BRENT", 82.10, 1.04],
-  ["NVDA", 1184.20, 2.15], ["TSM", 174.80, 0.91], ["ASML", 968.40, -0.42],
-  ["CL=H6", 79.10, 1.22], ["VIX", 13.41, -0.62], ["MOVE", 92.4, -1.10],
-];
-
-export const ticker: Tick[] = rawTicks.map(([s, p, d]) => ({ s, p, d }));
+// ── US market ────────────────────────────────────────────────────────────────
+// The US-desk marquee renders the operator's *real* held book with live Yahoo
+// quotes (see MarketTicker), so there is no hardcoded US seed here.
 
 // ── India market ─────────────────────────────────────────────────────────────
 // Shown when the operator switches the desk to Indian markets. Prices are
