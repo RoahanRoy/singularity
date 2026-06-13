@@ -62,7 +62,7 @@ export async function listFilings(limit = 12, market?: Market): Promise<Filing[]
   const res = await databases.listDocuments<Filing & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.filings,
-    [...marketFilter(market), Query.orderDesc("filed_at"), Query.limit(limit)],
+    [...marketFilter(market), Query.orderDesc("$createdAt"), Query.limit(limit)],
   );
   return res.documents;
 }

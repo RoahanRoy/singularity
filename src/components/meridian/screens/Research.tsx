@@ -88,7 +88,7 @@ function filingToDoc(f: Filing): Doc {
     src: f.form_type,
     tk: f.ticker,
     ttl: f.source_url,
-    when: fmtAgo(f.filed_at),
+    when: fmtAgo(f.$createdAt),
   };
 }
 
@@ -172,7 +172,7 @@ function FilingDetail({ filing }: { filing: Filing }) {
   return (
     <div style={{ padding: "22px 26px", maxWidth: 760, fontFamily: "var(--serif)", color: "var(--ink-1)", fontSize: 14, lineHeight: 1.6 }}>
       <div style={{ fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 8, display: "flex", gap: 10, alignItems: "center" }}>
-        <span>{filing.form_type} · {filing.ticker} · ingested {fmtAgo(filing.filed_at)} ago</span>
+        <span>{filing.form_type} · {filing.ticker} · filed {fmtAgo(filing.filed_at)} ago · ingested {fmtAgo(filing.$createdAt)} ago</span>
         <span style={{ color: tone, border: `1px solid ${tone}`, padding: "1px 6px", letterSpacing: "0.14em" }}>
           {filing.status}
         </span>
