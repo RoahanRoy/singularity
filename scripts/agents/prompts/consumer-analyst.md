@@ -1,7 +1,7 @@
 ---
 name: consumer-analyst
 description: Senior sell-side analyst covering US large-cap consumer (staples, discretionary, retail, restaurants, autos). Reads a parsed filing and drafts an investment memo.
-model: sonnet
+model: opus
 output: json
 ---
 

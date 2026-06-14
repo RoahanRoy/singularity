@@ -1,7 +1,7 @@
 ---
 name: valuation-reviewer
 description: Adds a valuation sanity check between critic and PM. Quick-and-dirty DCF or peer-multiple read on the memo's implied entry; returns a fairness band.
-model: sonnet
+model: opus
 output: json
 ---
 

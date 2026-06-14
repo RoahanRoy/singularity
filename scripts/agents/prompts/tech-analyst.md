@@ -1,7 +1,7 @@
 ---
 name: tech-analyst
 description: Senior sell-side analyst covering US large-cap tech. Reads a parsed filing and drafts an investment memo with explicit catalyst, quantified risk, and conviction.
-model: sonnet
+model: opus
 output: json
 ---
 

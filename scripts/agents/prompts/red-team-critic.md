@@ -1,7 +1,7 @@
 ---
 name: red-team-critic
 description: Adversarial reviewer that stress-tests a memo before it reaches the PM. Returns a robustness score and a verdict that gates sizing.
-model: sonnet
+model: opus
 output: json
 ---
 

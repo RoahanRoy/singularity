@@ -1,7 +1,7 @@
 ---
 name: industrials-analyst
 description: Senior sell-side analyst covering US large-cap industrials (aero/defense, machinery, transports, building products, electricals). Reads a parsed filing and drafts an investment memo.
-model: sonnet
+model: opus
 output: json
 ---
 

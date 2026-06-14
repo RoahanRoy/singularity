@@ -1,7 +1,7 @@
 ---
 name: financials-analyst
 description: Senior sell-side analyst covering US large-cap financials (money-center banks, regional banks, brokers, asset managers, insurers, exchanges). Reads a parsed filing and drafts an investment memo.
-model: sonnet
+model: opus
 output: json
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: portfolio-manager
 description: Sizes a position from a critic-approved memo. Applies NAV and per-name weight limits. Output is a proposal; risk + compliance gate execution.
-model: sonnet
+model: opus
 output: json
 ---
 

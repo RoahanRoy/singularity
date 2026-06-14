@@ -42,6 +42,18 @@ Three principles enforced throughout:
 - **Human-in-the-loop by default.** A trade auto-executes only if the critic passes, `conviction × score ≥ 0.4`, **and** `MERIDIAN_AUTO_APPROVE=1` is set for the session. Anything weaker writes the memo as `review` and stops.
 - **One job per agent.** Analysts don't size, PMs don't execute, risk doesn't re-size, compliance doesn't approve sizing. Each system prompt lives in `scripts/agents/prompts/<slug>.md` — never inlined in TypeScript.
 
+### Choosing models per agent
+
+Each prompt declares a default model in its frontmatter (`model: haiku | sonnet | opus`). That default can be overridden at runtime via environment variables — no file edits, no rebuild. Precedence, most specific wins:
+
+| Variable | Scope | Example |
+|---|---|---|
+| `MERIDIAN_MODEL__<SLUG>` | one agent (filename upper-cased, non-alphanumerics → `_`) | `MERIDIAN_MODEL__RED_TEAM_CRITIC=opus` |
+| `MERIDIAN_MODEL_<TIER>` | every agent whose prompt declares that tier | `MERIDIAN_MODEL_SONNET=opus` (bump all sonnet agents) |
+| `MERIDIAN_MODEL` | every agent (blunt global override) | `MERIDIAN_MODEL=haiku` (run everything cheap) |
+
+A value must be a tier alias (`haiku`/`sonnet`/`opus`) or a full `claude-…` model id; anything else is logged and ignored, falling back to the declared default. Heavier models burn the rolling token budget (`MERIDIAN_BUDGET_DAILY_TOKENS`, default ~5M) faster, so the loop will throttle/kill sooner the more agents you promote.
+
 The **operator-console responder** (`npm run agents:responder`) auto-starts when the Next server boots (via `src/instrumentation.ts`; disable with `MERIDIAN_AUTOSTART=0`) so the assistant replies to operator messages. Both workers are managed by a supervisor exposed at `/api/agents` (status) and `/api/agents/control` (start / stop / restart).
 
 ## Running

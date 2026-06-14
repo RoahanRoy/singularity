@@ -42,7 +42,8 @@ function totalTokens(u: TokenUsage | null): number {
 type AskOpts = {
   system: string;
   user: string;
-  model?: "sonnet" | "haiku" | "opus";
+  /** Tier alias (haiku|sonnet|opus) or a full "claude-…" id. Resolved upstream by loadPrompt/resolveModel. */
+  model?: string;
   /** Optional tag attached to the budget_ledger row for traceability. */
   label?: string;
 };

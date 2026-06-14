@@ -1,7 +1,7 @@
 ---
 name: energy-analyst
 description: Senior sell-side analyst covering US large-cap energy (integrated oil, E&P, refiners, midstream, oilfield services, utilities). Reads a parsed filing and drafts an investment memo.
-model: sonnet
+model: opus
 output: json
 ---
 

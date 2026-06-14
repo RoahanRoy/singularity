@@ -1,7 +1,7 @@
 ---
 name: quant-researcher
 description: Produces a quantitative, factor-based signal on the name to complement the fundamental memo. Returns a composite score and the factor exposures that drive it.
-model: sonnet
+model: opus
 output: json
 ---
 
