@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Panel, UTCClock } from "../primitives";
 import { useMarket } from "../MarketContext";
-import { clusters as clustersUS, clustersIN, feedSeed, feedSeedIN } from "@/lib/meridian/data";
 import {
   listAgents,
   listClusters,
@@ -34,6 +33,14 @@ const ROLE_COLOR: Record<DbAgent["role"], string> = {
   execution: "var(--cyan)",
   risk:      "#ff8a5c",
   ops:       "var(--ink-1)",
+};
+
+const STATUS_COLOR: Record<DbAgent["status"], string> = {
+  executing: "var(--cyan)",
+  thinking:  "var(--md-accent)",
+  blocked:   "#ff8a5c",
+  killed:    "var(--ink-4)",
+  idle:      "var(--ink-3)",
 };
 
 type Placed = {
@@ -142,8 +149,30 @@ function SwarmCanvas({
     });
   }, [clusters]);
 
+  const clusterNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of clusters) m.set(c.id, c.name);
+    return m;
+  }, [clusters]);
+
+  // Custom hover tooltip. The dots are 2–3px in a 1000×700 viewBox, so each
+  // gets a larger transparent hit circle; position is tracked in container px
+  // (not SVG coords) so the HTML card sits exactly under the cursor.
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<{
+    agent: DbAgent; x: number; y: number; flipX: boolean; flipY: boolean;
+  } | null>(null);
+
+  function onDotHover(agent: DbAgent, e: { clientX: number; clientY: number }) {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    setHover({ agent, x, y, flipX: x > rect.width - 240, flipY: y > rect.height - 150 });
+  }
+
   return (
-    <div className="swarm-canvas">
+    <div className="swarm-canvas" ref={containerRef}>
       <div className="hud-tl">
         SWARM TOPOLOGY · v2.41
         <br />
@@ -217,15 +246,32 @@ function SwarmCanvas({
 
         {placed.map((p) => {
           const v = statusVisual(p.agent.status);
+          const isHover = hover?.agent.$id === p.agent.$id;
           return (
             <g key={p.agent.$id}>
               {v.halo && (
                 <circle cx={p.x} cy={p.y} r={v.r + 3} fill="none"
                         stroke={p.color} strokeOpacity="0.5" strokeWidth="0.6" />
               )}
-              <circle cx={p.x} cy={p.y} r={v.r} fill={p.color} opacity={v.opacity}>
-                <title>{`${p.agent.name} · ${p.agent.role} · ${p.agent.status}`}</title>
-              </circle>
+              {isHover && (
+                <circle cx={p.x} cy={p.y} r={v.r + 5} fill="none"
+                        stroke={p.color} strokeOpacity="0.95" strokeWidth="0.9" />
+              )}
+              <circle
+                cx={p.x} cy={p.y}
+                r={isHover ? v.r + 1.4 : v.r}
+                fill={p.color}
+                opacity={isHover ? 1 : v.opacity}
+              />
+              {/* Enlarged transparent hit target so the tiny dots are hoverable. */}
+              <circle
+                cx={p.x} cy={p.y} r={Math.max(7, v.r + 5)}
+                fill="transparent"
+                style={{ cursor: "pointer" }}
+                onMouseEnter={(e) => onDotHover(p.agent, e)}
+                onMouseMove={(e) => onDotHover(p.agent, e)}
+                onMouseLeave={() => setHover(null)}
+              />
             </g>
           );
         })}
@@ -247,59 +293,102 @@ function SwarmCanvas({
         <span><span className="dot" style={{ background: "#ff8a5c" }} />RISK</span>
         <span><span className="dot" style={{ background: "var(--ink-1)" }} />OPS</span>
       </div>
+
+      {hover && (() => {
+        const a = hover.agent;
+        const cluster = (a.cluster_id && clusterNameById.get(a.cluster_id)) || "unassigned";
+        const tx = hover.flipX ? "calc(-100% - 14px)" : "14px";
+        const ty = hover.flipY ? "calc(-100% - 14px)" : "14px";
+        return (
+          <div
+            className="swarm-tooltip"
+            style={{ left: hover.x, top: hover.y, transform: `translate(${tx}, ${ty})` }}
+          >
+            <div className="tt-name">{a.name}</div>
+            <div className="tt-row">
+              <span style={{ color: ROLE_COLOR[a.role] ?? ROLE_COLOR.research }}>{a.role}</span>
+              <span className="tt-status" style={{ color: STATUS_COLOR[a.status] }}>
+                <span className="tt-dot" style={{ background: STATUS_COLOR[a.status] }} />
+                {a.status}
+              </span>
+            </div>
+            <div className="tt-meta">{cluster}</div>
+            <div className="tt-meta">conv {a.conviction.toFixed(2)} · {a.model}</div>
+            <div className="tt-meta">
+              {a.last_action_at ? `acted ${fmtAgo(a.last_action_at)} ago` : "no actions yet"}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
 
-type FeedRow = { id: string; cluster: string; agent: string; msg: string; t: string };
-
 function fmtAgo(iso: string): string {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return s.toFixed(1) + "s";
+  if (s < 60) return Math.round(s) + "s";
   if (s < 3600) return Math.floor(s / 60) + "m";
-  return Math.floor(s / 3600) + "h";
+  if (s < 86400) return Math.floor(s / 3600) + "h";
+  return Math.floor(s / 86400) + "d";
 }
+
+// Every event carries a `kind`; cluster_id is often null, so the kind badge is
+// the primary at-a-glance signal. Colors match the canvas role palette.
+const KIND_META: Record<AgentEvent["kind"], { label: string; color: string }> = {
+  alert:     { label: "alert",   color: "#ff8a5c" },
+  handoff:   { label: "handoff", color: "var(--cyan)" },
+  memo:      { label: "memo",    color: "var(--md-accent)" },
+  trade:     { label: "trade",   color: "var(--md-accent)" },
+  tool_call: { label: "tool",    color: "var(--ink-3)" },
+  thought:   { label: "think",   color: "var(--ink-2)" },
+};
 
 function SwarmFeed({
   events,
   live,
   clusterById,
-  market,
+  agentById,
 }: {
   events: AgentEvent[];
   live: boolean;
   clusterById: Map<string, string>;
-  market: "US" | "IN";
+  agentById: Map<string, DbAgent>;
 }) {
-  const seed = market === "IN" ? feedSeedIN : feedSeed;
-  const items: FeedRow[] =
-    events.length > 0
-      ? events.map((e) => ({
-          id: e.$id,
-          cluster: (e.cluster_id && clusterById.get(e.cluster_id)) || "—",
-          agent: "agent/" + e.agent_id.slice(-6),
-          msg: e.summary,
-          t: fmtAgo(e.occurred_at),
-        }))
-      : seed.slice(0, 8).map((s, i) => ({
-          id: "seed-" + i,
-          cluster: s.c,
-          agent: s.a,
-          msg: s.msg,
-          t: s.t,
-        }));
+  const rows = events.map((e) => {
+    const agent = agentById.get(e.agent_id);
+    const clusterId = e.cluster_id ?? agent?.cluster_id ?? null;
+    return {
+      id: e.$id,
+      kind: KIND_META[e.kind] ?? KIND_META.thought,
+      who: agent?.name ?? "agent/" + e.agent_id.slice(-6),
+      cluster: (clusterId && clusterById.get(clusterId)) || null,
+      msg: e.summary,
+      t: fmtAgo(e.occurred_at),
+    };
+  });
   return (
     <div className="feed" data-live={live}>
-      {items.map((it, i) => (
-        <div className="feed-item" key={it.id}>
-          <div className="top">
-            <span style={{ color: "var(--md-accent)" }}>● {it.cluster}</span>
-            <span style={{ marginLeft: "auto" }}>{it.agent}</span>
-            <span style={{ color: "var(--ink-4)" }}>{i === 0 && live ? "live" : it.t}</span>
-          </div>
-          <div className="msg" dangerouslySetInnerHTML={{ __html: it.msg }} />
+      {rows.length === 0 ? (
+        <div className="feed-item">
+          <div className="feed-msg" style={{ color: "var(--ink-4)" }}>Awaiting agent activity…</div>
         </div>
-      ))}
+      ) : (
+        rows.map((r, i) => (
+          <div className="feed-item" key={r.id}>
+            <div className="top">
+              <span className="kind" style={{ color: r.kind.color }}>{r.kind.label}</span>
+              <span className="who">
+                {r.who}
+                {r.cluster ? <span style={{ color: "var(--ink-4)" }}> · {r.cluster}</span> : null}
+              </span>
+              <span style={{ marginLeft: "auto", flex: "none", color: "var(--ink-4)" }}>
+                {i === 0 && live ? "live" : r.t}
+              </span>
+            </div>
+            <div className="feed-msg" dangerouslySetInnerHTML={{ __html: r.msg }} />
+          </div>
+        ))
+      )}
     </div>
   );
 }
@@ -315,22 +404,10 @@ type UIList = {
   color: "amber" | "cyan";
 };
 
-function fallbackList(market: "US" | "IN"): UIList[] {
-  const src = market === "IN" ? clustersIN : clustersUS;
-  return src.map((c) => ({
-    id: c.id,
-    themeId: c.id,
-    name: c.name,
-    agents: c.agents,
-    conv: c.conv,
-    color: c.color,
-  }));
-}
-
 export function SwarmScreen() {
   const { market } = useMarket();
   const [sel, setSel] = useState("earnings");
-  const [list, setList] = useState<UIList[]>(() => fallbackList(market));
+  const [list, setList] = useState<UIList[]>([]);
   const [agents, setAgents] = useState<DbAgent[]>([]);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [live, setLive] = useState(false);
@@ -343,7 +420,7 @@ export function SwarmScreen() {
   // Re-runs when the market toggles; resets to that desk's fallback first.
   useEffect(() => {
     let cancelled = false;
-    setList(fallbackList(market));
+    setList([]);
     listClusters(market)
       .then((rows: DbCluster[]) => {
         if (cancelled || rows.length === 0) return;
@@ -443,6 +520,11 @@ export function SwarmScreen() {
     [list],
   );
 
+  const agentById = useMemo(
+    () => new Map(agents.map((a) => [a.$id, a])),
+    [agents],
+  );
+
   // Build cluster anchors: largest clusters claim the first slots.
   const clusterAnchors: ClusterAnchor[] = useMemo(() => {
     const ranked = list.slice().sort((a, b) => b.agents - a.agents).slice(0, ANCHOR_SLOTS.length);
@@ -515,7 +597,7 @@ export function SwarmScreen() {
       </div>
 
       <Panel title="Activity Stream" meta={live ? "↓ live" : "↓ idle"} bodyClassName="tight">
-        <SwarmFeed events={events} live={live} clusterById={clusterById} market={market} />
+        <SwarmFeed events={events} live={live} clusterById={clusterById} agentById={agentById} />
       </Panel>
     </div>
   );

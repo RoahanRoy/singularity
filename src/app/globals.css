@@ -324,12 +324,25 @@
 .meridian-root .swarm-canvas .legend .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: -1px; }
 .meridian-root .swarm-canvas .hud-tl { position: absolute; left: 14px; top: 14px; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.12em; text-transform: uppercase; }
 .meridian-root .swarm-canvas .hud-tr { position: absolute; right: 14px; top: 14px; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.12em; text-transform: uppercase; }
+/* Hover card for individual agent dots. Positioned in container px, follows the cursor. */
+.meridian-root .swarm-tooltip { position: absolute; z-index: 6; pointer-events: none; min-width: 170px; max-width: 240px; background: var(--bg-1); border: 1px solid var(--line-strong); padding: 8px 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+.meridian-root .swarm-tooltip .tt-name { font-size: 12.5px; color: var(--ink-0); margin-bottom: 4px; }
+.meridian-root .swarm-tooltip .tt-row { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 5px; }
+.meridian-root .swarm-tooltip .tt-status { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+.meridian-root .swarm-tooltip .tt-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.meridian-root .swarm-tooltip .tt-meta { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); line-height: 1.5; }
 
 .meridian-root .feed { display: flex; flex-direction: column; }
-.meridian-root .feed-item { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); font-size: 12px; display: grid; gap: 4px; }
-.meridian-root .feed-item .top { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.08em; }
-.meridian-root .feed-item .msg { color: var(--ink-1); line-height: 1.4; }
-.meridian-root .feed-item .msg .h { color: var(--ink-0); }
+.meridian-root .feed-item { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); font-size: 12px; display: grid; gap: 5px; }
+.meridian-root .feed-item .top { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.08em; min-width: 0; }
+.meridian-root .feed-item .top .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Color-coded event-kind badge. */
+.meridian-root .feed-item .kind { flex: none; font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; padding: 1px 5px; border-radius: 3px; border: 1px solid currentColor; line-height: 1.5; }
+/* Distinct class (not `.msg`) so the global console-chat `.meridian-root .msg`
+   grid rule can't apply here — that rule's `grid-template-columns: 36px 1fr`
+   was squeezing the feed text into a 36px column, one word per line. */
+.meridian-root .feed-item .feed-msg { display: block; color: var(--ink-1); line-height: 1.45; font-size: 12px; overflow-wrap: anywhere; }
+.meridian-root .feed-item .feed-msg .h { color: var(--ink-0); }
 
 /* Research */
 .meridian-root .research { display: grid; grid-template-columns: 280px 1fr 360px; width: 100%; height: 100%; }
