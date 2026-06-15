@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   signInOperator,
   bootstrapOperatorOnce,
   isOperatorEmail,
 } from "@/lib/auth/operator";
+import "../glass.css";
+import "./sign-in.css";
 
 export default function SignInPage() {
   const router = useRouter();
@@ -16,6 +18,20 @@ export default function SignInPage() {
   const [mode, setMode] = useState<"sign-in" | "bootstrap">("sign-in");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+
+  // Share the landing's theme preference so the look stays consistent.
+  useEffect(() => {
+    const stored = window.localStorage.getItem("lp-theme");
+    if (stored === "dark" || stored === "light") setTheme(stored);
+    else if (window.matchMedia("(prefers-color-scheme: dark)").matches) setTheme("dark");
+  }, []);
+  const toggleTheme = () =>
+    setTheme((t) => {
+      const next = t === "light" ? "dark" : "light";
+      window.localStorage.setItem("lp-theme", next);
+      return next;
+    });
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -42,147 +58,106 @@ export default function SignInPage() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        background: "var(--bg, #0a0b0e)",
-        color: "var(--ink-0, #e8e8ea)",
-        fontFamily: "var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace)",
-        padding: 24,
-      }}
-    >
-      <form
-        onSubmit={submit}
-        style={{
-          width: 380,
-          border: "1px solid #2a2c33",
-          borderRadius: 8,
-          padding: 28,
-          background: "#101218",
-        }}
+    <div className="lg si" data-theme={theme}>
+      <div className="lg-field" aria-hidden>
+        <span className="blob b1" />
+        <span className="blob b2" />
+        <span className="blob b3" />
+        <span className="grain" />
+      </div>
+
+      <button
+        type="button"
+        className="lg-themetoggle si-theme"
+        onClick={toggleTheme}
+        aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
       >
-        <div style={{ fontSize: 11, letterSpacing: "0.18em", color: "#8b8d97" }}>
-          MERIDIAN
-        </div>
-        <h1 style={{ fontSize: 20, margin: "4px 0 22px", letterSpacing: "0.02em" }}>
-          {mode === "sign-in" ? "Operator sign-in" : "First-run bootstrap"}
-        </h1>
+        {theme === "dark" ? "☀" : "☾"}
+      </button>
 
-        <label style={labelStyle}>Email</label>
-        <input
-          type="email"
-          required
-          autoComplete="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={inputStyle}
-        />
+      <div className="lg-content si-stage">
+        <form onSubmit={submit} className="lg-glass si-card">
+          <div className="si-brand">
+            <span className="lg-mark" aria-hidden />
+            <div>
+              <div className="si-brandname">MERIDIAN</div>
+              <div className="si-brandsub">Autonomous Capital Intelligence</div>
+            </div>
+          </div>
 
-        {mode === "bootstrap" && (
-          <>
-            <label style={labelStyle}>Name</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              style={inputStyle}
-              placeholder="Operator"
-            />
-          </>
-        )}
+          <h1 className="si-title">
+            {mode === "sign-in" ? (
+              <>Operator <em>sign-in</em></>
+            ) : (
+              <>First-run <em>bootstrap</em></>
+            )}
+          </h1>
+          <p className="si-lede">
+            {mode === "sign-in"
+              ? "Authenticate to take the desk and supervise the swarm."
+              : "Create the first operator for this deployment."}
+          </p>
 
-        <label style={labelStyle}>Password</label>
-        <input
-          type="password"
-          required
-          minLength={8}
-          autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={inputStyle}
-        />
+          <label className="si-label">Email</label>
+          <input
+            type="email"
+            required
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="si-input"
+            placeholder="operator@fund.com"
+          />
 
-        {err && (
-          <div
-            style={{
-              marginTop: 12,
-              padding: "8px 10px",
-              border: "1px solid #5a2727",
-              background: "#2a1010",
-              color: "#f3a5a5",
-              fontSize: 12,
-              borderRadius: 4,
+          {mode === "bootstrap" && (
+            <>
+              <label className="si-label">Name</label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="si-input"
+                placeholder="Operator"
+              />
+            </>
+          )}
+
+          <label className="si-label">Password</label>
+          <input
+            type="password"
+            required
+            minLength={8}
+            autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="si-input"
+            placeholder="••••••••"
+          />
+
+          {err && <div className="si-error">{err}</div>}
+
+          <button type="submit" disabled={busy} className="lg-btn lg-btn--solid si-submit">
+            {busy ? "···" : mode === "sign-in" ? "Sign in" : "Create operator"}
+          </button>
+
+          <button
+            type="button"
+            className="si-switch"
+            onClick={() => {
+              setErr(null);
+              setMode(mode === "sign-in" ? "bootstrap" : "sign-in");
             }}
           >
-            {err}
-          </div>
-        )}
+            {mode === "sign-in"
+              ? "First-time setup → create operator"
+              : "← back to sign-in"}
+          </button>
+        </form>
 
-        <button
-          type="submit"
-          disabled={busy}
-          style={{
-            marginTop: 18,
-            width: "100%",
-            padding: "10px 12px",
-            background: busy ? "#3a3d46" : "#e8e8ea",
-            color: busy ? "#a0a3ad" : "#0a0b0e",
-            border: 0,
-            borderRadius: 4,
-            fontWeight: 600,
-            letterSpacing: "0.04em",
-            cursor: busy ? "default" : "pointer",
-          }}
-        >
-          {busy ? "..." : mode === "sign-in" ? "Sign in" : "Create operator"}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setErr(null);
-            setMode(mode === "sign-in" ? "bootstrap" : "sign-in");
-          }}
-          style={{
-            marginTop: 12,
-            width: "100%",
-            padding: "8px",
-            background: "transparent",
-            color: "#8b8d97",
-            border: 0,
-            fontSize: 12,
-            cursor: "pointer",
-          }}
-        >
-          {mode === "sign-in"
-            ? "First-time setup → create operator"
-            : "← back to sign-in"}
-        </button>
-      </form>
+        <div className="si-foot mono">
+          MERIDIAN OS · {new Date().getFullYear()} · operator access only
+        </div>
+      </div>
     </div>
   );
 }
-
-const labelStyle: React.CSSProperties = {
-  display: "block",
-  fontSize: 11,
-  letterSpacing: "0.1em",
-  color: "#8b8d97",
-  marginTop: 12,
-  marginBottom: 4,
-  textTransform: "uppercase",
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "9px 10px",
-  background: "#0a0b0e",
-  border: "1px solid #2a2c33",
-  color: "#e8e8ea",
-  borderRadius: 4,
-  fontFamily: "inherit",
-  fontSize: 13,
-  boxSizing: "border-box",
-};

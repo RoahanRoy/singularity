@@ -1,0 +1,262 @@
+/* ============================================================
+   LIQUID GLASS — shared design layer (scoped under .lg)
+   Apple-like frosted glass on a soft field. Light + dark,
+   teal signal + serif italics — a sibling to the landing (.lp).
+   Used by /sign-in and /guided.
+   ============================================================ */
+
+.lg {
+  /* light theme — soft stone field, matches the landing */
+  --bg: #e7ecef;
+  --bg-soft: #eef2f4;
+  --line: rgba(20, 28, 38, 0.12);
+  --line-strong: rgba(20, 28, 38, 0.2);
+
+  --ink-0: #13171b;
+  --ink-1: #3a424a;
+  --ink-2: #5c656f;
+  --ink-3: #8b939c;
+
+  --teal: #1c86b0;
+  --teal-bright: #1593c0;
+  --teal-soft: rgba(28, 134, 176, 0.12);
+
+  /* glass surfaces */
+  --glass: rgba(255, 255, 255, 0.55);
+  --glass-strong: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.7);
+  --glass-edge: rgba(20, 28, 38, 0.1);
+  --glass-shadow: 0 24px 60px -20px rgba(18, 26, 36, 0.28),
+    0 2px 8px -2px rgba(18, 26, 36, 0.12);
+  --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --input-bg: rgba(255, 255, 255, 0.5);
+
+  --btn-solid-bg: #111418;
+  --btn-solid-fg: #ffffff;
+
+  /* ambient field blobs */
+  --blob-a: rgba(28, 134, 176, 0.22);
+  --blob-b: rgba(120, 170, 210, 0.28);
+  --blob-c: rgba(255, 255, 255, 0.55);
+  --field: radial-gradient(120% 90% at 50% 0%, #f3f6f8 0%, var(--bg) 55%, #dfe5e9 100%);
+
+  --sans: var(--font-geist-sans), "Helvetica Neue", system-ui, sans-serif;
+  --serif: var(--font-newsreader), "Times New Roman", serif;
+  --mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  position: relative;
+  min-height: 100vh;
+  background: var(--field);
+  color: var(--ink-1);
+  font-family: var(--sans);
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+}
+
+.lg[data-theme="dark"] {
+  --bg: #060709;
+  --bg-soft: #0b0d11;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  --ink-0: #f6f8fa;
+  --ink-1: #c2c7cf;
+  --ink-2: #8b919b;
+  --ink-3: #565c66;
+
+  --teal: #2596be;
+  --teal-bright: #5fd0f0;
+  --teal-soft: rgba(37, 150, 190, 0.14);
+
+  --glass: rgba(18, 22, 28, 0.55);
+  --glass-strong: rgba(20, 25, 32, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-edge: rgba(255, 255, 255, 0.06);
+  --glass-shadow: 0 28px 70px -24px rgba(0, 0, 0, 0.7),
+    0 2px 10px -2px rgba(0, 0, 0, 0.5);
+  --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --input-bg: rgba(255, 255, 255, 0.04);
+
+  --btn-solid-bg: #f6f8fa;
+  --btn-solid-fg: #06070a;
+
+  --blob-a: rgba(37, 150, 190, 0.22);
+  --blob-b: rgba(95, 208, 240, 0.14);
+  --blob-c: rgba(40, 80, 110, 0.35);
+  --field: radial-gradient(120% 90% at 50% 0%, #0c0f13 0%, var(--bg) 60%, #030405 100%);
+}
+
+.lg *,
+.lg *::before,
+.lg *::after {
+  box-sizing: border-box;
+}
+.lg ::selection {
+  background: var(--teal);
+  color: #04222d;
+}
+
+/* ---------- ambient field: drifting color blobs behind the glass ---------- */
+.lg-field {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.lg-field .blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: 0.9;
+  will-change: transform;
+}
+.lg-field .b1 {
+  width: 46vw;
+  height: 46vw;
+  left: -8vw;
+  top: -10vh;
+  background: radial-gradient(circle, var(--blob-a), transparent 70%);
+  animation: lg-drift-1 22s var(--ease) infinite alternate;
+}
+.lg-field .b2 {
+  width: 40vw;
+  height: 40vw;
+  right: -6vw;
+  bottom: -12vh;
+  background: radial-gradient(circle, var(--blob-b), transparent 70%);
+  animation: lg-drift-2 26s var(--ease) infinite alternate;
+}
+.lg-field .b3 {
+  width: 32vw;
+  height: 32vw;
+  left: 40%;
+  top: 38%;
+  background: radial-gradient(circle, var(--blob-c), transparent 72%);
+  animation: lg-drift-3 30s var(--ease) infinite alternate;
+}
+.lg-field .grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+@keyframes lg-drift-1 {
+  to { transform: translate(8vw, 6vh) scale(1.12); }
+}
+@keyframes lg-drift-2 {
+  to { transform: translate(-7vw, -5vh) scale(1.1); }
+}
+@keyframes lg-drift-3 {
+  to { transform: translate(-6vw, 4vh) scale(0.9); }
+}
+
+.lg-content {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------- glass surface primitive ---------- */
+.lg-glass {
+  background: var(--glass);
+  backdrop-filter: blur(28px) saturate(150%);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow), var(--glass-inset);
+  border-radius: 28px;
+}
+
+/* ---------- mark / brand ---------- */
+.lg-mark {
+  width: 22px;
+  height: 22px;
+  position: relative;
+  border: 1px solid var(--ink-1);
+  rotate: 45deg;
+  flex: none;
+}
+.lg-mark::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  background: var(--teal);
+}
+
+/* ---------- eyebrow ---------- */
+.lg-eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--teal-bright);
+}
+
+/* ---------- buttons ---------- */
+.lg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 13px 22px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-0);
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+  transition: transform 0.3s var(--ease), background 0.3s var(--ease),
+    border-color 0.3s var(--ease), color 0.3s var(--ease);
+}
+.lg-btn:hover {
+  transform: translateY(-2px);
+  border-color: var(--teal);
+}
+.lg-btn--solid {
+  background: var(--btn-solid-bg);
+  color: var(--btn-solid-fg);
+  border-color: var(--btn-solid-bg);
+  box-shadow: 0 10px 28px -10px rgba(0, 0, 0, 0.35);
+}
+.lg-btn--solid:hover {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
+}
+.lg-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+  transform: none;
+}
+
+/* ---------- theme toggle ---------- */
+.lg-themetoggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  color: var(--ink-0);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  transition: border-color 0.25s var(--ease), transform 0.25s var(--ease);
+}
+.lg-themetoggle:hover {
+  border-color: var(--teal);
+  transform: translateY(-2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lg-field .blob { animation: none; }
+}

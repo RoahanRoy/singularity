@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { GlossTerm as G } from "@/components/meridian/GlossTerm";
 import { AuthGate } from "@/components/meridian/AuthGate";
+import "../glass.css";
 import "./guided.css";
 
 type Step = { id: string; num: string; label: string; eyebrow: string };
@@ -160,68 +161,101 @@ export default function GuidedPage() {
 
 function GuidedInner() {
   const [active, setActive] = useState<string>("swarm");
+  const [theme, setTheme] = useState<"light" | "dark">("light");
   const idx = STEPS.findIndex((s) => s.id === active);
   const step = STEPS[idx];
   const Slide = SLIDES[active];
   const prev = idx > 0 ? STEPS[idx - 1] : null;
   const next = idx < STEPS.length - 1 ? STEPS[idx + 1] : null;
 
+  // Share the landing's theme preference for a consistent look.
+  useEffect(() => {
+    const stored = window.localStorage.getItem("lp-theme");
+    if (stored === "dark" || stored === "light") setTheme(stored);
+    else if (window.matchMedia("(prefers-color-scheme: dark)").matches) setTheme("dark");
+  }, []);
+  const toggleTheme = () =>
+    setTheme((t) => {
+      const nextT = t === "light" ? "dark" : "light";
+      window.localStorage.setItem("lp-theme", nextT);
+      return nextT;
+    });
+
   return (
-    <div className="guided">
-      <aside className="g-rail">
-        <div className="g-brand">
-          <div className="mark" />
-          <div>
-            <div className="name">MERIDIAN</div>
-            <div className="sub">A GUIDED TOUR</div>
-          </div>
-        </div>
-        <nav>
-          {STEPS.map((s, i) => (
-            <button key={s.id} className={active === s.id ? "active" : ""} onClick={() => setActive(s.id)}>
-              <span className="num">{s.num}</span>
-              <span className="label">{s.label}</span>
-              {idx > i && <span className="done">✓</span>}
-            </button>
-          ))}
-        </nav>
-        <div className="g-rail-foot">
-          <Link href="/" className="link">→ open full UI</Link>
-        </div>
-      </aside>
+    <div className="lg guided" data-theme={theme}>
+      <div className="lg-field" aria-hidden>
+        <span className="blob b1" />
+        <span className="blob b2" />
+        <span className="blob b3" />
+        <span className="grain" />
+      </div>
 
-      <main className="g-main">
-        <header className="g-top">
-          <div className="eyebrow">
-            {step.num} · {step.eyebrow}
+      <div className="lg-content g-shell">
+        <aside className="g-rail lg-glass">
+          <div className="g-brand">
+            <span className="lg-mark" aria-hidden />
+            <div>
+              <div className="name">MERIDIAN</div>
+              <div className="sub">A GUIDED TOUR</div>
+            </div>
           </div>
-          <div className="g-pager">
-            {prev ? (
-              <button onClick={() => setActive(prev.id)}>← Previous</button>
-            ) : (
-              <span className="disabled">← Previous</span>
-            )}
-            <span className="count">
-              {idx + 1} / {STEPS.length}
-            </span>
-            {next ? (
-              <button onClick={() => setActive(next.id)}>Next →</button>
-            ) : (
-              <span className="disabled">Next →</span>
-            )}
+          <nav>
+            {STEPS.map((s, i) => (
+              <button key={s.id} className={active === s.id ? "active" : ""} onClick={() => setActive(s.id)}>
+                <span className="num">{s.num}</span>
+                <span className="label">{s.label}</span>
+                {idx > i && <span className="done">✓</span>}
+              </button>
+            ))}
+          </nav>
+          <div className="g-rail-foot">
+            <Link href="/" className="link">→ open full UI</Link>
           </div>
-        </header>
+        </aside>
 
-        <section className="g-content">
-          <h1 className="g-headline">{step.label}.</h1>
-          <Slide />
-        </section>
+        <main className="g-main lg-glass">
+          <header className="g-top">
+            <div className="eyebrow lg-eyebrow">
+              {step.num} · {step.eyebrow}
+            </div>
+            <div className="g-top-right">
+              <div className="g-pager">
+                {prev ? (
+                  <button onClick={() => setActive(prev.id)}>← Previous</button>
+                ) : (
+                  <span className="disabled">← Previous</span>
+                )}
+                <span className="count">
+                  {idx + 1} / {STEPS.length}
+                </span>
+                {next ? (
+                  <button onClick={() => setActive(next.id)}>Next →</button>
+                ) : (
+                  <span className="disabled">Next →</span>
+                )}
+              </div>
+              <button
+                type="button"
+                className="lg-themetoggle"
+                onClick={toggleTheme}
+                aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+              >
+                {theme === "dark" ? "☀" : "☾"}
+              </button>
+            </div>
+          </header>
 
-        <footer className="g-foot">
-          <span>Hover any underlined term for a plain-English explanation.</span>
-          <Link href="/" className="link">Operator view →</Link>
-        </footer>
-      </main>
+          <section className="g-content">
+            <h1 className="g-headline">{step.label}.</h1>
+            <Slide />
+          </section>
+
+          <footer className="g-foot">
+            <span>Hover any underlined term for a plain-English explanation.</span>
+            <Link href="/" className="link">Operator view →</Link>
+          </footer>
+        </main>
+      </div>
     </div>
   );
 }

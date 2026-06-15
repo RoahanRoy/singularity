@@ -465,3 +465,119 @@
 .meridian-root .routing .row .b > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--cyan); }
 .meridian-root .routing .row .ms { color: var(--ink-2); text-align: right; }
 .meridian-root .routing .row .st { color: var(--green); text-align: right; }
+
+/* ============================================================
+   LIQUID GLASS REFRESH — Desk (.meridian-root)
+   Keeps the dark, dense terminal but reads it through frosted
+   glass: translucent chrome, softened hairlines, rounded glassy
+   components, and a richer ambient field. Sibling to the landing.
+   ============================================================ */
+.meridian-root {
+  /* hairlines become translucent so frosted surfaces glow at the seams */
+  --line: rgba(255, 255, 255, 0.085);
+  --line-strong: rgba(255, 255, 255, 0.15);
+  --line-soft: rgba(255, 255, 255, 0.05);
+
+  /* frosted surface tints (sit over the ambient field) */
+  --glass-1: rgba(15, 18, 24, 0.62);
+  --glass-2: rgba(22, 27, 35, 0.62);
+  --glass-3: rgba(30, 36, 46, 0.55);
+  --glass-hi: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --blur: blur(22px) saturate(135%);
+}
+
+/* deeper, cooler ambient so the frost has color to refract */
+.meridian-root .app {
+  background:
+    radial-gradient(1000px 640px at 84% -10%, oklch(0.78 0.13 75 / 0.07), transparent 62%),
+    radial-gradient(820px 620px at 8% 4%, oklch(0.80 0.09 220 / 0.08), transparent 60%),
+    radial-gradient(760px 760px at 52% 122%, oklch(0.80 0.09 220 / 0.06), transparent 62%),
+    var(--bg-0);
+}
+
+/* frosted chrome */
+.meridian-root .rail,
+.meridian-root .topbar,
+.meridian-root .status {
+  background: var(--glass-1);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+}
+.meridian-root .topbar { box-shadow: var(--glass-hi); }
+.meridian-root .rail { box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.04); }
+
+/* frosted data panels — sample the ambient field behind them */
+.meridian-root .panel {
+  background: var(--glass-1);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+}
+.meridian-root .panel-head {
+  background: var(--glass-2);
+  box-shadow: var(--glass-hi);
+}
+
+/* rail nav — soft glass pills with a teal-lit active state */
+.meridian-root .rail-nav button { border-radius: 10px; transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast); }
+.meridian-root .rail-nav button:hover { background: rgba(255, 255, 255, 0.045); }
+.meridian-root .rail-nav button.active {
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: var(--glass-hi), inset 2px 0 0 var(--md-accent);
+}
+.meridian-root .rail-brand .mark { border-radius: 5px; }
+.meridian-root .rail-foot .avatar { border-radius: 8px; background: var(--glass-3); box-shadow: var(--glass-hi); }
+
+/* market toggle / pills */
+.meridian-root .topbar-right .pill {
+  background: var(--glass-2);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--glass-hi);
+}
+
+/* glassy components inside the screens */
+.meridian-root .kbd { background: var(--glass-2); border-radius: 5px; box-shadow: var(--glass-hi); }
+.meridian-root .tag { background: var(--glass-2); backdrop-filter: blur(8px); box-shadow: var(--glass-hi); }
+.meridian-root .action-card {
+  background: var(--glass-2);
+  backdrop-filter: blur(14px);
+  border-radius: 14px;
+  box-shadow: var(--glass-shadow, 0 18px 40px -22px rgba(0, 0, 0, 0.65)), var(--glass-hi);
+}
+.meridian-root .action-card .btn { border-radius: 8px; }
+.meridian-root .action-card .btn.primary { box-shadow: 0 8px 22px -10px var(--md-accent); }
+.meridian-root .composer .bar {
+  background: var(--glass-2);
+  backdrop-filter: blur(14px);
+  border-radius: 14px;
+  box-shadow: var(--glass-hi);
+  transition: border-color var(--t), box-shadow var(--t);
+}
+.meridian-root .composer .bar:focus-within {
+  border-color: var(--md-accent-dim);
+  box-shadow: var(--glass-hi), 0 0 0 4px var(--md-accent-soft);
+}
+.meridian-root .composer .send { border-radius: 7px; }
+.meridian-root .composer .hints .h { background: var(--glass-2); }
+.meridian-root .memo {
+  background: var(--glass-2);
+  backdrop-filter: blur(14px);
+  border-radius: 14px;
+  box-shadow: var(--glass-hi);
+}
+.meridian-root .callout {
+  background: var(--glass-3);
+  backdrop-filter: blur(12px);
+  border-radius: 10px;
+  box-shadow: var(--glass-hi), 0 12px 30px -18px rgba(0, 0, 0, 0.7);
+}
+.meridian-root .swarm-tooltip {
+  background: var(--glass-2);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px -18px rgba(0, 0, 0, 0.7), var(--glass-hi);
+}
+.meridian-root .msg .av { border-radius: 8px; background: var(--glass-3); box-shadow: var(--glass-hi); }
+.meridian-root .msg.ai .av { background: var(--md-accent-soft); }
+
+/* the avatar/kbd font-smoothing already inherits; nothing else changes layout */
