@@ -234,11 +234,11 @@
 .meridian-root .rail-foot .name { font-size: 12px; color: var(--ink-0); }
 .meridian-root .rail-foot .role { font-family: var(--mono); font-size: 9.5px; color: var(--ink-3); letter-spacing: 0.12em; text-transform: uppercase; }
 
-.meridian-root .topbar { grid-area: top; border-bottom: 1px solid var(--line); background: var(--bg-1); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 16px; gap: 16px; }
+.meridian-root .topbar { grid-area: top; border-bottom: 1px solid var(--line); background: var(--bg-1); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; padding: 0 16px; gap: 16px; }
 .meridian-root .crumbs { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); letter-spacing: 0.12em; text-transform: uppercase; }
 .meridian-root .crumbs .sep { color: var(--ink-4); }
 .meridian-root .crumbs .cur { color: var(--ink-0); }
-.meridian-root .ticker { display: flex; align-items: center; gap: 22px; font-family: var(--mono); font-size: 11px; color: var(--ink-2); overflow: hidden; white-space: nowrap; }
+.meridian-root .ticker { display: flex; align-items: center; gap: 22px; font-family: var(--mono); font-size: 11px; color: var(--ink-2); min-width: 0; overflow: hidden; white-space: nowrap; -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%); mask-image: linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%); }
 .meridian-root .ticker .item { display: inline-flex; gap: 6px; }
 .meridian-root .ticker .sym { color: var(--ink-0); }
 .meridian-root .ticker .up { color: var(--green); }
@@ -246,8 +246,9 @@
 .meridian-root .ticker-live { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3, #5a606b); }
 .meridian-root .ticker-live.on { background: var(--green); box-shadow: 0 0 0 0 color-mix(in oklab, var(--green) 70%, transparent); animation: md-pulse 2.4s ease-out infinite; }
 @keyframes md-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--green) 60%, transparent); } 70% { box-shadow: 0 0 0 5px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
-.meridian-root .topbar-right { display: flex; align-items: center; gap: 14px; justify-content: flex-end; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); letter-spacing: 0.08em; }
-.meridian-root .topbar-right .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 99px; color: var(--ink-1); }
+.meridian-root .topbar-right { display: flex; align-items: center; flex-wrap: nowrap; gap: 14px; justify-content: flex-end; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); letter-spacing: 0.08em; white-space: nowrap; }
+.meridian-root .topbar-right > * { flex: 0 0 auto; }
+.meridian-root .topbar-right .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 99px; color: var(--ink-1); white-space: nowrap; }
 .meridian-root .topbar-right .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 var(--green); animation: md-pulse 2.2s infinite; }
 .meridian-root .topbar-right .pill.pre   .pulse,
 .meridian-root .topbar-right .pill.after .pulse { background: var(--md-accent); animation: none; box-shadow: none; }
