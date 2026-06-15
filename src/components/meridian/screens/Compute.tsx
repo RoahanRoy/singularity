@@ -321,7 +321,66 @@ function clusterStatus(health: number): { label: string; color: string } {
   return { label: "degraded", color: "var(--red)" };
 }
 
-function PipelineList({ clusters }: { clusters: Cluster[] }) {
+const AGENT_DOT: Record<Agent["status"], string> = {
+  executing: "var(--md-accent)",
+  thinking: "var(--cyan)",
+  idle: "var(--ink-4)",
+  blocked: "var(--red)",
+  killed: "var(--line-strong)",
+};
+
+function AgentRows({ agents }: { agents: Agent[] }) {
+  if (agents.length === 0) {
+    return (
+      <div className="dim" style={{ fontSize: 10.5, padding: "4px 14px 6px 34px" }}>
+        No sampled agents for this pipeline.
+      </div>
+    );
+  }
+  const sorted = agents.slice().sort((a, b) => {
+    const aActive = ACTIVE.includes(a.status) ? 1 : 0;
+    const bActive = ACTIVE.includes(b.status) ? 1 : 0;
+    if (aActive !== bActive) return bActive - aActive;
+    return b.conviction - a.conviction;
+  });
+  return (
+    <div style={{ background: "var(--bg-1)", borderBottom: "1px solid var(--line-soft)" }}>
+      {sorted.map((a) => (
+        <div
+          key={a.$id}
+          title={`${a.status} · conviction ${(a.conviction * 100).toFixed(0)}%`}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "16px 1fr auto auto",
+            padding: "3px 14px 3px 34px",
+            gap: 10,
+            alignItems: "center",
+          }}
+        >
+          <span style={{ color: AGENT_DOT[a.status] ?? "var(--ink-4)", fontSize: 9 }}>●</span>
+          <span style={{ color: "var(--ink-2)" }}>{a.name}</span>
+          <span style={{ color: "var(--ink-3)" }}>{a.role}</span>
+          <span style={{ color: "var(--ink-4)", textAlign: "right" }}>{modelLabel(a.model)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PipelineList({ clusters, agents }: { clusters: Cluster[]; agents: Agent[] }) {
+  const [open, setOpen] = useState<Set<string>>(new Set());
+
+  const byCluster = useMemo(() => {
+    const m = new Map<string, Agent[]>();
+    for (const a of agents) {
+      if (!a.cluster_id) continue;
+      const arr = m.get(a.cluster_id);
+      if (arr) arr.push(a);
+      else m.set(a.cluster_id, [a]);
+    }
+    return m;
+  }, [agents]);
+
   if (clusters.length === 0) {
     return (
       <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11, padding: "12px 14px" }}>
@@ -329,27 +388,61 @@ function PipelineList({ clusters }: { clusters: Cluster[] }) {
       </div>
     );
   }
+
+  const toggle = (id: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
   const sorted = clusters.slice().sort((a, b) => b.agent_count - a.agent_count);
   return (
     <div style={{ fontFamily: "var(--mono)", fontSize: 11 }}>
       {sorted.map((c) => {
         const st = clusterStatus(c.health);
+        const sample = byCluster.get(c.$id) ?? [];
+        const isOpen = open.has(c.$id);
         return (
-          <div
-            key={c.$id}
-            title={`health ${(c.health * 100).toFixed(0)}%`}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "16px 1fr auto",
-              padding: "6px 14px",
-              gap: 10,
-              alignItems: "center",
-              borderBottom: "1px solid var(--line-soft)",
-            }}
-          >
-            <span style={{ color: st.color }}>●</span>
-            <span style={{ color: "var(--ink-1)" }}>{c.name}</span>
-            <span style={{ color: "var(--ink-3)" }}>{fmtCount(c.agent_count)} agents</span>
+          <div key={c.$id}>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => toggle(c.$id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggle(c.$id);
+                }
+              }}
+              title={`health ${(c.health * 100).toFixed(0)}% · ${st.label}`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "12px 16px 1fr auto",
+                padding: "6px 14px",
+                gap: 10,
+                alignItems: "center",
+                borderBottom: "1px solid var(--line-soft)",
+                cursor: "pointer",
+                userSelect: "none",
+              }}
+            >
+              <span
+                style={{
+                  color: "var(--ink-4)",
+                  transform: isOpen ? "rotate(90deg)" : "none",
+                  transition: "transform 0.12s ease",
+                  fontSize: 9,
+                }}
+              >
+                ▶
+              </span>
+              <span style={{ color: st.color }}>●</span>
+              <span style={{ color: "var(--ink-1)" }}>{c.name}</span>
+              <span style={{ color: "var(--ink-3)" }}>{fmtCount(c.agent_count)} agents</span>
+            </div>
+            {isOpen && <AgentRows agents={sample} />}
           </div>
         );
       })}
@@ -443,7 +536,7 @@ export function ComputeScreen() {
         meta={`${healthy} healthy · ${strained} degraded`}
         bodyClassName="tight"
       >
-        <PipelineList clusters={clusters} />
+        <PipelineList clusters={clusters} agents={agents} />
       </Panel>
 
       <Panel title="Telemetry" bodyClassName="tight">
