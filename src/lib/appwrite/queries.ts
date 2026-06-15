@@ -2,7 +2,7 @@
 
 import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type ModelRoute, type Pipeline, type ComputeNode, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc, type KiteAccount, type IbkrAccount, type Market } from "./schema";
+import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc, type KiteAccount, type IbkrAccount, type Market } from "./schema";
 
 /**
  * Market filter. When a desk is passed we constrain to that desk's rows.
@@ -212,32 +212,10 @@ export async function listFundSnapshots(limit = 200, market?: Market): Promise<F
   return res.documents.slice().reverse();
 }
 
-export async function listModelRoutes(limit = 20): Promise<ModelRoute[]> {
-  const res = await databases.listDocuments<ModelRoute & Models.Document>(
-    DATABASE_ID,
-    COLLECTIONS.model_routes,
-    [Query.orderDesc("load"), Query.limit(limit)],
-  );
-  return res.documents;
-}
-
-export async function listPipelines(limit = 20): Promise<Pipeline[]> {
-  const res = await databases.listDocuments<Pipeline & Models.Document>(
-    DATABASE_ID,
-    COLLECTIONS.pipelines,
-    [Query.orderDesc("updated_at"), Query.limit(limit)],
-  );
-  return res.documents;
-}
-
-export async function listComputeNodes(limit = 20): Promise<ComputeNode[]> {
-  const res = await databases.listDocuments<ComputeNode & Models.Document>(
-    DATABASE_ID,
-    COLLECTIONS.compute_nodes,
-    [Query.orderAsc("zone"), Query.limit(limit)],
-  );
-  return res.documents;
-}
+// The Compute screen's inference plane, pipelines, and GPU fabric are now
+// derived from live agents / clusters / budget_ledger, so the old
+// `model_routes`, `pipelines`, and `compute_nodes` collections are no longer
+// queried. The types remain in schema.ts for any external tooling.
 
 /** The operator's configured risk limits (singleton row keyed by `key`). */
 export async function getRiskLimits(key = "default"): Promise<RiskLimits | null> {

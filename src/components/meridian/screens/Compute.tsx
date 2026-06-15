@@ -3,18 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Panel } from "../primitives";
 import {
-  listComputeNodes,
-  listModelRoutes,
-  listPipelines,
+  listAgents,
+  listClusters,
   listMemos,
   listPositions,
   listBudgetLedger,
   listRecentTrades,
 } from "@/lib/appwrite/queries";
 import type {
-  ComputeNode,
-  ModelRoute,
-  Pipeline,
+  Agent,
+  Cluster,
   Memo,
   Position,
   BudgetLedger,
@@ -39,43 +37,54 @@ function fmtUsd(n: number): string {
   return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
-// ── GPU fabric rack (driven by compute_nodes) ─────────────────────────────────
+function fmtCount(n: number): string {
+  return n.toLocaleString();
+}
 
-function Rack({ nodes }: { nodes: ComputeNode[] }) {
-  const totalGpus = nodes.reduce((s, n) => s + n.gpu_count, 0);
-  const wUtil =
-    totalGpus > 0
-      ? nodes.reduce((s, n) => s + n.utilization * n.gpu_count, 0) / totalGpus
+/** Agents that are doing work right now. */
+const ACTIVE: Agent["status"][] = ["thinking", "executing"];
+
+/** Friendly label for a raw model id (claude-opus-4-7 → OPUS-4.7). */
+function modelLabel(model: string): string {
+  const m = model.trim();
+  const known = m.match(/^claude-(opus|sonnet|haiku)-([\d-]+)$/i);
+  if (known) return `${known[1].toUpperCase()}-${known[2].replace(/-/g, ".")}`;
+  if (/^gpt/i.test(m)) return m.toUpperCase();
+  return m.toUpperCase();
+}
+
+// ── Agent fleet grid (driven by live agents) ──────────────────────────────────
+// Replaces the old fictional GPU rack: every cell is a real agent, coloured by
+// its live status. Utilization is the share of the fleet actually working.
+
+const STATUS_RACK: Record<Agent["status"], string> = {
+  executing: "hot",
+  thinking: "warm",
+  idle: "idle",
+  blocked: "off",
+  killed: "off",
+};
+
+function Fleet({ agents, clusters }: { agents: Agent[]; clusters: Cluster[] }) {
+  // Headline scale: the swarm advertises far more agents than we sample into the
+  // `agents` collection, so the count comes from cluster headcount when present.
+  const fleetTotal =
+    clusters.reduce((s, c) => s + (c.agent_count || 0), 0) || agents.length;
+  const activeShare =
+    agents.length > 0
+      ? agents.filter((a) => ACTIVE.includes(a.status)).length / agents.length
       : 0;
-  const avgTemp =
-    nodes.length > 0 ? nodes.reduce((s, n) => s + n.temp_c, 0) / nodes.length : 0;
-  const zones = Array.from(new Set(nodes.map((n) => n.zone)));
-  const models = Array.from(new Set(nodes.map((n) => n.gpu_model)));
+  const models = Array.from(new Set(agents.map((a) => a.model))).map(modelLabel);
 
-  // 192 rack units, distributed across hot/warm/cool/idle/off so that the share
-  // of "active" units tracks the measured fabric utilization.
-  const units = useMemo(() => {
-    const r = rngFactory(7919 + Math.round(wUtil * 1000));
-    const out: string[] = [];
-    for (let i = 0; i < 192; i++) {
-      const v = r();
-      let cls: string;
-      if (v < wUtil * 0.12) cls = "hot";
-      else if (v < wUtil * 0.5) cls = "warm";
-      else if (v < wUtil) cls = "cool";
-      else if (v < wUtil + (1 - wUtil) * 0.6) cls = "idle";
-      else cls = "off";
-      out.push(cls);
-    }
-    return out;
-  }, [wUtil]);
+  const cells = useMemo(
+    () => agents.map((a) => ({ id: a.$id, cls: STATUS_RACK[a.status] ?? "idle", name: a.name, status: a.status })),
+    [agents],
+  );
 
-  const title = zones.length
-    ? `GPU Fabric · ${zones.join(" / ")} · ${models.join(" / ")}`
-    : "GPU Fabric";
-  const meta = totalGpus
-    ? `${totalGpus.toLocaleString()} GPUs · ${(wUtil * 100).toFixed(1)}% util · ${avgTemp.toFixed(1)}°C avg`
-    : "no fabric reporting";
+  const title = "Agent Fleet · Live";
+  const meta = fleetTotal
+    ? `${fmtCount(fleetTotal)} agents · ${(activeShare * 100).toFixed(1)}% active · ${models.length} models`
+    : "no agents reporting";
 
   return (
     <div className="panel" style={{ borderTop: 0 }}>
@@ -84,9 +93,15 @@ function Rack({ nodes }: { nodes: ComputeNode[] }) {
         <span className="meta">{meta}</span>
       </div>
       <div className="rack">
-        {units.map((u, i) => (
-          <div key={i} className={"u " + u} />
-        ))}
+        {cells.length === 0 ? (
+          <div className="dim" style={{ gridColumn: "1 / -1", fontFamily: "var(--mono)", fontSize: 11, padding: 4 }}>
+            No agents reporting.
+          </div>
+        ) : (
+          cells.map((c) => (
+            <div key={c.id} className={"u " + c.cls} title={`${c.name} · ${c.status}`} />
+          ))
+        )}
       </div>
     </div>
   );
@@ -177,9 +192,32 @@ function shortLabel(name: string): string {
   return name.split(/\s+/)[0];
 }
 
-// ── Model routing (driven by model_routes) ────────────────────────────────────
+// ── Model routing (derived from the live model mix the fleet runs) ─────────────
 
-function Routing({ routes }: { routes: ModelRoute[] }) {
+type Route = { model: string; agents: number; load: number; status: "OK" | "degraded" };
+
+function deriveRoutes(agents: Agent[]): Route[] {
+  const by = new Map<string, Agent[]>();
+  for (const a of agents) {
+    const arr = by.get(a.model);
+    if (arr) arr.push(a);
+    else by.set(a.model, [a]);
+  }
+  const out: Route[] = [];
+  for (const [model, list] of by) {
+    const active = list.filter((a) => ACTIVE.includes(a.status)).length;
+    const degraded = list.some((a) => a.status === "blocked" || a.status === "killed");
+    out.push({
+      model: modelLabel(model),
+      agents: list.length,
+      load: list.length > 0 ? active / list.length : 0,
+      status: degraded ? "degraded" : "OK",
+    });
+  }
+  return out.sort((a, b) => b.agents - a.agents);
+}
+
+function Routing({ routes }: { routes: Route[] }) {
   if (routes.length === 0) {
     return (
       <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11, padding: "12px 14px" }}>
@@ -190,21 +228,23 @@ function Routing({ routes }: { routes: ModelRoute[] }) {
   return (
     <div className="routing">
       <div className="row" style={{ color: "var(--ink-3)", letterSpacing: "0.1em", borderBottom: "1px solid var(--line)" }}>
-        <span>MODEL</span><span>LOAD</span><span className="ms">MS</span><span className="st">STATUS</span>
+        <span>MODEL</span><span>LOAD</span><span className="ms">AGENTS</span><span className="st">STATUS</span>
       </div>
       {routes.map((r) => (
-        <div key={r.$id} className="row">
+        <div key={r.model} className="row">
           <span style={{ color: "var(--ink-0)" }}>{r.model}</span>
           <div className="b"><i style={{ width: Math.max(0, Math.min(1, r.load)) * 100 + "%" }} /></div>
-          <span className="ms">{r.latency_ms}</span>
-          <span className="st">● {r.status}</span>
+          <span className="ms">{r.agents}</span>
+          <span className="st" style={{ color: r.status === "OK" ? "var(--green)" : "var(--red)" }}>
+            ● {r.status}
+          </span>
         </div>
       ))}
     </div>
   );
 }
 
-// ── Telemetry (derived from fabric + routes + ledger) ─────────────────────────
+// ── Telemetry (derived from fleet + ledger) ───────────────────────────────────
 
 function MetricBlock({ k, v, sub, color }: { k: string; v: string; sub?: string; color?: string }) {
   return (
@@ -216,44 +256,51 @@ function MetricBlock({ k, v, sub, color }: { k: string; v: string; sub?: string;
   );
 }
 
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(2) + "B";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+
 function Telemetry({
-  nodes,
-  routes,
+  agents,
+  clusters,
   ledger,
 }: {
-  nodes: ComputeNode[];
-  routes: ModelRoute[];
+  agents: Agent[];
+  clusters: Cluster[];
   ledger: BudgetLedger[];
 }) {
-  const totalGpus = nodes.reduce((s, n) => s + n.gpu_count, 0);
-  const wUtil =
-    totalGpus > 0
-      ? nodes.reduce((s, n) => s + n.utilization * n.gpu_count, 0) / totalGpus
+  const fleetTotal =
+    clusters.reduce((s, c) => s + (c.agent_count || 0), 0) || agents.length;
+  const activeShare =
+    agents.length > 0
+      ? agents.filter((a) => ACTIVE.includes(a.status)).length / agents.length
       : 0;
-  const avgLatency =
-    routes.length > 0
-      ? Math.round(routes.reduce((s, r) => s + r.latency_ms, 0) / routes.length)
-      : 0;
+  const modelCount = new Set(agents.map((a) => a.model)).size;
+  const blocked = agents.filter((a) => a.status === "blocked" || a.status === "killed").length;
+
+  const llm = ledger.filter((l) => l.category === "llm");
   const computeSpend = ledger
     .filter((l) => l.category === "compute")
     .reduce((s, l) => s + l.amount_usd, 0);
-  const llmSpend = ledger
-    .filter((l) => l.category === "llm")
-    .reduce((s, l) => s + l.amount_usd, 0);
+  const llmSpend = llm.reduce((s, l) => s + l.amount_usd, 0);
+  const tokens = llm.reduce((s, l) => s + (l.tokens ?? 0), 0);
 
   return (
     <>
-      <MetricBlock k="GPU fabric" v={totalGpus.toLocaleString()} sub={`${nodes.length} zones`} />
+      <MetricBlock k="Agent fleet" v={fmtCount(fleetTotal)} sub={`${clusters.length} clusters`} />
       <MetricBlock
-        k="Fabric utilization"
-        v={(wUtil * 100).toFixed(1) + "%"}
-        sub="GPU-weighted"
+        k="Fleet active"
+        v={(activeShare * 100).toFixed(1) + "%"}
+        sub={blocked ? `${blocked} blocked` : "thinking / executing"}
         color="var(--md-accent)"
       />
       <MetricBlock
-        k="Avg inference latency"
-        v={avgLatency ? avgLatency + " ms" : "—"}
-        sub={`across ${routes.length} models`}
+        k="Tokens processed"
+        v={tokens ? fmtTokens(tokens) : "—"}
+        sub={`${modelCount} models in rotation`}
         color="var(--cyan)"
       />
       <MetricBlock
@@ -265,24 +312,32 @@ function Telemetry({
   );
 }
 
-// ── Pipelines (driven by pipelines collection) ────────────────────────────────
+// ── Pipelines (derived from live clusters) ────────────────────────────────────
+// Each cluster is a real processing pipeline with its own health signal.
 
-function PipelineList({ pipelines }: { pipelines: Pipeline[] }) {
-  if (pipelines.length === 0) {
+function clusterStatus(health: number): { label: string; color: string } {
+  if (health >= 0.6) return { label: "healthy", color: "var(--green)" };
+  if (health >= 0.4) return { label: "strained", color: "var(--md-accent)" };
+  return { label: "degraded", color: "var(--red)" };
+}
+
+function PipelineList({ clusters }: { clusters: Cluster[] }) {
+  if (clusters.length === 0) {
     return (
       <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11, padding: "12px 14px" }}>
         No pipelines registered.
       </div>
     );
   }
+  const sorted = clusters.slice().sort((a, b) => b.agent_count - a.agent_count);
   return (
     <div style={{ fontFamily: "var(--mono)", fontSize: 11 }}>
-      {pipelines.map((it) => {
-        const color =
-          it.status === "failing" ? "var(--red)" : it.status === "idle" ? "var(--ink-4)" : "var(--green)";
+      {sorted.map((c) => {
+        const st = clusterStatus(c.health);
         return (
           <div
-            key={it.$id}
+            key={c.$id}
+            title={`health ${(c.health * 100).toFixed(0)}%`}
             style={{
               display: "grid",
               gridTemplateColumns: "16px 1fr auto",
@@ -292,9 +347,9 @@ function PipelineList({ pipelines }: { pipelines: Pipeline[] }) {
               borderBottom: "1px solid var(--line-soft)",
             }}
           >
-            <span style={{ color }}>●</span>
-            <span style={{ color: "var(--ink-1)" }}>{it.name}</span>
-            <span style={{ color: "var(--ink-3)" }}>{it.throughput}</span>
+            <span style={{ color: st.color }}>●</span>
+            <span style={{ color: "var(--ink-1)" }}>{c.name}</span>
+            <span style={{ color: "var(--ink-3)" }}>{fmtCount(c.agent_count)} agents</span>
           </div>
         );
       })}
@@ -340,9 +395,8 @@ function Venues({ trades }: { trades: Trade[] }) {
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 export function ComputeScreen() {
-  const [nodes, setNodes] = useState<ComputeNode[]>([]);
-  const [routes, setRoutes] = useState<ModelRoute[]>([]);
-  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [clusters, setClusters] = useState<Cluster[]>([]);
   const [memos, setMemos] = useState<Memo[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
   const [ledger, setLedger] = useState<BudgetLedger[]>([]);
@@ -351,9 +405,8 @@ export function ComputeScreen() {
   useEffect(() => {
     let cancelled = false;
     const set = <T,>(fn: (v: T) => void) => (v: T) => { if (!cancelled) fn(v); };
-    listComputeNodes(20).then(set(setNodes)).catch(() => {});
-    listModelRoutes(20).then(set(setRoutes)).catch(() => {});
-    listPipelines(20).then(set(setPipelines)).catch(() => {});
+    listAgents(200).then(set(setAgents)).catch(() => {});
+    listClusters().then(set(setClusters)).catch(() => {});
     listMemos(20).then(set(setMemos)).catch(() => {});
     listPositions(50).then(set(setPositions)).catch(() => {});
     listBudgetLedger(200).then(set(setLedger)).catch(() => {});
@@ -361,14 +414,15 @@ export function ComputeScreen() {
     return () => { cancelled = true; };
   }, []);
 
-  const activePipes = pipelines.filter((p) => p.status === "running").length;
-  const failingPipes = pipelines.filter((p) => p.status === "failing").length;
+  const routes = useMemo(() => deriveRoutes(agents), [agents]);
   const venueCount = new Set(trades.map((t) => t.venue).filter(Boolean)).size;
   const kgMeta = `${memos.length} memos · ${positions.length} positions`;
+  const strained = clusters.filter((c) => c.health < 0.4).length;
+  const healthy = clusters.filter((c) => c.health >= 0.6).length;
 
   return (
     <div className="compute">
-      <Rack nodes={nodes} />
+      <Fleet agents={agents} clusters={clusters} />
 
       <Panel title="Model Routing · Inference Plane" meta={`${routes.length} models`} bodyClassName="tight">
         <Routing routes={routes} />
@@ -386,14 +440,14 @@ export function ComputeScreen() {
 
       <Panel
         title="Pipelines"
-        meta={`${activePipes} active · ${failingPipes} failing`}
+        meta={`${healthy} healthy · ${strained} degraded`}
         bodyClassName="tight"
       >
-        <PipelineList pipelines={pipelines} />
+        <PipelineList clusters={clusters} />
       </Panel>
 
       <Panel title="Telemetry" bodyClassName="tight">
-        <Telemetry nodes={nodes} routes={routes} ledger={ledger} />
+        <Telemetry agents={agents} clusters={clusters} ledger={ledger} />
       </Panel>
 
       <Panel title="Execution Venues" meta={`${venueCount} connected`} bodyClassName="tight">

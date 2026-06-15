@@ -415,75 +415,10 @@ async function seedFundSnapshots() {
   console.log("fund_snapshots +", DAYS);
 }
 
-const MODEL_ROUTES = [
-  { model: "OPUS-4.7",   load: 0.62, latency_ms: 412, status: "OK" },
-  { model: "HAIKU-4.5",  load: 0.88, latency_ms: 48,  status: "OK" },
-  { model: "SONNET-4.6", load: 0.55, latency_ms: 188, status: "OK" },
-  { model: "EMBED-V4",   load: 0.91, latency_ms: 12,  status: "OK" },
-  { model: "RERANK-V2",  load: 0.40, latency_ms: 22,  status: "OK" },
-  { model: "FORECAST-N", load: 0.71, latency_ms: 96,  status: "OK" },
-  { model: "VISION-T",   load: 0.18, latency_ms: 304, status: "OK" },
-  { model: "MEM-LARGE",  load: 0.66, latency_ms: 8,   status: "OK" },
-];
-
-async function seedModelRoutes() {
-  const existing = await db.listDocuments(DB, "model_routes", [Query.limit(1)]);
-  if (existing.total > 0) {
-    console.log("model_routes already seeded, skipping");
-    return;
-  }
-  const now = new Date().toISOString();
-  for (const r of MODEL_ROUTES) {
-    await db.createDocument(DB, "model_routes", ID.unique(), { ...r, updated_at: now });
-  }
-  console.log("model_routes +", MODEL_ROUTES.length);
-}
-
-const PIPELINES = [
-  { name: "filings-ingestion",     status: "running", throughput: "12.4K/h" },
-  { name: "earnings-transcribe",   status: "running", throughput: "18 active" },
-  { name: "news-multilingual",     status: "running", throughput: "2.4K/h" },
-  { name: "alt-data-fusion",       status: "running", throughput: "84 streams" },
-  { name: "patent-graph",          status: "running", throughput: "rebuild 22m" },
-  { name: "macro-nowcaster",       status: "running", throughput: "step 14" },
-  { name: "thesis-generator",      status: "running", throughput: "118 queued" },
-  { name: "backtest-orchestrator", status: "running", throughput: "running" },
-  { name: "execution-routing",     status: "running", throughput: "13 venues" },
-  { name: "compliance-watch",      status: "running", throughput: "0 alerts" },
-];
-
-async function seedPipelines() {
-  const existing = await db.listDocuments(DB, "pipelines", [Query.limit(1)]);
-  if (existing.total > 0) {
-    console.log("pipelines already seeded, skipping");
-    return;
-  }
-  const now = new Date().toISOString();
-  for (const p of PIPELINES) {
-    await db.createDocument(DB, "pipelines", ID.unique(), { ...p, updated_at: now });
-  }
-  console.log("pipelines +", PIPELINES.length);
-}
-
-const COMPUTE_NODES = [
-  { zone: "DC-EAST",  gpu_model: "H100", gpu_count: 1024, utilization: 0.88, temp_c: 41.2 },
-  { zone: "DC-EAST",  gpu_model: "B200", gpu_count: 768,  utilization: 0.91, temp_c: 43.8 },
-  { zone: "DC-WEST",  gpu_model: "H100", gpu_count: 384,  utilization: 0.72, temp_c: 38.4 },
-  { zone: "DC-EU",    gpu_model: "A100", gpu_count: 128,  utilization: 0.54, temp_c: 36.1 },
-];
-
-async function seedComputeNodes() {
-  const existing = await db.listDocuments(DB, "compute_nodes", [Query.limit(1)]);
-  if (existing.total > 0) {
-    console.log("compute_nodes already seeded, skipping");
-    return;
-  }
-  const now = new Date().toISOString();
-  for (const n of COMPUTE_NODES) {
-    await db.createDocument(DB, "compute_nodes", ID.unique(), { ...n, updated_at: now });
-  }
-  console.log("compute_nodes +", COMPUTE_NODES.length);
-}
+// The Compute screen no longer reads the old `model_routes` / `pipelines` /
+// `compute_nodes` collections — it derives the inference plane, pipelines, and
+// fabric from live agents, clusters, and the budget ledger instead. Those
+// collections are intentionally left unseeded.
 
 (async () => {
   const ids = await upsertClusters();
@@ -497,9 +432,6 @@ async function seedComputeNodes() {
   await seedBudget();
   await seedScenarios();
   await seedFundSnapshots();
-  await seedModelRoutes();
-  await seedPipelines();
-  await seedComputeNodes();
   console.log("\n✓ seed complete");
 })().catch((e) => {
   console.error(e);
