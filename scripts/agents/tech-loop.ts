@@ -46,14 +46,17 @@ function requestStop(sig: string) {
 process.on("SIGTERM", () => requestStop("SIGTERM"));
 process.on("SIGINT", () => requestStop("SIGINT"));
 
-/** Sleep that wakes early once a stop has been requested. */
+/**
+ * Sleep that wakes early once a stop has been requested. Note: the timer is
+ * deliberately NOT unref'd — between cycles it is the only pending handle, so
+ * unref'ing would let Node exit silently (code 0) before the sleep resolves,
+ * killing the loop after a single pass. See ingest-held.ts for the same trap.
+ */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const done = () => { clearTimeout(t); clearInterval(iv); resolve(); };
     const t = setTimeout(done, ms);
     const iv = setInterval(() => { if (stopping) done(); }, 250);
-    if (typeof t.unref === "function") t.unref();
-    if (typeof iv.unref === "function") iv.unref();
   });
 }
 

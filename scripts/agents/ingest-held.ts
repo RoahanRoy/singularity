@@ -10,9 +10,9 @@
  * unless a new filing has appeared on the exchange.
  *
  * US: SEC EDGAR via the existing fetchLatestFiling() reader (10-K/10-Q/8-K).
- * IN: BSE/NSE corporate-announcements lack a clean machine-readable feed in
- *     this repo, so we register a deterministic NSE corp-announcements URL per
- *     held ticker with status="queued". The real parser is a follow-up.
+ * IN: NSE corporate-announcements via fetchLatestIndiaFiling() (see india.ts).
+ *     NSE bot-walls/rate-limits, so a fetch failure skips the ticker (no
+ *     synthetic placeholder row) — same contract as the US path.
  *
  * Run: npm run agents:ingest          # loop, default 30m between sweeps
  *      MERIDIAN_INGEST_ONCE=1 npm run agents:ingest   # single sweep
@@ -24,6 +24,7 @@
  */
 import { db, DB, Query, ID } from "./appwrite";
 import { fetchLatestFiling } from "./edgar";
+import { fetchLatestIndiaFiling } from "./india";
 
 const RUN_ONCE = process.env.MERIDIAN_INGEST_ONCE === "1";
 const INTERVAL_MS = Number(process.env.MERIDIAN_INGEST_INTERVAL_MS || 30 * 60_000);
@@ -102,17 +103,26 @@ async function ingestUS(ticker: string): Promise<"new" | "dup" | "skip"> {
 }
 
 async function ingestIN(ticker: string): Promise<"new" | "dup" | "skip"> {
-  // Deterministic NSE corp-announcements landing page per symbol. Until a real
-  // BSE/NSE parser exists, we register the page as a "queued" placeholder so
-  // the held-ticker is always visible in the queue.
-  const sourceUrl = `https://www.nseindia.com/companies-listing/corporate-filings-announcements?symbol=${encodeURIComponent(ticker)}`;
-  if (await filingExists(ticker, sourceUrl)) return "dup";
+  // Fetch the latest real NSE corporate announcement (pure HTTP, see india.ts).
+  // NSE bot-walls/rate-limits, so a failure is expected and non-fatal — we skip
+  // rather than write a synthetic placeholder, mirroring ingestUS.
+  let f;
+  try {
+    f = await fetchLatestIndiaFiling(ticker, 1); // 1 char — we only need metadata
+  } catch (err) {
+    console.warn(`[ingest IN] ${ticker} → ${(err as Error).message}`);
+    return "skip";
+  }
+  if (await filingExists(f.ticker.toUpperCase(), f.source_url)) return "dup";
+  const filedIso = /^\d{4}-\d{2}-\d{2}$/.test(f.filed_at)
+    ? new Date(f.filed_at + "T00:00:00.000Z").toISOString()
+    : new Date(f.filed_at).toISOString();
   await db.createDocument(DB, "filings", ID.unique(), {
-    ticker,
-    form_type: "Corp-Annc",
-    filed_at: new Date().toISOString(),
-    source_url: sourceUrl,
-    status: "queued",
+    ticker: f.ticker.toUpperCase(),
+    form_type: f.form_type,
+    filed_at: filedIso,
+    source_url: f.source_url,
+    status: "indexed",
     vector_id: null,
     market: "IN",
   });

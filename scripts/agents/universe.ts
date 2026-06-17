@@ -49,7 +49,13 @@ export const INDIA_SECTOR_UNIVERSE: Record<Sector, readonly string[]> = {
   tech:        ["TCS", "INFY", "HCLTECH", "WIPRO", "TECHM", "LTIM", "PERSISTENT", "COFORGE"],
   healthcare:  ["SUNPHARMA", "DRREDDY", "CIPLA", "DIVISLAB", "APOLLOHOSP", "LUPIN", "AUROPHARMA"],
   energy:      ["RELIANCE", "ONGC", "NTPC", "POWERGRID", "COALINDIA", "BPCL", "IOC", "TATAPOWER"],
-  financials:  ["HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK", "AXISBANK", "BAJFINANCE", "INDUSINDBK", "SBILIFE"],
+  // Banks, NBFCs, insurers, AMCs, brokers, and capital-market infrastructure —
+  // depositories (CDSL/NSDL), exchanges (BSE/MCX), and registrars/RTAs
+  // (CAMS/KFINTECH) are all financials, not consumer.
+  financials:  ["HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK", "AXISBANK", "BAJFINANCE",
+                "BAJAJFINSV", "INDUSINDBK", "SBILIFE", "HDFCLIFE", "ICICIPRULI", "ICICIGI",
+                "HDFCAMC", "CAMS", "KFINTECH", "CDSL", "BSE", "MCX", "ANGELONE",
+                "MUTHOOTFIN", "CHOLAFIN", "SHRIRAMFIN", "PFC", "RECLTD"],
   consumer:    ["HINDUNILVR", "ITC", "NESTLEIND", "TITAN", "MARUTI", "TATAMOTORS", "M&M", "BRITANNIA"],
   industrials: ["LT", "ADANIPORTS", "SIEMENS", "BEL", "HAL", "ABB", "BHEL", "GRASIM"],
 };
