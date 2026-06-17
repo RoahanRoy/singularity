@@ -33,6 +33,7 @@ export type EdgarFiling = {
   source_url: string;     // index page
   primary_doc_url: string;
   raw_excerpt: string;    // first N chars of plaintext, UNTRUSTED
+  industry?: string;      // exchange-reported industry label, when available
 };
 
 async function fetchSec(url: string): Promise<Response> {

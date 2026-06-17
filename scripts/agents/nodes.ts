@@ -18,7 +18,7 @@ import { db, DB, ID, Query, emit, setStatus, ensureAgent, recountClusters, write
 import { fetchLatestFiling, type EdgarFiling } from "./edgar";
 import { fetchLatestIndiaFiling } from "./india";
 import { fetchTranscript } from "./transcript";
-import { sectorOf, indiaSectorOf, type Sector } from "./universe";
+import { sectorOf, indiaSectorOf, sectorFromIndustry, type Sector } from "./universe";
 
 const AUTO_APPROVE = process.env.MERIDIAN_AUTO_APPROVE === "1";
 const BUDGET_DAILY_LIMIT_USD = Number(process.env.MERIDIAN_BUDGET_DAILY_USD || 25);
@@ -138,6 +138,12 @@ export type Ctx = {
   agentIds: Record<string, string>;
   /** Which desk this cycle belongs to. Defaults to "US". */
   market?: "US" | "IN";
+  /**
+   * Sector resolved from the listing venue's own industry tag (NSE smIndustry),
+   * set by the parser. The analyst prefers this over the curated ticker map so
+   * names outside our hand-maintained universe still route to the right desk.
+   */
+  sector?: Sector;
 };
 
 // 1. Filing pipeline ---------------------------------------------------------
@@ -246,6 +252,13 @@ export async function parser(ctx: Ctx): Promise<Ctx> {
     excerpt_chars: edgar.raw_excerpt.length,
   });
 
+  // Resolve the analyst sector from the venue's own industry tag when present
+  // (primary), falling back to the curated ticker map downstream in analyst().
+  const sector = sectorFromIndustry(edgar.industry) ?? undefined;
+  if (sector) {
+    await emit(id, "thought", `Sector ${sector} for ${ctx.ticker} (via industry "${edgar.industry}")`);
+  }
+
   const { summary, highlights } = await summarize(edgar);
   await emit(id, "thought", `Summarized ${edgar.form_type} for ${ctx.ticker}`, { highlights });
 
@@ -254,6 +267,7 @@ export async function parser(ctx: Ctx): Promise<Ctx> {
 
   return {
     ...ctx,
+    sector: sector ?? ctx.sector,
     filing: {
       id: filingId,
       form_type: edgar.form_type,
@@ -273,7 +287,9 @@ export const _filingPipeline = { edgarReader, summarize, indexFiling };
 // distinct row in the `agents` collection so the Swarm screen shows them
 // separately. The orchestrator picks the right analyst from `sectorOf(ticker)`.
 export async function analyst(ctx: Ctx, reviseConcerns?: string[]): Promise<Ctx> {
-  const sector = ctx.market === "IN" ? indiaSectorOf(ctx.ticker) : sectorOf(ctx.ticker);
+  // Prefer the sector the parser resolved from the venue's industry tag; fall
+  // back to the curated ticker map (now correct for market-infra names).
+  const sector = ctx.sector ?? (ctx.market === "IN" ? indiaSectorOf(ctx.ticker) : sectorOf(ctx.ticker));
   const id = ctx.agentIds[SECTOR_AGENT_ID_KEY[sector]] ?? ctx.agentIds.analyst_tech;
   const prompt = loadPrompt(SECTOR_PROMPT[sector]);
   await setStatus(id, "thinking");

@@ -103,13 +103,33 @@ function toIsoDate(dt?: string): string {
   return Number.isNaN(d.getTime()) ? new Date().toISOString().slice(0, 10) : d.toISOString().slice(0, 10);
 }
 
+// How "material" an announcement category is, for ranking. Procedural notices
+// (trading-window closures, board-meeting intimations) carry no fundamental
+// signal on their own, so a single one of them would starve the analyst. We
+// surface a DIGEST of recent disclosures and lead with the most material.
+function materiality(desc: string): number {
+  const d = desc.toLowerCase();
+  if (/financial result|outcome of board|earnings|quarterly result/.test(d)) return 100;
+  if (/investor|analyst|press release|presentation|conference call|transcript/.test(d)) return 80;
+  if (/acquisition|merger|amalgamation|order|contract|capacity|expansion|fund rais|dividend|buyback|bonus/.test(d)) return 70;
+  if (/credit rating|agreement|joint venture|subsidiary|allotment/.test(d)) return 50;
+  if (/trading window|board meeting|loss of|duplicate|newspaper|record date|book closure/.test(d)) return 10;
+  return 30;
+}
+
 /**
- * Fetch the most recent corporate announcement for an NSE-listed symbol and
- * return it in the same shape edgarReader produces, so the downstream
+ * Fetch recent corporate announcements for an NSE-listed symbol and return a
+ * DIGEST in the same shape edgarReader produces, so the downstream
  * summarize → indexFiling → analyst chain is unchanged.
  *
- * `form_type` is the fixed token "NSE-ANNC" (not "NSE-RESULT"), which routes
- * the excerpt through the standard filing-summarizer — it is real, untrusted
+ * Why a digest, not just the latest: most NSE announcements are procedural
+ * (trading-window closures, board-meeting intimations). Feeding only the newest
+ * one frequently hands the analyst nothing to underwrite. We instead surface the
+ * most material recent disclosures (results, presentations, M&A, ratings) so the
+ * desk reasons over the real recent disclosure flow.
+ *
+ * `form_type` is the fixed token "NSE-ANNC" (not "NSE-RESULT"), which routes the
+ * excerpt through the standard filing-summarizer — it is real, untrusted
  * announcement text, exactly what that summarizer expects. The "NSE-RESULT"
  * sentinel is reserved for the LLM-only fallback path in edgarReader.
  *
@@ -125,12 +145,29 @@ export async function fetchLatestIndiaFiling(ticker: string, excerptChars = 1200
   annc.sort((a, b) => (b.sort_date ?? b.an_dt ?? "").localeCompare(a.sort_date ?? a.an_dt ?? ""));
   const top = annc[0];
 
-  const subject = cleanText(top.desc ?? "Corporate announcement");
-  const body = cleanText(top.attchmntText || top.bdp_descr || "");
-  const industry = top.smIndustry ? `Industry: ${cleanText(top.smIndustry)}. ` : "";
+  // NSE's own industry classification, where present (often blank for newer or
+  // market-infrastructure names). Prefer the most recent record that carries it.
+  const industry = cleanText(annc.find((a) => a.smIndustry)?.smIndustry ?? "");
+  const industryLine = industry ? `Industry: ${industry}.\n` : "";
+
+  // Take the most recent ~15 announcements, then order by materiality so the
+  // summarizer leads with substance, not the latest procedural notice.
+  const recent = annc.slice(0, 15);
+  recent.sort((a, b) => materiality(b.desc ?? "") - materiality(a.desc ?? ""));
+  const lines = recent
+    .map((a) => {
+      const date = toIsoDate(a.an_dt || a.sort_date);
+      const subj = cleanText(a.desc ?? "Announcement");
+      const text = cleanText(a.attchmntText || a.bdp_descr || "");
+      return `- [${date}] ${subj}${text ? `: ${text}` : ""}`;
+    })
+    .join("\n");
+
   const excerpt =
-    `[NSE corporate announcement — ${symbol}] ${industry}Subject: ${subject}. ${body}`.slice(0, excerptChars) ||
-    `[NSE corporate announcement — ${symbol}] ${subject}`;
+    `[NSE corporate-announcements digest — ${symbol}]\n${industryLine}Most material recent disclosures:\n${lines}`.slice(
+      0,
+      excerptChars,
+    );
 
   return {
     ticker: symbol,
@@ -140,5 +177,6 @@ export async function fetchLatestIndiaFiling(ticker: string, excerptChars = 1200
     source_url: `${NSE_HOME}/companies-listing/corporate-filings-announcements?symbol=${encodeURIComponent(symbol)}`,
     primary_doc_url: top.attchmntFile || "nse-announcement://no-attachment",
     raw_excerpt: excerpt,
+    industry: industry || undefined,
   };
 }
