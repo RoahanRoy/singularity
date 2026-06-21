@@ -938,6 +938,21 @@
   align-items: center;
   gap: 12px;
 }
+.lp-nav-howlink {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-1);
+  white-space: nowrap;
+  transition: color 0.25s var(--ease);
+}
+.lp-nav-howlink:hover {
+  color: var(--teal-bright);
+}
+@media (max-width: 720px) {
+  .lp-nav-howlink { display: none; }
+}
 .lp-themetoggle {
   display: inline-flex;
   align-items: center;

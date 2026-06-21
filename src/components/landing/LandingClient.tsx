@@ -202,6 +202,9 @@ export default function LandingClient() {
           ))}
         </div>
         <div className="lp-nav-right">
+          <a className="lp-nav-howlink" href="/how-it-works">
+            How it works
+          </a>
           <button
             type="button"
             className="lp-themetoggle"
@@ -434,6 +437,11 @@ export default function LandingClient() {
                 </div>
               ))}
             </div>
+            <div className="lp-hero-cta" style={{ marginTop: 40 }} data-reveal>
+              <a className="lp-btn" href="/how-it-works">
+                See every agent &amp; loop in detail →
+              </a>
+            </div>
           </div>
         </section>
 
@@ -468,6 +476,7 @@ export default function LandingClient() {
               <div className="lp-footer-cols">
                 <div className="lp-fcol">
                   <h5>Navigate</h5>
+                  <a href="/how-it-works">How it works</a>
                   <a href="#approach">Approach</a>
                   <a href="#platform">Platform</a>
                   <a href="#research">Research</a>
