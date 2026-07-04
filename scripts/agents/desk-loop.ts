@@ -33,7 +33,7 @@ import { db, DB, Query } from "./appwrite";
 import {
   parser, analyst, quant, critic, valuation, cio,
   pm, treasury, risk, riskOverlay, compliance, smartRouter, broker, tca, attribution,
-  budgetController,
+  budgetController, sweepApprovedMemos,
   type Ctx,
 } from "./nodes";
 
@@ -120,6 +120,10 @@ export async function runDesk(config: DeskConfig): Promise<void> {
 
   async function runCycle(agentIds: AgentIds): Promise<void> {
     await refreshHoldings();
+    // Execute any trades the operator approved since the last cycle (no LLM —
+    // uses the sizing persisted when the broker held the fill).
+    const executed = await sweepApprovedMemos(market, agentIds);
+    if (executed > 0) console.log(`[${key}] executed ${executed} operator-approved trade(s)`);
     const held = await heldTickers();
     const ticker = config.nextTicker(held);
     const sector = config.sectorOf(ticker);

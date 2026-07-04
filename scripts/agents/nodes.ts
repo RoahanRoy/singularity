@@ -516,8 +516,11 @@ Filing summary it cites: ${ctx.filing?.summary ?? "n/a"}`,
   return { ...ctx, critique };
 }
 
-// Review gate: stops the chain unless conviction × score clears the bar
-// or operator has set MERIDIAN_AUTO_APPROVE=1.
+// Review gate: kills a critic-rejected thesis and stages a low-conviction one,
+// but a thesis that clears the bar now PROCEEDS through full sizing/analysis.
+// Whether the sized trade auto-executes or holds for operator approval is
+// decided at the broker (based on MERIDIAN_AUTO_APPROVE), so the operator can
+// review a fully-sized, risk-cleared proposal rather than a bare thesis.
 async function reviewGate(ctx: Ctx): Promise<boolean> {
   const id = ctx.agentIds.pm;
   const verdict = ctx.critique?.verdict;
@@ -533,17 +536,10 @@ async function reviewGate(ctx: Ctx): Promise<boolean> {
   const adjusted = conv * score;
   if (adjusted < 0.4) {
     await emit(id, "alert", `STAGED ${ctx.ticker} for operator review (adjusted score ${adjusted.toFixed(2)} < 0.4)`);
-    return false;
-  }
-
-  if (!AUTO_APPROVE) {
-    await emit(id, "handoff",
-      `${ctx.ticker} awaiting operator approval. Set MERIDIAN_AUTO_APPROVE=1 to auto-execute.`);
     if (ctx.memoId) await db.updateDocument(DB, "memos", ctx.memoId, { status: "review" });
     return false;
   }
 
-  if (ctx.memoId) await db.updateDocument(DB, "memos", ctx.memoId, { status: "approved" });
   return true;
 }
 
@@ -914,25 +910,26 @@ async function bookPaperBuy(ticker: string, qty: number, price: number, market: 
   );
 }
 
-export async function broker(ctx: Ctx): Promise<Ctx> {
-  const id = ctx.agentIds.broker;
-  if (!ctx.compliance?.approved || !ctx.preTrade?.allowed) return ctx;
-  await setStatus(id, "executing");
-
-  const market = ctx.market ?? "US";
-  const qty = ctx.size!.qty;
-  // Real quote, deterministic stub only if the provider is unavailable.
-  const quoted = await getQuote(ctx.ticker, market);
-  const price = Number((quoted ?? stubPrice(ctx.ticker)).toFixed(2));
-  const venue = ctx.route?.venue ? `paper-${ctx.route.venue}` : "paper-IBKR";
+/**
+ * Record a paper BUY fill: real quote (stub fallback), a trades row, and the
+ * paper-book update. Shared by the auto-execute path and the operator-approved
+ * execution path so both fill identically.
+ */
+async function fillPaperTrade(
+  input: { ticker: string; qty: number; market: "US" | "IN"; venue?: string | null; agentId: string },
+): Promise<{ id: string; fill_price: number; quoted: boolean }> {
+  const { ticker, qty, market } = input;
+  const quoted = await getQuote(ticker, market);
+  const price = Number((quoted ?? stubPrice(ticker)).toFixed(2));
+  const venue = input.venue ? `paper-${input.venue}` : "paper-IBKR";
 
   const trade = await db.createDocument(DB, "trades", ID.unique(), {
-    ticker: ctx.ticker,
+    ticker: ticker.toUpperCase(),
     side: "buy",
     qty,
     price,
     venue: venue.slice(0, 32),
-    agent_id: id,
+    agent_id: input.agentId,
     status: "filled",
     filled_at: new Date().toISOString(),
     market,
@@ -941,16 +938,123 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
   // Reflect the fill in the paper book. Best-effort: a booking failure must not
   // undo a recorded fill, so we log and continue.
   try {
-    await bookPaperBuy(ctx.ticker, qty, price, market);
+    await bookPaperBuy(ticker, qty, price, market);
   } catch (err) {
-    console.warn(`[broker] paper book update failed for ${ctx.ticker}:`, (err as Error).message);
+    console.warn(`[broker] paper book update failed for ${ticker}:`, (err as Error).message);
   }
 
+  return { id: trade.$id, fill_price: price, quoted: quoted != null };
+}
+
+export async function broker(ctx: Ctx): Promise<Ctx> {
+  const id = ctx.agentIds.broker;
+  if (!ctx.compliance?.approved || !ctx.preTrade?.allowed) return ctx;
+
+  const market = ctx.market ?? "US";
+  const qty = ctx.size!.qty;
+
+  // Human-in-the-loop: unless AUTO_APPROVE is on, hold the fill for operator
+  // approval. The trade is fully sized, funded, risk-cleared and routed at this
+  // point; we persist that decision on the memo so approval can execute the
+  // fill without re-running the LLM chain. tca/attribution are skipped until the
+  // fill actually happens (they guard on ctx.trade).
+  if (!AUTO_APPROVE) {
+    const pending = {
+      qty,
+      weight_pct: ctx.size?.weight_pct ?? null,
+      venue: ctx.route?.venue ?? null,
+      algo: ctx.route?.algo ?? null,
+      conviction: ctx.memo?.conviction ?? null,
+    };
+    if (ctx.memoId) {
+      await db.updateDocument(DB, "memos", ctx.memoId, {
+        status: "review",
+        pending_exec_json: JSON.stringify(pending).slice(0, 2048),
+      });
+    }
+    await emit(id, "handoff",
+      `HOLD BUY ${qty} ${ctx.ticker} — awaiting operator approval (set MERIDIAN_AUTO_APPROVE=1 to auto-execute)`,
+      { pending, memo_id: ctx.memoId });
+    await setStatus(id, "idle");
+    return ctx; // no trade → tca/attribution no-op this cycle
+  }
+
+  await setStatus(id, "executing");
+  const f = await fillPaperTrade({ ticker: ctx.ticker, qty, market, venue: ctx.route?.venue, agentId: id });
+  if (ctx.memoId) {
+    await db.updateDocument(DB, "memos", ctx.memoId, { status: "executed", pending_exec_json: null });
+  }
   await emit(id, "trade",
-    `FILL BUY ${qty} ${ctx.ticker} @ ${price.toFixed(2)}${quoted ? "" : " (stub)"} via ${ctx.route?.algo ?? "default"}`,
-    { trade_id: trade.$id, route: ctx.route, quoted: quoted != null });
+    `FILL BUY ${qty} ${ctx.ticker} @ ${f.fill_price.toFixed(2)}${f.quoted ? "" : " (stub)"} via ${ctx.route?.algo ?? "default"}`,
+    { trade_id: f.id, route: ctx.route, quoted: f.quoted });
   await setStatus(id, "idle");
-  return { ...ctx, trade: { id: trade.$id, status: "filled", fill_price: price } };
+  return { ...ctx, trade: { id: f.id, status: "filled", fill_price: f.fill_price } };
+}
+
+// Operator approval execution -----------------------------------------------
+//
+// Runs on the laptop loop (where `claude login` lives) — the UI can only flip a
+// memo to "approved" (serverless has no broker/quote access). This executes a
+// memo the operator approved, using the sizing persisted at hold time. No LLM:
+// the analysis already happened; this is just the fill + book + records.
+
+type ApprovableMemo = {
+  $id: string;
+  ticker: string | null;
+  market?: "US" | "IN" | null;
+  pending_exec_json?: string | null;
+};
+
+async function executeApproved(memo: ApprovableMemo, agentIds: Record<string, string>): Promise<boolean> {
+  if (!memo.ticker || !memo.pending_exec_json) return false;
+  let pending: { qty?: number; venue?: string | null };
+  try {
+    pending = JSON.parse(memo.pending_exec_json);
+  } catch {
+    console.warn(`[sweep] memo ${memo.$id} has unparseable pending_exec_json — skipping`);
+    return false;
+  }
+  const qty = Number(pending.qty) || 0;
+  if (qty <= 0) return false;
+
+  const market = memo.market ?? "US";
+  const id = agentIds.broker;
+  await setStatus(id, "executing");
+  const f = await fillPaperTrade({ ticker: memo.ticker, qty, market, venue: pending.venue, agentId: id });
+  await db.updateDocument(DB, "memos", memo.$id, { status: "executed", pending_exec_json: null });
+  await writeAudit("broker", "approved_execution", memo.ticker, "allow",
+    `Operator-approved fill: BUY ${qty} ${memo.ticker} @ ${f.fill_price}${f.quoted ? "" : " (stub)"}`);
+  await emit(id, "trade",
+    `APPROVED FILL BUY ${qty} ${memo.ticker} @ ${f.fill_price.toFixed(2)}`,
+    { trade_id: f.id, memo_id: memo.$id });
+  await setStatus(id, "idle");
+  return true;
+}
+
+/**
+ * Execute any memos the operator has approved for this desk. Called at the top
+ * of each loop cycle. Returns how many fills it booked.
+ */
+export async function sweepApprovedMemos(market: "US" | "IN", agentIds: Record<string, string>): Promise<number> {
+  let n = 0;
+  try {
+    const res = await db.listDocuments(DB, "memos", [
+      Query.equal("status", "approved"),
+      Query.equal("market", market),
+      Query.limit(25),
+    ]);
+    for (const m of res.documents as unknown as ApprovableMemo[]) {
+      if (!m.pending_exec_json) continue; // approved but nothing to execute (e.g. a flagged thesis)
+      try {
+        if (await executeApproved(m, agentIds)) n++;
+      } catch (err) {
+        console.warn(`[sweep] execute failed for memo ${m.$id}:`, (err as Error).message);
+      }
+    }
+  } catch (err) {
+    console.warn(`[sweep] could not read approved memos:`, (err as Error).message);
+  }
+  return n;
 }
 
 // 8. TCA --------------------------------------------------------------------
