@@ -36,6 +36,7 @@ import {
   budgetController, sweepApprovedMemos,
   type Ctx,
 } from "./nodes";
+import { marketState } from "./market-hours";
 
 export type DeskConfig = {
   /** Short tag used for log lines and env-var prefixing (e.g. "tech", "india"). */
@@ -63,6 +64,11 @@ export async function runDesk(config: DeskConfig): Promise<void> {
   const RUN_ONCE = process.env[`${envPrefix}_ONCE`] === "1";
   const INTERVAL_MS = Number(process.env[`${envPrefix}_INTERVAL_MS`] || 60_000);
   const ERROR_BACKOFF_MS = Number(process.env[`${envPrefix}_ERROR_BACKOFF_MS`] || 15_000);
+  // Trade only during the desk's regular session. When closed we don't run
+  // cycles (no stale-price fills, no wasted tokens); we re-check on this cadence
+  // so we resume promptly at the open. RUN_ONCE ignores hours (manual test).
+  const IGNORE_HOURS = process.env.MERIDIAN_IGNORE_MARKET_HOURS === "1";
+  const CLOSED_POLL_MS = Number(process.env[`${envPrefix}_CLOSED_POLL_MS`] || 10 * 60_000);
   const SYNC_BASE = (
     process.env.MERIDIAN_SYNC_BASE || config.syncBaseFallback || "http://localhost:3000"
   ).replace(/\/$/, "");
@@ -162,7 +168,25 @@ export async function runDesk(config: DeskConfig): Promise<void> {
 
   console.log(`[${key}] continuous mode — base ${INTERVAL_MS}ms between cycles (${envPrefix}_ONCE=1 for a single run)`);
   let throttleMs = 0;
+  let wasClosed = false;
   while (!stopping) {
+    // Market-hours gate — skip cycles when the desk's session is closed.
+    if (!IGNORE_HOURS) {
+      const state = marketState(market);
+      if (!state.open) {
+        if (!wasClosed) {
+          console.log(`[${key}] market closed (${state.label}) — pausing trading; re-checking every ${Math.round(CLOSED_POLL_MS / 60_000)}m (MERIDIAN_IGNORE_MARKET_HOURS=1 to override)`);
+          wasClosed = true;
+        }
+        await sleep(CLOSED_POLL_MS);
+        continue;
+      }
+      if (wasClosed) {
+        console.log(`[${key}] market open — resuming trading`);
+        wasClosed = false;
+      }
+    }
+
     // Budget gate — runs every cycle, can throttle or kill the loop.
     try {
       const verdict = await budgetController(agentIds);
