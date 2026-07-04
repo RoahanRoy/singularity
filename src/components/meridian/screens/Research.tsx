@@ -45,6 +45,17 @@ function parseEntities(raw: string | null | undefined): MemoEntity[] | null {
   }
 }
 
+type Pending = { qty?: number; weight_pct?: number | null; venue?: string | null; algo?: string | null };
+function parsePending(raw: string | null | undefined): Pending | null {
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw);
+    return p && typeof p === "object" ? (p as Pending) : null;
+  } catch {
+    return null;
+  }
+}
+
 type Doc = { id: string; src: string; tk: string; ttl: string; when: string; held?: boolean };
 
 const FALLBACK_DOCS_US: Doc[] = [
@@ -164,6 +175,27 @@ function FilingDetail({ filing }: { filing: Filing }) {
     return () => { cancelled = true; };
   }, [filing.$id]);
 
+  const [busyId, setBusyId] = useState<string | null>(null);
+  async function actOnMemo(memoId: string, action: "approve" | "reject") {
+    setBusyId(memoId);
+    try {
+      const res = await fetch("/api/memos/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memoId, action }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { status?: string; error?: string };
+      if (res.ok) {
+        const next = j.status ?? (action === "approve" ? "approved" : "rejected");
+        setMemos((prev) => prev?.map((m) => (m.$id === memoId ? { ...m, status: next as Memo["status"] } : m)) ?? prev);
+      } else {
+        console.warn("memo action failed:", j.error);
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const parsed = (() => {
     try { return new URL(filing.source_url); } catch { return null; }
   })();
@@ -228,6 +260,54 @@ function FilingDetail({ filing }: { filing: Filing }) {
           <p style={{ fontFamily: "var(--serif)", fontSize: 13, lineHeight: 1.55, color: "var(--ink-1)", margin: 0 }}>
             {m.thesis}
           </p>
+          {m.status === "review" && m.pending_exec_json && (() => {
+            const p = parsePending(m.pending_exec_json);
+            return (
+              <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px dashed var(--line)" }}>
+                <div style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--ink-2)", marginBottom: 8 }}>
+                  Staged: BUY {p?.qty ?? "?"} {m.ticker ?? ""}
+                  {p?.weight_pct != null ? ` · ${Number(p.weight_pct).toFixed(2)}%` : ""}
+                  {p?.venue ? ` · ${p.venue}` : ""}{p?.algo ? `/${p.algo}` : ""}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => actOnMemo(m.$id, "approve")}
+                    disabled={busyId === m.$id}
+                    style={{
+                      fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase",
+                      padding: "6px 12px", cursor: busyId === m.$id ? "wait" : "pointer",
+                      color: "var(--bg-0)", background: "var(--md-accent)", border: "1px solid var(--md-accent)",
+                      opacity: busyId === m.$id ? 0.6 : 1,
+                    }}
+                  >
+                    {busyId === m.$id ? "…" : "Approve & execute"}
+                  </button>
+                  <button
+                    onClick={() => actOnMemo(m.$id, "reject")}
+                    disabled={busyId === m.$id}
+                    style={{
+                      fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase",
+                      padding: "6px 12px", cursor: busyId === m.$id ? "wait" : "pointer",
+                      color: "var(--red)", background: "transparent", border: "1px solid var(--red)",
+                      opacity: busyId === m.$id ? 0.6 : 1,
+                    }}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+          {m.status === "approved" && (
+            <div style={{ marginTop: 10, fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--md-accent)" }}>
+              Approved — awaiting desk execution
+            </div>
+          )}
+          {m.status === "executed" && (
+            <div style={{ marginTop: 10, fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--cyan)" }}>
+              Executed
+            </div>
+          )}
         </div>
       ))}
     </div>
