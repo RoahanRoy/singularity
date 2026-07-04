@@ -504,6 +504,14 @@
                     "array": false,
                     "encrypt": false,
                     "default": "US"
+                },
+                {
+                    "key": "pending_exec_json",
+                    "type": "string",
+                    "size": 2048,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
                 }
             ],
             "indexes": [

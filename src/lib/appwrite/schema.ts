@@ -79,11 +79,18 @@ export type Memo = Base & {
   thesis: string;
   conviction: number;
   author_agent_id: string;
-  status: "draft" | "review" | "approved" | "rejected";
+  status: "draft" | "review" | "approved" | "rejected" | "executed";
   vector_id: string | null;
   entities_json: string | null;
   filing_id: string | null;
   market?: Market | null;
+  /**
+   * Set when the chain sizes+clears a trade but holds it for operator approval
+   * (AUTO_APPROVE off). Carries the sized decision so approval can execute the
+   * fill without re-running the LLM analysis chain. JSON: { qty, weight_pct,
+   * venue, algo, conviction }.
+   */
+  pending_exec_json?: string | null;
 };
 
 export type MemoEntity = {
