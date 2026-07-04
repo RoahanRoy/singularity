@@ -26,6 +26,11 @@ const BUDGET_DAILY_LIMIT_USD = Number(process.env.MERIDIAN_BUDGET_DAILY_USD || 2
 // On a Pro/Max plan you pay nothing per call, so we cap actual token throughput
 // rather than the SDK's API-equivalent dollars. Default ~5M tokens/day.
 const BUDGET_DAILY_TOKENS = Number(process.env.MERIDIAN_BUDGET_DAILY_TOKENS || 5_000_000);
+// The budget controller's LLM reasoning pass is expensive to run every cycle
+// (once per ~60s loop). Run it at most this often; between passes the fresh
+// deterministic clamp still gates every cycle, and we reuse the last agent
+// verdict so an early throttle keeps holding. Default 15 min.
+const BUDGET_LLM_INTERVAL_MS = Number(process.env.MERIDIAN_BUDGET_LLM_INTERVAL_MS || 15 * 60_000);
 const fmtTok = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
 
@@ -417,6 +422,11 @@ export async function analyst(ctx: Ctx, reviseConcerns?: string[]): Promise<Ctx>
 // Reads a transcript (currently stubbed — always returns "unavailable") and
 // produces a tone-and-deflection signal. The analyst node consumes this on
 // the next pass. Runs BEFORE the analyst so the memo can cite the tone.
+//
+// DORMANT: unhooked from both loop chains — while fetchTranscript() is a
+// permanent stub, this only burns one LLM call per cycle to produce a neutral
+// shape. analyst/quant already handle a missing ctx.transcript (the "n/a"
+// branch). Re-add it to the chains once a real transcript provider is wired.
 export async function earningsReview(ctx: Ctx): Promise<Ctx> {
   const id = ctx.agentIds.earningsReviewer;
   const prompt = loadPrompt("earnings-reviewer");
@@ -966,6 +976,11 @@ export async function attribution(ctx: Ctx): Promise<Ctx> {
 // API-equivalent dollars, which you don't actually pay on a Pro/Max plan.
 const SEVERITY: Record<"allow" | "throttle" | "kill", number> = { allow: 0, throttle: 1, kill: 2 };
 
+// Cache of the last LLM reasoning pass, reused between passes so we don't burn
+// a call every cycle. The deterministic clamp is recomputed from fresh ledger
+// data on every call, so this cache never loosens the hard bands.
+let lastBudgetLlm = { at: 0, verdict: "allow" as "allow" | "throttle" | "kill", next: 30, reasoning: "" };
+
 export async function budgetController(
   agentIds: Record<string, string>,
 ): Promise<NonNullable<Ctx["budget"]>> {
@@ -998,11 +1013,15 @@ export async function budgetController(
 
   // Reasoning pass: let the controller agent weigh the breakdown and decide.
   // Skipped once we are already at the hard kill — a kill switch that burns
-  // tokens to confirm it should kill is self-defeating.
+  // tokens to confirm it should kill is self-defeating. Also skipped when a
+  // pass ran within BUDGET_LLM_INTERVAL_MS: we reuse the cached agent verdict
+  // (the fresh clamp below still gates every cycle, so this only affects the
+  // agent's discretionary early-throttle, never the hard bands).
   let llmVerdict: "allow" | "throttle" | "kill" = clamp;
   let llmNext = clamp === "allow" ? 30 : clamp === "throttle" ? 15 : 0;
   let reasoning = "";
-  if (clamp !== "kill") {
+  const dueForLlm = Date.now() - lastBudgetLlm.at >= BUDGET_LLM_INTERVAL_MS;
+  if (clamp !== "kill" && dueForLlm) {
     try {
       const prompt = loadPrompt("budget-controller");
       const byCat = Object.entries(tokByCat)
@@ -1020,10 +1039,17 @@ export async function budgetController(
       if (j.verdict === "allow" || j.verdict === "throttle" || j.verdict === "kill") llmVerdict = j.verdict;
       if (Number.isFinite(j.next_check_minutes)) llmNext = j.next_check_minutes;
       reasoning = j.reasoning ?? "";
+      lastBudgetLlm = { at: Date.now(), verdict: llmVerdict, next: llmNext, reasoning };
     } catch (err) {
       // On any failure, fall back to the deterministic clamp (fail-safe, not fail-open).
       console.warn(`[budget] reasoning pass failed, using clamp:`, (err as Error).message);
     }
+  } else if (clamp !== "kill") {
+    // Between reasoning passes: reuse the last agent verdict so a prior early
+    // throttle keeps holding. Still floored by the fresh clamp below.
+    llmVerdict = lastBudgetLlm.verdict;
+    llmNext = lastBudgetLlm.next;
+    reasoning = lastBudgetLlm.reasoning ? `${lastBudgetLlm.reasoning} (cached)` : "";
   }
 
   // Final verdict = the MORE conservative of clamp and the agent's call.
