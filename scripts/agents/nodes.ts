@@ -18,6 +18,7 @@ import { db, DB, ID, Query, emit, setStatus, ensureAgent, recountClusters, write
 import { fetchLatestFiling, type EdgarFiling } from "./edgar";
 import { fetchLatestIndiaFiling } from "./india";
 import { fetchTranscript } from "./transcript";
+import { getQuote, stubPrice } from "./quotes";
 import { sectorOf, indiaSectorOf, sectorFromIndustry, type Sector } from "./universe";
 
 const AUTO_APPROVE = process.env.MERIDIAN_AUTO_APPROVE === "1";
@@ -355,6 +356,7 @@ export async function parser(ctx: Ctx): Promise<Ctx> {
 
 // Internals exported for unit testing / future composition.
 export const _filingPipeline = { edgarReader, summarize, indexFiling, findFiling };
+export const _paperBook = { paperPositions, bookPaperBuy };
 
 // 2. Sector Analyst ---------------------------------------------------------
 //
@@ -837,29 +839,118 @@ export async function smartRouter(ctx: Ctx): Promise<Ctx> {
 }
 
 // 7. Paper Broker -----------------------------------------------------------
+//
+// Fills a compliance-cleared BUY at a real quote (falling back to a
+// deterministic stub if the provider is down) and books it into the PAPER
+// positions book — rows with no brokerage account id, so a live IBKR/Kite sync
+// (which only deletes rows scoped to its own account) never clobbers them and
+// the two coexist as one combined book.
+
+type PaperPosition = {
+  $id: string;
+  ticker: string;
+  qty: number;
+  avg_cost: number;
+  market_value: number;
+  ibkr_account_id?: string | null;
+  kite_account_id?: string | null;
+};
+
+/** Paper rows for a market: positions with neither brokerage account id set. */
+async function paperPositions(market: "US" | "IN"): Promise<PaperPosition[]> {
+  const res = await db.listDocuments(DB, "positions", [
+    Query.equal("market", market),
+    Query.limit(200),
+  ]);
+  return (res.documents as unknown as PaperPosition[]).filter(
+    (p) => !p.ibkr_account_id && !p.kite_account_id,
+  );
+}
+
+/**
+ * Book a paper BUY: add to (or open) the ticker's paper position at `price`,
+ * then renormalise weights across the paper book for that market so the risk
+ * overlay and portfolio screen see a consistent book.
+ */
+async function bookPaperBuy(ticker: string, qty: number, price: number, market: "US" | "IN"): Promise<void> {
+  const book = await paperPositions(market);
+  const existing = book.find((p) => p.ticker.toUpperCase() === ticker.toUpperCase());
+
+  if (existing) {
+    const newQty = existing.qty + qty;
+    const newAvg = newQty > 0 ? (existing.qty * existing.avg_cost + qty * price) / newQty : price;
+    existing.qty = newQty;
+    existing.avg_cost = newAvg;
+    existing.market_value = newQty * price;
+    await db.updateDocument(DB, "positions", existing.$id, {
+      qty: newQty,
+      avg_cost: Number(newAvg.toFixed(4)),
+      market_value: Number((newQty * price).toFixed(2)),
+      unrealized_pnl: Number(((price - newAvg) * newQty).toFixed(2)),
+    });
+  } else {
+    const created = await db.createDocument(DB, "positions", ID.unique(), {
+      ticker: ticker.toUpperCase(),
+      qty,
+      avg_cost: Number(price.toFixed(4)),
+      market_value: Number((qty * price).toFixed(2)),
+      unrealized_pnl: 0,
+      weight: 0, // set by the renormalise pass below
+      factor_exposures_json: null,
+      market,
+    });
+    book.push({ $id: created.$id, ticker, qty, avg_cost: price, market_value: qty * price });
+  }
+
+  // Renormalise weights across the paper book (fractions in 0..1, matching the
+  // sync path). Small book, so writing each row per fill is cheap.
+  const gross = book.reduce((s, p) => s + Math.abs(p.market_value), 0) || 1;
+  await Promise.all(
+    book.map((p) =>
+      db.updateDocument(DB, "positions", p.$id, {
+        weight: Number((p.market_value / gross).toFixed(6)),
+      }).catch(() => {}),
+    ),
+  );
+}
+
 export async function broker(ctx: Ctx): Promise<Ctx> {
   const id = ctx.agentIds.broker;
   if (!ctx.compliance?.approved || !ctx.preTrade?.allowed) return ctx;
   await setStatus(id, "executing");
 
-  const price = 100 + Math.random() * 400;
+  const market = ctx.market ?? "US";
+  const qty = ctx.size!.qty;
+  // Real quote, deterministic stub only if the provider is unavailable.
+  const quoted = await getQuote(ctx.ticker, market);
+  const price = Number((quoted ?? stubPrice(ctx.ticker)).toFixed(2));
   const venue = ctx.route?.venue ? `paper-${ctx.route.venue}` : "paper-IBKR";
+
   const trade = await db.createDocument(DB, "trades", ID.unique(), {
     ticker: ctx.ticker,
     side: "buy",
-    qty: ctx.size!.qty,
-    price: Number(price.toFixed(2)),
+    qty,
+    price,
     venue: venue.slice(0, 32),
     agent_id: id,
     status: "filled",
     filled_at: new Date().toISOString(),
-    market: ctx.market ?? "US",
+    market,
   });
+
+  // Reflect the fill in the paper book. Best-effort: a booking failure must not
+  // undo a recorded fill, so we log and continue.
+  try {
+    await bookPaperBuy(ctx.ticker, qty, price, market);
+  } catch (err) {
+    console.warn(`[broker] paper book update failed for ${ctx.ticker}:`, (err as Error).message);
+  }
+
   await emit(id, "trade",
-    `FILL BUY ${ctx.size!.qty} ${ctx.ticker} @ ${price.toFixed(2)} via ${ctx.route?.algo ?? "default"}`,
-    { trade_id: trade.$id, route: ctx.route });
+    `FILL BUY ${qty} ${ctx.ticker} @ ${price.toFixed(2)}${quoted ? "" : " (stub)"} via ${ctx.route?.algo ?? "default"}`,
+    { trade_id: trade.$id, route: ctx.route, quoted: quoted != null });
   await setStatus(id, "idle");
-  return { ...ctx, trade: { id: trade.$id, status: "filled", fill_price: Number(price.toFixed(2)) } };
+  return { ...ctx, trade: { id: trade.$id, status: "filled", fill_price: price } };
 }
 
 // 8. TCA --------------------------------------------------------------------
