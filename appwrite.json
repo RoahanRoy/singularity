@@ -367,6 +367,14 @@
                     "encrypt": false
                 },
                 {
+                    "key": "summary",
+                    "type": "string",
+                    "size": 8192,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
                     "key": "market",
                     "type": "string",
                     "size": 4,

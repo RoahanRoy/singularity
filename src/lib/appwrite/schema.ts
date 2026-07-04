@@ -68,6 +68,8 @@ export type Filing = Base & {
   source_url: string;
   status: "queued" | "parsing" | "indexed" | "failed";
   vector_id: string | null;
+  /** Persisted filing summary — written once by the parser, reused thereafter. */
+  summary?: string | null;
   market?: Market | null;
 };
 

@@ -136,6 +136,12 @@ export type Ctx = {
   memoId?: string;
   reviseCount?: number;
   agentIds: Record<string, string>;
+  /**
+   * Set by the parser. False when the fetched disclosure was already summarized
+   * on an earlier cycle (nothing new to analyze), so the orchestrator can skip
+   * the rest of the chain instead of re-burning ~a dozen LLM calls on it.
+   */
+  needsAnalysis?: boolean;
   /** Which desk this cycle belongs to. Defaults to "US". */
   market?: "US" | "IN";
   /**
@@ -219,17 +225,45 @@ ${edgar.raw_excerpt}
   return extractJson<{ summary: string; highlights: string[] }>(raw);
 }
 
-async function indexFiling(edgar: EdgarFiling, summary: string, market: "US" | "IN" = "US"): Promise<string> {
+/** Max chars of summary we persist (matches the filings.summary attribute size). */
+const SUMMARY_MAX = 8192;
+
+type PriorFiling = { $id: string; summary?: string | null };
+
+/**
+ * Find a prior filings row for this exact disclosure, keyed by (ticker,
+ * source_url). Same dedup key ingest-held.ts uses, so a metadata-only row it
+ * created is found here and its summary filled in on first analysis.
+ */
+async function findFiling(ticker: string, sourceUrl: string): Promise<PriorFiling | null> {
+  const hit = await db.listDocuments(DB, "filings", [
+    Query.equal("ticker", ticker),
+    Query.equal("source_url", sourceUrl),
+    Query.limit(10),
+  ]);
+  const rows = hit.documents as unknown as PriorFiling[];
+  // Prefer a row that already carries a summary. Legacy duplicates from before
+  // dedup existed have no summary; picking one of those would needlessly
+  // re-summarize even though a summarized sibling is already on file.
+  return rows.find((r) => r.summary) ?? rows[0] ?? null;
+}
+
+/** Create a fresh filings row carrying its summary. */
+async function indexFiling(
+  edgar: EdgarFiling,
+  summary: string,
+  market: "US" | "IN" = "US",
+): Promise<string> {
   const doc = await db.createDocument(DB, "filings", ID.unique(), {
-    ticker: edgar.ticker,
+    ticker: edgar.ticker.toUpperCase(),
     form_type: edgar.form_type,
     filed_at: edgar.filed_at,
     source_url: edgar.source_url,
     status: "indexed",
     vector_id: null,
+    summary: summary.slice(0, SUMMARY_MAX),
     market,
   });
-  void summary;
   return doc.$id;
 }
 
@@ -246,6 +280,7 @@ export async function parser(ctx: Ctx): Promise<Ctx> {
     await setStatus(id, "blocked");
     throw err;
   }
+  const ticker = edgar.ticker.toUpperCase();
   await emit(id, "tool_call", `Fetched ${edgar.form_type} filed ${edgar.filed_at}`, {
     source_url: edgar.source_url,
     cik: edgar.cik,
@@ -259,15 +294,50 @@ export async function parser(ctx: Ctx): Promise<Ctx> {
     await emit(id, "thought", `Sector ${sector} for ${ctx.ticker} (via industry "${edgar.industry}")`);
   }
 
-  const { summary, highlights } = await summarize(edgar);
-  await emit(id, "thought", `Summarized ${edgar.form_type} for ${ctx.ticker}`, { highlights });
+  const market = ctx.market ?? "US";
 
-  const filingId = await indexFiling(edgar, summary, ctx.market ?? "US");
+  // Dedup: have we already seen and summarized this exact disclosure? If so,
+  // reuse the stored summary — skip the LLM summarize call AND signal the
+  // orchestrator to skip the downstream analysis chain (nothing new to say).
+  const prior = await findFiling(ticker, edgar.source_url);
+  if (prior?.summary) {
+    await emit(id, "thought", `No new disclosure for ${ticker} — reusing indexed summary`);
+    await setStatus(id, "idle");
+    return {
+      ...ctx,
+      sector: sector ?? ctx.sector,
+      needsAnalysis: false,
+      filing: {
+        id: prior.$id,
+        form_type: edgar.form_type,
+        filed_at: edgar.filed_at,
+        source_url: edgar.source_url,
+        summary: prior.summary,
+      },
+    };
+  }
+
+  // New disclosure (or a metadata-only row from ingest-held): summarize once.
+  const { summary, highlights } = await summarize(edgar);
+  await emit(id, "thought", `Summarized ${edgar.form_type} for ${ticker}`, { highlights });
+
+  let filingId: string;
+  if (prior) {
+    // Backfill the summary onto the existing metadata-only row.
+    await db.updateDocument(DB, "filings", prior.$id, {
+      summary: summary.slice(0, SUMMARY_MAX),
+      status: "indexed",
+    });
+    filingId = prior.$id;
+  } else {
+    filingId = await indexFiling(edgar, summary, market);
+  }
   await setStatus(id, "idle");
 
   return {
     ...ctx,
     sector: sector ?? ctx.sector,
+    needsAnalysis: true,
     filing: {
       id: filingId,
       form_type: edgar.form_type,
@@ -279,7 +349,7 @@ export async function parser(ctx: Ctx): Promise<Ctx> {
 }
 
 // Internals exported for unit testing / future composition.
-export const _filingPipeline = { edgarReader, summarize, indexFiling };
+export const _filingPipeline = { edgarReader, summarize, indexFiling, findFiling };
 
 // 2. Sector Analyst ---------------------------------------------------------
 //
