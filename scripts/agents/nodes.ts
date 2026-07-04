@@ -712,7 +712,14 @@ export async function riskOverlay(ctx: Ctx): Promise<Ctx> {
   await setStatus(id, "thinking");
   const limits = await ensureRiskLimits();
 
-  const positions = await db.listDocuments(DB, "positions", [Query.limit(200)]);
+  // Scope the book to this cycle's desk. Without the market filter a US cycle
+  // would count India names toward gross/name caps (and vice versa), since both
+  // desks share one limit set. Mirrors heldTickers() in the tech/india loops.
+  const market = ctx.market ?? "US";
+  const positions = await db.listDocuments(DB, "positions", [
+    Query.equal("market", market),
+    Query.limit(200),
+  ]);
   const held = positions.documents as unknown as Array<{ ticker: string; weight: number }>;
   // `weight` may be stored as a fraction (0..1) or a percent — normalise to pct.
   const toPct = (w: number) => (Math.abs(w) <= 1 ? w * 100 : w);
