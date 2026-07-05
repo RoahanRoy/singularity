@@ -11,13 +11,14 @@ export const dynamic = "force-dynamic";
  * GET  -> current mandates for both desks (null where not onboarded).
  * POST -> create or update a desk's mandate. Onboarding a new desk seeds
  *         cash = capital_base (nothing deployed yet); re-onboarding updates the
- *         posture/caps/capital base but preserves already-deployed cash — it
- *         never resets the book (that's a separate, explicit operator action).
+ *         posture/caps/capital base and preserves cash unless the operator sends
+ *         an explicit `cash` override to reconcile the book (clamped to base).
  *
  * POST { market: "US"|"IN", capital_base: number,
- *        risk_posture: "conservative"|"balanced"|"aggressive", note?: string }
+ *        risk_posture: "conservative"|"balanced"|"aggressive",
+ *        cash?: number, note?: string }
  */
-type Body = { market?: string; capital_base?: unknown; risk_posture?: string; note?: string };
+type Body = { market?: string; capital_base?: unknown; risk_posture?: string; note?: string; cash?: unknown };
 
 function isMarket(v: unknown): v is Market {
   return v === "US" || v === "IN";
@@ -54,12 +55,27 @@ export async function POST(req: Request) {
     return Response.json({ error: `capital_base must be a positive number, got ${JSON.stringify(body.capital_base)}` }, { status: 400 });
   }
 
+  // Optional undeployed-cash override (honored only when updating an existing
+  // mandate; upsertMandate clamps it to [0, capital_base]). Reject clearly if it
+  // exceeds the base so the operator sees why rather than a silent clamp.
+  let cash: number | undefined;
+  if (body.cash !== undefined && body.cash !== null && body.cash !== "") {
+    cash = Number(body.cash);
+    if (!Number.isFinite(cash) || cash < 0) {
+      return Response.json({ error: `cash must be a non-negative number, got ${JSON.stringify(body.cash)}` }, { status: 400 });
+    }
+    if (cash > capital) {
+      return Response.json({ error: `cash (${cash}) can't exceed capital_base (${capital})` }, { status: 400 });
+    }
+  }
+
   const { databases } = createAdminClient();
   const { mandate, created } = await upsertMandate(databases, DATABASE_ID, {
     market,
     capital_base: capital,
     risk_posture: posture,
     note: typeof body.note === "string" ? body.note.slice(0, 512) : undefined,
+    cash,
   });
 
   return Response.json({ ok: true, created, mandate });

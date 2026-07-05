@@ -58,6 +58,13 @@ export type OnboardInput = {
   capital_base: number;
   risk_posture: RiskPosture;
   note?: string;
+  /**
+   * Optional undeployed-cash override. Only honored when *updating* an existing
+   * mandate — it lets the operator reconcile the book's cash directly (e.g. after
+   * lowering the capital base) instead of editing the database by hand. Clamped
+   * to [0, capital_base]. Ignored on a fresh onboard, where cash = capital_base.
+   */
+  cash?: number;
 };
 
 /**
@@ -88,7 +95,13 @@ export async function upsertMandate(
   };
 
   if (existing) {
-    const doc = await db.updateDocument(dbId, COLLECTIONS.fund_mandate, existing.$id, base);
+    // Reconcile cash only when explicitly provided; clamp to [0, capital_base]
+    // so an override can never strand cash above the (possibly lowered) base.
+    const patch: Record<string, unknown> = { ...base };
+    if (typeof input.cash === "number" && Number.isFinite(input.cash)) {
+      patch.cash = Math.max(0, Math.min(input.capital_base, Number(input.cash.toFixed(2))));
+    }
+    const doc = await db.updateDocument(dbId, COLLECTIONS.fund_mandate, existing.$id, patch);
     return { mandate: doc as unknown as FundMandate, created: false };
   }
   const doc = await db.createDocument(dbId, COLLECTIONS.fund_mandate, ID.unique(), {

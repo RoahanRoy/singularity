@@ -45,6 +45,7 @@ export function FundMandatePanel({ market }: { market: Market }) {
   const [loaded, setLoaded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [capital, setCapital] = useState("1000000");
+  const [cash, setCash] = useState("");
   const [posture, setPosture] = useState<RiskPosture>("balanced");
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -55,7 +56,7 @@ export function FundMandatePanel({ market }: { market: Market }) {
       const j = (await res.json()) as { mandates?: Record<Market, FundMandate | null> };
       const m = j.mandates?.[market] ?? null;
       setMandate(m);
-      if (m) { setCapital(String(m.capital_base)); setPosture(m.risk_posture); }
+      if (m) { setCapital(String(m.capital_base)); setCash(String(m.cash)); setPosture(m.risk_posture); }
     } catch {
       setMandate(null);
     } finally {
@@ -81,13 +82,28 @@ export function FundMandatePanel({ market }: { market: Market }) {
       setBanner({ kind: "err", text: "Enter a positive capital base." });
       return;
     }
+    // Undeployed cash is only editable when adjusting an existing mandate; a
+    // fresh fund always seeds cash = capital base (nothing deployed yet).
+    let cashOverride: number | undefined;
+    if (mandate) {
+      const c = Number(cash.replace(/[, ]/g, ""));
+      if (!Number.isFinite(c) || c < 0) {
+        setBanner({ kind: "err", text: "Undeployed cash must be zero or positive." });
+        return;
+      }
+      if (c > cap) {
+        setBanner({ kind: "err", text: "Undeployed cash can't exceed the capital base." });
+        return;
+      }
+      cashOverride = c;
+    }
     setBusy(true);
     setBanner(null);
     try {
       const res = await fetch("/api/fund/onboard", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ market, capital_base: cap, risk_posture: posture }),
+        body: JSON.stringify({ market, capital_base: cap, risk_posture: posture, ...(cashOverride !== undefined ? { cash: cashOverride } : {}) }),
       });
       const j = (await res.json()) as { created?: boolean; error?: string };
       if (!res.ok) {
@@ -113,6 +129,29 @@ export function FundMandatePanel({ market }: { market: Market }) {
         <label style={label}>Capital base ({ccy})</label>
         <input style={field} inputMode="numeric" value={capital} onChange={(e) => setCapital(e.target.value)} placeholder="1000000" />
       </div>
+      {mandate && (() => {
+        const cap = Number(capital.replace(/[, ]/g, ""));
+        const c = Number(cash.replace(/[, ]/g, ""));
+        const deployed = Number.isFinite(cap) && Number.isFinite(c) ? Math.max(0, cap - c) : 0;
+        const over = Number.isFinite(cap) && Number.isFinite(c) && c > cap;
+        return (
+          <div>
+            <label style={label}>Undeployed cash ({ccy})</label>
+            <input
+              style={{ ...field, borderColor: over ? "var(--red)" : "var(--line-soft)" }}
+              inputMode="numeric"
+              value={cash}
+              onChange={(e) => setCash(e.target.value)}
+              placeholder="0"
+            />
+            <div className="mono" style={{ fontSize: 10, color: over ? "var(--red)" : "var(--ink-3)", marginTop: 4 }}>
+              {over
+                ? "can't exceed the capital base"
+                : `deployed = ${fmtMoney(deployed, market)} · adjusting this reconciles the book`}
+            </div>
+          </div>
+        );
+      })()}
       <div>
         <label style={label}>Risk posture</label>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
