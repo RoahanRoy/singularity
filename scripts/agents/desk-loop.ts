@@ -34,7 +34,7 @@
  *                              (default http://localhost:3000)
  */
 import type { Sector } from "./universe";
-import { db, DB, Query } from "./appwrite";
+import { db, DB, Query, emit } from "./appwrite";
 import {
   parser, analyst, quant, critic, valuation, cio,
   pm, treasury, risk, riskOverlay, compliance, smartRouter, broker, tca, attribution,
@@ -192,6 +192,18 @@ export async function runDesk(config: DeskConfig): Promise<void> {
       queued.delete(evt.ticker);
       ticker = evt.ticker;
       via = `event · ${evt.kind} (${evt.label})`;
+      // Surface the trigger on the live feed (best-effort) so the Swarm/Research
+      // screens show WHY this name jumped the queue, not just that it ran.
+      try {
+        await emit(
+          agentIds.parser,
+          "thought",
+          `Reacting to ${evt.kind} signal — ${ticker}: ${evt.detail}`,
+          { via: "event-driven", kind: evt.kind, label: evt.label, ticker, held: evt.held },
+        );
+      } catch {
+        /* feed emit is non-fatal — the cycle proceeds regardless */
+      }
     } else {
       ticker = config.nextTicker(held);
       via = "round-robin";
