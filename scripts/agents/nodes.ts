@@ -20,6 +20,7 @@ import { fetchLatestIndiaFiling } from "./india";
 import { fetchTranscript } from "./transcript";
 import { getQuote, stubPrice } from "./quotes";
 import { indexDoc, recallPrior, formatRecall } from "./recall";
+import { getMandate, deployableThisCycle, debitCash } from "../../src/lib/fund/mandate";
 import { sectorOf, indiaSectorOf, sectorFromIndustry, type Sector } from "./universe";
 
 const AUTO_APPROVE = process.env.MERIDIAN_AUTO_APPROVE === "1";
@@ -361,7 +362,7 @@ export async function parser(ctx: Ctx): Promise<Ctx> {
 
 // Internals exported for unit testing / future composition.
 export const _filingPipeline = { edgarReader, summarize, indexFiling, findFiling };
-export const _paperBook = { paperPositions, bookPaperBuy };
+export const _paperBook = { paperPositions, bookPaperBuy, fillPaperTrade };
 
 // 2. Sector Analyst ---------------------------------------------------------
 //
@@ -942,14 +943,36 @@ async function bookPaperBuy(ticker: string, qty: number, price: number, market: 
  * Record a paper BUY fill: real quote (stub fallback), a trades row, and the
  * paper-book update. Shared by the auto-execute path and the operator-approved
  * execution path so both fill identically.
+ *
+ * When the desk has a from-scratch fund mandate, this is where its capital base
+ * bites: the requested qty is capped to what the mandate can deploy this cycle
+ * (min of undeployed cash and the per-cycle pacing cap), and the notional is
+ * debited from the mandate's cash on fill. `filled_qty === 0` means the fund is
+ * out of deployable cash — no trade is booked and the caller should hold the
+ * order for a later cycle. With no mandate, the full qty fills and nothing is
+ * debited (attached-brokerage / legacy behaviour is unchanged).
  */
 async function fillPaperTrade(
   input: { ticker: string; qty: number; market: "US" | "IN"; venue?: string | null; agentId: string },
-): Promise<{ id: string; fill_price: number; quoted: boolean }> {
-  const { ticker, qty, market } = input;
+): Promise<{ id: string | null; fill_price: number; quoted: boolean; filled_qty: number; capped: boolean }> {
+  const { ticker, market } = input;
   const quoted = await getQuote(ticker, market);
   const price = Number((quoted ?? stubPrice(ticker)).toFixed(2));
   const venue = input.venue ? `paper-${input.venue}` : "paper-IBKR";
+
+  // Mandate deployment gate. Cap the fill to affordable whole shares within the
+  // desk's deployable budget for this cycle. No mandate → deploy the full qty.
+  const mandate = await getMandate(db, DB, market).catch(() => null);
+  let qty = input.qty;
+  let capped = false;
+  if (mandate) {
+    const budget = deployableThisCycle(mandate);
+    const affordable = Math.max(0, Math.floor(budget / price));
+    if (affordable < qty) { qty = affordable; capped = true; }
+    if (qty <= 0) {
+      return { id: null, fill_price: price, quoted: quoted != null, filled_qty: 0, capped: true };
+    }
+  }
 
   const trade = await db.createDocument(DB, "trades", ID.unique(), {
     ticker: ticker.toUpperCase(),
@@ -971,7 +994,17 @@ async function fillPaperTrade(
     console.warn(`[broker] paper book update failed for ${ticker}:`, (err as Error).message);
   }
 
-  return { id: trade.$id, fill_price: price, quoted: quoted != null };
+  // Debit deployed capital from the mandate. Best-effort: the fill is already
+  // real, so a debit failure is logged, not unwound.
+  if (mandate) {
+    try {
+      await debitCash(db, DB, mandate, Number((qty * price).toFixed(2)));
+    } catch (err) {
+      console.warn(`[broker] cash debit failed for ${ticker}:`, (err as Error).message);
+    }
+  }
+
+  return { id: trade.$id, fill_price: price, quoted: quoted != null, filled_qty: qty, capped };
 }
 
 export async function broker(ctx: Ctx): Promise<Ctx> {
@@ -1009,12 +1042,27 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
 
   await setStatus(id, "executing");
   const f = await fillPaperTrade({ ticker: ctx.ticker, qty, market, venue: ctx.route?.venue, agentId: id });
+
+  // Mandate ran the desk out of deployable cash this cycle: hold the order for
+  // review so a later cycle (replenished pacing budget) can fill it. No trade.
+  if (!f.id || f.filled_qty === 0) {
+    if (ctx.memoId) {
+      await db.updateDocument(DB, "memos", ctx.memoId, {
+        status: "review",
+        pending_exec_json: JSON.stringify({ qty, weight_pct: ctx.size?.weight_pct ?? null, venue: ctx.route?.venue ?? null, algo: ctx.route?.algo ?? null, conviction: ctx.memo?.conviction ?? null }).slice(0, 2048),
+      });
+    }
+    await emit(id, "handoff", `HOLD BUY ${qty} ${ctx.ticker} — fund out of deployable cash this cycle`, { memo_id: ctx.memoId });
+    await setStatus(id, "idle");
+    return ctx;
+  }
+
   if (ctx.memoId) {
     await db.updateDocument(DB, "memos", ctx.memoId, { status: "executed", pending_exec_json: null });
   }
   await emit(id, "trade",
-    `FILL BUY ${qty} ${ctx.ticker} @ ${f.fill_price.toFixed(2)}${f.quoted ? "" : " (stub)"} via ${ctx.route?.algo ?? "default"}`,
-    { trade_id: f.id, route: ctx.route, quoted: f.quoted });
+    `FILL BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price.toFixed(2)}${f.quoted ? "" : " (stub)"}${f.capped ? ` (capped from ${qty} by mandate pacing)` : ""} via ${ctx.route?.algo ?? "default"}`,
+    { trade_id: f.id, route: ctx.route, quoted: f.quoted, filled_qty: f.filled_qty, requested_qty: qty });
   await setStatus(id, "idle");
   return { ...ctx, trade: { id: f.id, status: "filled", fill_price: f.fill_price } };
 }
@@ -1049,12 +1097,21 @@ async function executeApproved(memo: ApprovableMemo, agentIds: Record<string, st
   const id = agentIds.broker;
   await setStatus(id, "executing");
   const f = await fillPaperTrade({ ticker: memo.ticker, qty, market, venue: pending.venue, agentId: id });
+
+  // Out of deployable cash: leave the memo "approved" (pending intact) so the
+  // next sweep retries once the pacing budget replenishes. Nothing booked.
+  if (!f.id || f.filled_qty === 0) {
+    await emit(id, "handoff", `HOLD approved BUY ${qty} ${memo.ticker} — fund out of deployable cash`, { memo_id: memo.$id });
+    await setStatus(id, "idle");
+    return false;
+  }
+
   await db.updateDocument(DB, "memos", memo.$id, { status: "executed", pending_exec_json: null });
   await writeAudit("broker", "approved_execution", memo.ticker, "allow",
-    `Operator-approved fill: BUY ${qty} ${memo.ticker} @ ${f.fill_price}${f.quoted ? "" : " (stub)"}`);
+    `Operator-approved fill: BUY ${f.filled_qty} ${memo.ticker} @ ${f.fill_price}${f.quoted ? "" : " (stub)"}${f.capped ? ` (capped from ${qty})` : ""}`);
   await emit(id, "trade",
-    `APPROVED FILL BUY ${qty} ${memo.ticker} @ ${f.fill_price.toFixed(2)}`,
-    { trade_id: f.id, memo_id: memo.$id });
+    `APPROVED FILL BUY ${f.filled_qty} ${memo.ticker} @ ${f.fill_price.toFixed(2)}${f.capped ? ` (capped from ${qty})` : ""}`,
+    { trade_id: f.id, memo_id: memo.$id, filled_qty: f.filled_qty, requested_qty: qty });
   await setStatus(id, "idle");
   return true;
 }
