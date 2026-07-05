@@ -5,6 +5,7 @@ import { Panel } from "../primitives";
 import { useMarket } from "../MarketContext";
 import { KiteAccountsPanel } from "../KiteAccounts";
 import { IbkrAccountsPanel } from "../IbkrAccounts";
+import { FundMandatePanel } from "../FundMandate";
 import { fmtMoney, fmtFullMoney } from "@/lib/meridian/format";
 import {
   listPositions,
@@ -463,6 +464,10 @@ export function PortfolioScreen() {
   const [snapshots, setSnapshots] = useState<FundSnapshot[]>([]);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [posLoaded, setPosLoaded] = useState(false);
+  // Undeployed cash of a from-scratch fund mandate (null when the desk runs an
+  // attached brokerage book instead). Folded into NAV so a freshly-onboarded
+  // fund shows its capital base, not "—", before it has deployed anything.
+  const [mandateCash, setMandateCash] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -470,6 +475,7 @@ export function PortfolioScreen() {
     setPositions([]);
     setSnapshots([]);
     setScenarios([]);
+    setMandateCash(null);
     listPositions(200, market)
       .then((p) => {
         if (cancelled) return;
@@ -483,13 +489,20 @@ export function PortfolioScreen() {
     listScenarios(12, market)
       .then((s) => { if (!cancelled) setScenarios(s); })
       .catch(() => {});
+    fetch("/api/fund/onboard", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j: { mandates?: Record<string, { cash?: number } | null> }) => {
+        if (!cancelled) setMandateCash(j.mandates?.[market]?.cash ?? null);
+      })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [market]);
 
-  // NAV = sum of position market values (live book)
+  // NAV = deployed market value + undeployed mandate cash. For an attached
+  // brokerage book (no mandate) mandateCash is null and NAV is just the book MV.
   const navUsd = useMemo(
-    () => positions.reduce((s, p) => s + (p.market_value || 0), 0),
-    [positions],
+    () => positions.reduce((s, p) => s + (p.market_value || 0), 0) + (mandateCash ?? 0),
+    [positions, mandateCash],
   );
 
   const lastSnap = snapshots[snapshots.length - 1];
@@ -598,6 +611,14 @@ export function PortfolioScreen() {
 
       <Panel title="Positions · Live" meta="ranked by MV" bodyClassName="tight">
         <PositionsList rows={positions} loaded={posLoaded} market={market} />
+      </Panel>
+
+      <Panel
+        title="Fund Mandate · From Scratch"
+        meta="capital base · risk posture · deployment"
+        bodyClassName="tight"
+      >
+        <FundMandatePanel market={market} />
       </Panel>
 
       {market === "IN" && (
