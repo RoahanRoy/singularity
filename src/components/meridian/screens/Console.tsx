@@ -445,6 +445,25 @@ function AgentControls() {
     }
   }
 
+  // One button to drive the whole desk: enqueue the action for every agent that
+  // isn't already in the target state (start only what's stopped, stop only
+  // what's running). Each is a normal agent_commands row the dispatcher drains,
+  // so this is purely a fan-out over the existing single-agent path.
+  async function sendAll(action: "start" | "stop") {
+    setBusy(`all:${action}`);
+    try {
+      const targets = AGENT_ORDER.filter((name) => {
+        const running = statuses?.[name]?.running ?? false;
+        return action === "start" ? !running : running;
+      });
+      await Promise.all(targets.map((name) => enqueueAgentCommand(name, action)));
+    } catch {
+      // Failure surfaces as the statuses simply not changing.
+    } finally {
+      setTimeout(() => setBusy(null), 800);
+    }
+  }
+
   if (statuses === null) {
     return <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11 }}>loading…</div>;
   }
@@ -454,15 +473,42 @@ function AgentControls() {
     0,
   );
   const dispatcherOnline = freshest > 0 && now - freshest < DISPATCHER_STALE_MS;
+  const runningCount = AGENT_ORDER.filter((name) => statuses[name]?.running).length;
+  const allRunning = runningCount === AGENT_ORDER.length;
+  const anyRunning = runningCount > 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div
-        className="dim"
-        style={{ fontFamily: "var(--mono)", fontSize: 10, display: "flex", alignItems: "center", gap: 6 }}
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}
       >
-        <span style={{ color: dispatcherOnline ? "var(--green)" : "var(--red)", fontSize: 12, lineHeight: 1 }}>●</span>
-        {dispatcherOnline ? "dispatcher online" : "dispatcher offline — run npm run agents:dispatch on your host"}
+        <div
+          className="dim"
+          style={{ fontFamily: "var(--mono)", fontSize: 10, display: "flex", alignItems: "center", gap: 6 }}
+        >
+          <span style={{ color: dispatcherOnline ? "var(--green)" : "var(--red)", fontSize: 12, lineHeight: 1 }}>●</span>
+          {dispatcherOnline ? "dispatcher online" : "dispatcher offline — run npm run agents:dispatch on your host"}
+        </div>
+        <div style={{ display: "flex", gap: 4 }}>
+          <button
+            className="send"
+            style={{ fontSize: 10, padding: "2px 10px" }}
+            disabled={busy !== null || !dispatcherOnline || allRunning}
+            onClick={() => sendAll("start")}
+            title="Start every stopped agent"
+          >
+            {busy === "all:start" ? "…" : "▶ run all"}
+          </button>
+          <button
+            className="send"
+            style={{ fontSize: 10, padding: "2px 8px" }}
+            disabled={busy !== null || !dispatcherOnline || !anyRunning}
+            onClick={() => sendAll("stop")}
+            title="Stop every running agent"
+          >
+            {busy === "all:stop" ? "…" : "stop all"}
+          </button>
+        </div>
       </div>
       {AGENT_ORDER.map((name) => {
         const s = statuses[name];
