@@ -16,6 +16,7 @@ export const COLLECTIONS = {
   budget_ledger: "budget_ledger",
   operator_messages: "operator_messages",
   fund_snapshots: "fund_snapshots",
+  fund_mandate: "fund_mandate",
   model_routes: "model_routes",
   pipelines: "pipelines",
   compute_nodes: "compute_nodes",
@@ -163,6 +164,30 @@ export type FundSnapshot = Base & {
   pnl_daily: number;
   captured_at: string;
   market?: Market | null;
+};
+
+/**
+ * A from-scratch paper fund for one desk. Created by onboarding (no brokerage
+ * attached): the operator sets a capital base and a risk posture, and the desk
+ * loop deploys that capital into names as convictions clear. `cash` is the
+ * undeployed balance (starts equal to capital_base and is debited as paper buys
+ * fill); the posture caps steer sizing and pace. One row per market (unique).
+ */
+export type RiskPosture = "conservative" | "balanced" | "aggressive";
+
+export type FundMandate = Base & {
+  market: Market;
+  currency: string; // "USD" | "INR" — display only
+  capital_base: number;
+  cash: number;
+  risk_posture: RiskPosture;
+  max_names: number;
+  max_name_weight_pct: number;
+  max_gross_pct: number;
+  deploy_cap_pct_per_cycle: number;
+  status: "active" | "paused";
+  seeded_at: string;
+  note?: string | null;
 };
 
 export type ModelRoute = Base & {
