@@ -50,3 +50,5 @@ next-env.d.ts
 
 # IBKR Client Portal Gateway (downloaded artifact, not source)
 /Client Portal/
+.dispatcher.out.log
+.dispatcher.err.log
