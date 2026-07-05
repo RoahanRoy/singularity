@@ -15,16 +15,21 @@
  *   1. `claude login` (uses your Pro/Max subscription for LLM calls)
  *   2. .env.local has Appwrite endpoint / project / database / API key
  *
- * Behavior: runs continuously — each cycle picks one ticker (round-robin over
- * the held book, falling back to the desk's static universe), runs it through
- * the agent chain, and writes every step to Appwrite so the Swarm / Research /
- * Portfolio screens tick live. A SIGTERM (what the Console "stop" button sends)
- * finishes the current cycle, then exits cleanly; a second signal exits now.
+ * Behavior: runs continuously. Each cycle first scans for fresh events (new
+ * filings/news — see events.ts) and drains any into a priority queue; the
+ * ticker for the cycle is the next queued event, or, when the queue is empty, a
+ * round-robin pick over the held book (falling back to the static universe).
+ * That ticker runs through the agent chain, and every step is written to
+ * Appwrite so the Swarm / Research / Portfolio screens tick live. A SIGTERM
+ * (what the Console "stop" button sends) finishes the current cycle, then exits
+ * cleanly; a second signal exits now.
  *
  * Env knobs (PREFIX is MERIDIAN_TECH or MERIDIAN_INDIA per desk):
  *   <PREFIX>_ONCE=1            run a single cycle and exit (for testing)
  *   <PREFIX>_INTERVAL_MS       pause between cycles (default 60000)
  *   <PREFIX>_ERROR_BACKOFF_MS  pause after a failed cycle (default 15000)
+ *   <PREFIX>_EVENT_SCAN=0      disable event-driven selection (round-robin only)
+ *   <PREFIX>_EVENT_BATCH       names probed for new filings per cycle (default 10)
  *   MERIDIAN_SYNC_BASE         base URL of the running app for the sync route
  *                              (default http://localhost:3000)
  */
@@ -37,6 +42,7 @@ import {
   type Ctx,
 } from "./nodes";
 import { marketState } from "./market-hours";
+import { collectEvents, type EventHit, type LatestFilingKey } from "./events";
 
 export type DeskConfig = {
   /** Short tag used for log lines and env-var prefixing (e.g. "tech", "india"). */
@@ -57,6 +63,12 @@ export type DeskConfig = {
   nextTicker: (held: readonly string[]) => string;
   /** Resolves a ticker's sector for this desk. */
   sectorOf: (ticker: string) => Sector;
+  /** Static universe scanned for new filings (event-driven selection). */
+  universe?: readonly string[];
+  /** Cheap latest-disclosure probe for the event scanner (EDGAR / NSE meta). */
+  latestFilingKey?: LatestFilingKey;
+  /** Default names probed per cycle for new filings (env can override). */
+  eventScanBatch?: number;
 };
 
 export async function runDesk(config: DeskConfig): Promise<void> {
@@ -72,6 +84,12 @@ export async function runDesk(config: DeskConfig): Promise<void> {
   const SYNC_BASE = (
     process.env.MERIDIAN_SYNC_BASE || config.syncBaseFallback || "http://localhost:3000"
   ).replace(/\/$/, "");
+  // Event-driven selection: react to fresh filings/news instead of blindly
+  // round-robining the universe. Off when the desk has no universe wired, or
+  // when the operator disables it. Round-robin always runs underneath as the
+  // fallback, so a scan outage never stalls the loop.
+  const EVENT_SCAN = process.env[`${envPrefix}_EVENT_SCAN`] !== "0" && !!config.universe;
+  const EVENT_BATCH = Number(process.env[`${envPrefix}_EVENT_BATCH`] || config.eventScanBatch || 10);
 
   let stopping = false;
   function requestStop(sig: string) {
@@ -122,6 +140,38 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     }
   }
 
+  // Event queue drained before round-robin. `queued` dedups within a session so
+  // a still-pending event isn't re-enqueued on the next scan; across a restart
+  // the watermark persists, so old events don't re-fire (and if one slips
+  // through, the parser's findFiling dedup absorbs it harmlessly).
+  const eventQueue: EventHit[] = [];
+  const queued = new Set<string>();
+
+  /** Refill the event queue from this cycle's scan. Best-effort. */
+  async function scanEvents(held: readonly string[]): Promise<void> {
+    if (!EVENT_SCAN) return;
+    try {
+      const hits = await collectEvents({
+        market,
+        held,
+        universe: config.universe ?? [],
+        batch: EVENT_BATCH,
+        latestFilingKey: config.latestFilingKey,
+      });
+      let added = 0;
+      for (const h of hits) {
+        if (queued.has(h.ticker)) continue;
+        queued.add(h.ticker);
+        eventQueue.push(h);
+        added++;
+        console.log(`[${key}] event → ${h.ticker} (${h.kind}: ${h.detail})`);
+      }
+      if (added > 0) console.log(`[${key}] queued ${added} event(s); ${eventQueue.length} pending`);
+    } catch (err) {
+      console.warn(`[${key}] event scan failed (round-robin this cycle): ${(err as Error).message}`);
+    }
+  }
+
   type AgentIds = Awaited<ReturnType<typeof config.bootstrap>>;
 
   async function runCycle(agentIds: AgentIds): Promise<void> {
@@ -131,9 +181,23 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     const executed = await sweepApprovedMemos(market, agentIds);
     if (executed > 0) console.log(`[${key}] executed ${executed} operator-approved trade(s)`);
     const held = await heldTickers();
-    const ticker = config.nextTicker(held);
+
+    // React to fresh disclosures first; fall back to round-robin to keep cold
+    // names covered and the loop warm when nothing new has landed.
+    await scanEvents(held);
+    const evt = eventQueue.shift();
+    let ticker: string;
+    let via: string;
+    if (evt) {
+      queued.delete(evt.ticker);
+      ticker = evt.ticker;
+      via = `event · ${evt.kind} (${evt.label})`;
+    } else {
+      ticker = config.nextTicker(held);
+      via = "round-robin";
+    }
     const sector = config.sectorOf(ticker);
-    console.log(`\n=== ${config.label} — ${ticker} (${sector}) · book=${held.length} names ===\n`);
+    console.log(`\n=== ${config.label} — ${ticker} (${sector}) · ${via} · book=${held.length} names ===\n`);
 
     let ctx: Ctx = { ticker, agentIds, market };
     ctx = await parser(ctx);

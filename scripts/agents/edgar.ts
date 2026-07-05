@@ -162,6 +162,27 @@ function stripHtml(html: string): string {
 }
 
 /**
+ * Cheap "what's the newest disclosure" probe for the event scanner.
+ *
+ * Resolves the ticker's CIK and reads only the submissions feed — no document
+ * fetch, no HTML strip, no summarize. Returns the accession as a stable key the
+ * scanner can diff against its watermark to decide whether a genuinely NEW
+ * filing has landed. Best-effort: any failure (no CIK, no matching form, SEC
+ * hiccup) returns null so a single bad ticker never breaks a sweep.
+ */
+export async function fetchLatestFilingKey(
+  ticker: string,
+): Promise<{ key: string; form: string; filedAt: string } | null> {
+  try {
+    const cik = await tickerToCik(ticker);
+    const { form, filedAt, accession } = await latestFiling(cik);
+    return { key: accession, form, filedAt };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetch the most recent material filing for a ticker. Returns structured
  * data plus a plaintext excerpt. The excerpt is UNTRUSTED — never feed it to
  * a tool-using LLM, only to a summarizer with no tool access.

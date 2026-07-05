@@ -8,8 +8,9 @@
  *
  * Run with: npm run agents:tech   (or via the Operator Console "start" button)
  */
-import { nextTicker, sectorOf } from "./universe";
+import { nextTicker, sectorOf, FULL_UNIVERSE } from "./universe";
 import { bootstrapAgents } from "./nodes";
+import { fetchLatestFilingKey } from "./edgar";
 import { runDesk } from "./desk-loop";
 
 runDesk({
@@ -21,6 +22,8 @@ runDesk({
   bootstrap: bootstrapAgents,
   nextTicker,
   sectorOf,
+  universe: FULL_UNIVERSE,
+  latestFilingKey: fetchLatestFilingKey,
 }).catch((err) => {
   console.error(err);
   process.exit(1);

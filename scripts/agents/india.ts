@@ -136,6 +136,33 @@ function materiality(desc: string): number {
  * Throws on any fetch/parse failure or when the symbol has no announcements;
  * callers fall back to the LLM-only brief.
  */
+/**
+ * Cheap "what's the newest announcement" probe for the event scanner — the
+ * India analogue of edgar.ts's fetchLatestFilingKey. Warms the NSE cookie and
+ * reads the announcements list only; returns the most recent announcement's
+ * datetime as a stable key the scanner diffs against its watermark. Best-effort:
+ * NSE's bot wall / rate limits make failure routine, so any throw returns null
+ * and the sweep simply skips this symbol.
+ */
+export async function fetchLatestIndiaKey(
+  ticker: string,
+): Promise<{ key: string; form: string; filedAt: string } | null> {
+  try {
+    const annc = await fetchAnnouncements(ticker.toUpperCase());
+    if (!annc.length) return null;
+    annc.sort((a, b) => (b.sort_date ?? b.an_dt ?? "").localeCompare(a.sort_date ?? a.an_dt ?? ""));
+    const top = annc[0];
+    const key = (top.sort_date || top.an_dt || "").trim();
+    return {
+      key: key || toIsoDate(top.an_dt || top.sort_date),
+      form: cleanText(top.desc ?? "NSE-ANNC") || "NSE-ANNC",
+      filedAt: toIsoDate(top.an_dt || top.sort_date),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchLatestIndiaFiling(ticker: string, excerptChars = 12000): Promise<EdgarFiling> {
   const symbol = ticker.toUpperCase();
   const annc = await fetchAnnouncements(symbol);

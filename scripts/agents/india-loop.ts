@@ -12,8 +12,9 @@
  *
  * Run with: npm run agents:india   (or via the Operator Console "start" button)
  */
-import { nextIndiaTicker, indiaSectorOf } from "./universe";
+import { nextIndiaTicker, indiaSectorOf, INDIA_UNIVERSE } from "./universe";
 import { bootstrapAgentsIndia } from "./nodes";
+import { fetchLatestIndiaKey } from "./india";
 import { runDesk } from "./desk-loop";
 
 runDesk({
@@ -26,6 +27,11 @@ runDesk({
   bootstrap: bootstrapAgentsIndia,
   nextTicker: nextIndiaTicker,
   sectorOf: indiaSectorOf,
+  universe: INDIA_UNIVERSE,
+  latestFilingKey: fetchLatestIndiaKey,
+  // NSE fronts its JSON behind a bot wall and rate-limits hard, so probe fewer
+  // names per cycle than the US desk; news-driven events (Appwrite) fill the gap.
+  eventScanBatch: 4,
 }).catch((err) => {
   console.error(err);
   process.exit(1);
