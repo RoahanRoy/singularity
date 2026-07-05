@@ -81,9 +81,18 @@ if [[ -z "$CLAUDE_BIN" ]]; then
   echo "  or the loops will fail once started. Continuing to install the daemon."
 fi
 # Build a PATH that covers node, npm, and the claude CLI plus the system dirs.
-declare -A seen
+# Dedup via a substring check on the accumulated PATH so this stays compatible
+# with macOS's stock Bash 3.2 (no associative arrays / `declare -A`).
 DAEMON_PATH=""
-add_dir() { local d="$1"; [[ -n "$d" && -z "${seen[$d]:-}" ]] && { seen[$d]=1; DAEMON_PATH="${DAEMON_PATH:+$DAEMON_PATH:}$d"; }; }
+add_dir() {
+  local d="$1"
+  [[ -z "$d" ]] && return 0
+  case ":$DAEMON_PATH:" in
+    *":$d:"*) return 0 ;;
+  esac
+  DAEMON_PATH="${DAEMON_PATH:+$DAEMON_PATH:}$d"
+  return 0
+}
 add_dir "$(dirname "$NODE_BIN")"
 add_dir "$(dirname "$NPM_BIN")"
 [[ -n "$CLAUDE_BIN" ]] && add_dir "$(dirname "$CLAUDE_BIN")"
