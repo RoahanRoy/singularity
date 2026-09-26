@@ -2,13 +2,13 @@ import type { Metadata } from "next";
 import LandingClient from "@/components/landing/LandingClient";
 
 export const metadata: Metadata = {
-  title: "Meridian · Autonomous Capital Intelligence",
+  title: "Meridian — A hedge fund run by agents, supervised by you",
   description:
-    "An AI-native hedge fund operating system. A swarm of agents researches, allocates, and executes across global markets — supervised by a small team of humans.",
+    "Meridian reads every filing, drafts the thesis, sizes the trade and checks the risk. You approve what goes to market.",
   openGraph: {
-    title: "Meridian · Autonomous Capital Intelligence",
+    title: "Meridian — A hedge fund run by agents, supervised by you",
     description:
-      "Autonomous capital, intelligently deployed. Markets move in microseconds — so does Meridian.",
+      "Meridian reads every filing, drafts the thesis, sizes the trade and checks the risk. You approve what goes to market.",
     type: "website",
   },
 };

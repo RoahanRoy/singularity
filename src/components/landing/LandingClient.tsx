@@ -1,510 +1,480 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import dynamic from "next/dynamic";
-import Lenis from "lenis";
-import "./landing.css";
+import { CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useTheme } from "@/lib/meridian/theme";
+import { BrandMark, DeskDemo } from "@/components/desk-demo/DeskDemo";
+import type { DemoScreen } from "@/components/desk-demo/data";
 
-// WebGL is client-only — skip SSR so three/drei never touch the server.
-const Scene = dynamic(() => import("./Scene"), {
-  ssr: false,
-  loading: () => null,
-});
+type Chapter = {
+  id: string;
+  num: string;
+  eyebrow: string;
+  screen: DemoScreen;
+  zoom: "approvals" | "memo" | "topology" | "chat";
+  ah: string;
+  ap: string;
+  bh: string;
+  bp: string;
+};
 
-const NAV = ["Platform", "Research", "Approach", "Contact"];
-
-// Scattered HUD "scan" markers over the centerpiece (decorative).
-const HUD = [
-  { x: "16%", y: "30%", l: "REF·014" },
-  { x: "30%", y: "62%", l: "S·07" },
-  { x: "52%", y: "22%", l: "x1.408" },
-  { x: "63%", y: "48%", l: "351" },
-  { x: "70%", y: "70%", l: "IST" },
-  { x: "44%", y: "78%", l: "Δ·09" },
-  { x: "24%", y: "46%", l: "" },
-  { x: "58%", y: "64%", l: "" },
-];
-
-const STRATEGIES = [
+// Each chapter pins a live desk frame, then zooms into one region of it as the
+// reader scrolls, swapping the caption from the "a" beat to the "b" beat.
+const CHAPTERS: Chapter[] = [
   {
-    n: "01",
-    title: "Speed",
-    body: "Signals priced and acted on in microseconds. Meridian closes the gap between a market event and a position before a human could read the headline.",
-    icon: "Sub-ms execution",
+    id: "portfolio", num: "01", eyebrow: "Portfolio", screen: "portfolio", zoom: "approvals",
+    ah: "Your whole book, on one screen.",
+    ap: "Live value across every IBKR and Kite account you connect, with P&L, Sharpe, drawdown and factor exposure underneath.",
+    bh: "Nothing trades until you say so.",
+    bp: "Every position the agents propose lands here with its vote count and conviction. Approve or decline in one tap. Auto-approve exists, but it's off by default.",
   },
   {
-    n: "02",
-    title: "Research-based",
-    body: "Every position is the output of an agent swarm reading filings, transcripts, and order flow — conviction built from primary sources, not sentiment.",
-    icon: "Primary sources",
+    id: "research", num: "02", eyebrow: "Research", screen: "research", zoom: "memo",
+    ah: "It reads the filing before you've seen the headline.",
+    ap: "10-Ks, 8-Ks, 13Fs and earnings calls are parsed within seconds of release and scored against the company's own history.",
+    bh: "Then it writes the memo.",
+    bp: "TSM's Q4 call: “solid demand” said 14 times against a 4.1 average, two questions deflected, certainty down 0.31σ. Three agents agreed. Draft thesis at conviction 0.74.",
   },
   {
-    n: "03",
-    title: "Unbiased",
-    body: "No desk politics, no anchoring, no ego. Capital is allocated by evidence and continuously re-weighted as the world changes.",
-    icon: "Evidence-weighted",
-  },
-];
-
-const STATS = [
-  { v: "24/7", k: "Markets watched" },
-  { v: "<8ms", k: "Decision latency" },
-  { v: "1.4M", k: "Filings indexed" },
-  { v: "120+", k: "Live agents" },
-];
-
-const CASES = [
-  {
-    tag: "US Equities",
-    title: "The overnight desk",
-    body: "Autonomous coverage of the US book through the IBKR gateway — researched, sized, and hedged while the team sleeps.",
+    id: "swarm", num: "03", eyebrow: "Swarm", screen: "swarm", zoom: "topology",
+    ah: "Twelve specialist teams, working at once.",
+    ap: "Macro, earnings forensics, volatility, credit, alt-data, execution and risk. Each reads its own sources and reports into one feed.",
+    bh: "Disagreement is shown, not averaged away.",
+    bp: "When agents converge, conviction rises. When two of them dissent, the trade stops and waits for a human.",
   },
   {
-    tag: "India Desk",
-    title: "Pre-open conviction",
-    body: "Kite-connected agents enrich every NSE name before the bell, surfacing the three trades that matter from a thousand that don't.",
-  },
-  {
-    tag: "Macro",
-    title: "Regime detection",
-    body: "Continuous classification of the macro regime, re-weighting exposure the moment volatility, rates, or flow break trend.",
-  },
-  {
-    tag: "Risk",
-    title: "Always-on guardrails",
-    body: "A supervising layer that can veto, trim, or unwind any agent in real time — autonomy with a hand on the kill switch.",
+    id: "console", num: "04", eyebrow: "Console", screen: "console", zoom: "chat",
+    ah: "Tell it what you want in a sentence.",
+    ap: "“Reduce China-linked semi exposure 15%. Keep the idiosyncratic alpha.”",
+    bh: "It comes back with a plan and a button.",
+    bp: "Three execution paths modelled. Path B keeps 87% of alpha, cuts exposure from 9.4% to 8.0% and passes the risk overlay. Authorize it, or send it back.",
   },
 ];
 
-const PILLARS = [
-  { n: "A", h: "Research-based", p: "Decisions traced to primary evidence." },
-  { n: "B", h: "Unbiased", p: "Allocation by data, never narrative." },
-  { n: "C", h: "Global", p: "One brain across every time zone." },
-  { n: "D", h: "Effortless", p: "Connect capital, the rest runs itself." },
+type Role = "research" | "decision" | "gate" | "execution" | "post";
+const STAGES: [string, string, Role][] = [
+  ["00", "Budget", "gate"], ["01", "Filing parser", "research"], ["02", "Earnings reviewer", "research"],
+  ["03", "Sector analyst", "research"], ["04", "Quant", "research"], ["05", "Red-team critic", "gate"],
+  ["06", "Valuation", "research"], ["07", "Committee", "gate"], ["08", "Portfolio manager", "decision"],
+  ["09", "Treasury", "decision"], ["10", "Risk officer", "gate"], ["11", "Risk overlay", "gate"],
+  ["12", "Compliance", "gate"], ["13", "Router", "execution"], ["14", "Broker", "execution"],
+  ["15", "TCA", "post"], ["16", "Recon", "post"],
+];
+const ROLE: Record<Role, string> = {
+  research: "color-mix(in oklch,var(--tint) 70%,transparent)",
+  decision: "var(--accent)",
+  gate: "color-mix(in oklch,var(--down) 70%,transparent)",
+  execution: "var(--up)",
+  post: "var(--group-2)",
+};
+const ROLE_KEY: [Role, string][] = [
+  ["research", "Research"], ["decision", "Decision"], ["gate", "Gate"], ["execution", "Execution"], ["post", "Post-trade"],
 ];
 
-const STEPS = [
-  {
-    n: "01",
-    h: "Kick-off call",
-    p: "We map your mandate, risk limits, and the markets you want covered.",
-  },
-  {
-    n: "02",
-    h: "Connect capital",
-    p: "Securely link your IBKR and Kite accounts. Meridian reads the live book in minutes.",
-  },
-  {
-    n: "03",
-    h: "Deploy the swarm",
-    p: "Research, portfolio, and execution agents come online under a human supervisor.",
-  },
-  {
-    n: "04",
-    h: "Launch & compound",
-    p: "The system trades, learns, and reports — you watch the equity curve, not the screens.",
-  },
-];
+const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
-function useScrollReveal() {
-  useEffect(() => {
-    const els = Array.from(document.querySelectorAll<HTMLElement>(".lp [data-reveal]"));
-    if (!("IntersectionObserver" in window) || els.length === 0) {
-      els.forEach((el) => el.classList.add("is-in"));
-      return;
-    }
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("is-in");
-            io.unobserve(entry.target);
-          }
-        }
-      },
-      { threshold: 0.18, rootMargin: "0px 0px -8% 0px" }
-    );
-    els.forEach((el) => io.observe(el));
-    return () => io.disconnect();
-  }, []);
-}
+type Region = { x: number; y: number; w: number; h: number };
+type Size = { w: number; h: number };
 
-function useLenis() {
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const lenis = new Lenis({
-      duration: 1.15,
-      easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
-      smoothWheel: true,
-    });
-    let raf = 0;
-    const loop = (time: number) => {
-      lenis.raf(time);
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => {
-      cancelAnimationFrame(raf);
-      lenis.destroy();
-    };
-  }, []);
-}
+const DISPLAY: CSSProperties = { fontFamily: "var(--f-display)", fontWeight: 700, textWrap: "balance" };
+const PRIMARY_CTA: CSSProperties = {
+  background: "var(--tint)",
+  color: "#fff",
+  padding: "12px 22px",
+  borderRadius: 980,
+  fontSize: 17,
+  fontWeight: 500,
+  textDecoration: "none",
+};
 
 export default function LandingClient() {
-  const [stuck, setStuck] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
-  const heroRef = useRef<HTMLElement>(null);
+  const [theme, toggleTheme] = useTheme("dark");
+  const [reduce, setReduce] = useState(false);
+  const [navEdge, setNavEdge] = useState(false);
+  const [wide, setWide] = useState(true);
+  const [fw, setFw] = useState(1240);
+  const [tilt, setTilt] = useState(14);
+  const [prog, setProg] = useState<number[]>(() => CHAPTERS.map(() => 0));
+  const [stage, setStage] = useState<Size[]>(() => CHAPTERS.map(() => ({ w: 800, h: 500 })));
+  const [regions, setRegions] = useState<(Region | null)[]>(() => CHAPTERS.map(() => null));
 
-  useLenis();
-  useScrollReveal();
+  const frameRef = useRef<HTMLDivElement>(null);
+  const secRefs = useRef<(HTMLElement | null)[]>([]);
+  const stageRefs = useRef<(HTMLDivElement | null)[]>([]);
 
-  // restore saved theme, else follow the OS preference
   useEffect(() => {
-    const stored = window.localStorage.getItem("lp-theme");
-    if (stored === "dark" || stored === "light") {
-      setTheme(stored);
-    } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
-      setTheme("dark");
-    }
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onMq = () => setReduce(mq.matches);
+    onMq();
+    mq.addEventListener("change", onMq);
+    return () => mq.removeEventListener("change", onMq);
   }, []);
 
-  const toggleTheme = () =>
-    setTheme((t) => {
-      const next = t === "light" ? "dark" : "light";
-      window.localStorage.setItem("lp-theme", next);
-      return next;
-    });
+  // Find each chapter's zoom target inside its (unscaled, 1280×800) desk.
+  const measure = useCallback(() => {
+    setStage(stageRefs.current.map((el) => (el ? { w: el.clientWidth, h: el.clientHeight } : { w: 800, h: 500 })));
+    setRegions(
+      CHAPTERS.map((c, i) => {
+        const st = stageRefs.current[i];
+        const desk = st?.querySelector<HTMLElement>("[data-desk]");
+        const tg = desk?.querySelector<HTMLElement>(`[data-zoom="${c.zoom}"]`);
+        if (!desk || !tg) return null;
+        const dr = desk.getBoundingClientRect();
+        const tr = tg.getBoundingClientRect();
+        const k = dr.width / 1280 || 1;
+        let x = (tr.left - dr.left) / k;
+        let y = (tr.top - dr.top) / k;
+        let w = tr.width / k;
+        let h = tr.height / k;
+        if (c.zoom === "memo") h = Math.min(h, 330);
+        if (c.zoom === "approvals") h = Math.min(h, 420);
+        if (c.zoom === "chat") {
+          const hh = Math.min(h, 440);
+          y = y + h - hh;
+          h = hh;
+        }
+        if (c.zoom === "topology") {
+          const cw = Math.min(w, 620);
+          const ch = Math.min(h, 380);
+          x = x + (w - cw) / 2;
+          y = y + Math.max(0, (h - ch) / 2 - 40);
+          w = cw;
+          h = ch;
+        }
+        return { x: x - 12, y: y - 12, w: w + 24, h: h + 24 };
+      }),
+    );
+    setWide(window.innerWidth >= 900);
+    setFw(frameRef.current?.clientWidth ?? 1240);
+  }, []);
 
   useEffect(() => {
-    const onScroll = () => setStuck(window.scrollY > 40);
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const vh = window.innerHeight;
+        const el = frameRef.current;
+        if (el) {
+          const top = el.getBoundingClientRect().top;
+          setTilt(Math.round(clamp01((top - vh * 0.15) / (vh * 0.7)) * 140) / 10);
+        }
+        const next = secRefs.current.map((s) => {
+          if (!s) return 0;
+          const b = s.getBoundingClientRect();
+          return clamp01(-b.top / (b.height - vh || 1));
+        });
+        setProg((p) => (next.every((v, i) => Math.abs(v - p[i]) < 0.002) ? p : next));
+        setNavEdge(window.scrollY > 4);
+      });
+    };
+    measure();
     onScroll();
+    // Re-measure once fonts and the embedded desks have settled.
+    const t1 = setTimeout(measure, 900);
+    const t2 = setTimeout(measure, 2500);
+    window.addEventListener("resize", measure);
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", onScroll);
+    };
+  }, [measure]);
 
-  const year = new Date().getFullYear();
+  const sc = fw / 1280;
 
   return (
-    <div className="lp" data-theme={theme}>
-      <div className="lp-grain" aria-hidden />
-
-      {/* nav */}
-      <nav className={`lp-nav${stuck ? " is-stuck" : ""}`}>
-        <a className="lp-brand" href="#top">
-          <span className="lp-mark" aria-hidden />
+    <div
+      className="mx-land"
+      data-theme={theme}
+      style={{
+        minHeight: "100vh",
+        background: "var(--bg)",
+        color: "var(--ink)",
+        fontFamily: "var(--f-text)",
+        fontSize: 17,
+        lineHeight: 1.47,
+        letterSpacing: "-0.01em",
+        transition: "background-color .35s ease,color .35s ease",
+      }}
+    >
+      <nav
+        className="mx-glass"
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          height: 48,
+          display: "flex",
+          alignItems: "center",
+          gap: 28,
+          padding: "0 max(20px,calc((100% - 1040px)/2))",
+          background: "var(--glass)",
+          backdropFilter: "saturate(180%) blur(24px)",
+          WebkitBackdropFilter: "saturate(180%) blur(24px)",
+          boxShadow: `0 1px 0 ${navEdge ? "var(--line)" : "transparent"}`,
+          transition: "box-shadow .3s ease",
+        }}
+      >
+        <a href="#top" style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--ink)", fontWeight: 700, fontSize: 16, letterSpacing: "-0.02em", textDecoration: "none" }}>
+          <BrandMark />
           Meridian
         </a>
-        <div className="lp-navlinks">
-          {NAV.map((l) => (
-            <a key={l} href={`#${l.toLowerCase()}`}>
-              {l}
-            </a>
-          ))}
-        </div>
-        <div className="lp-nav-right">
-          <a className="lp-nav-howlink" href="/how-it-works">
-            How it works
-          </a>
+        {wide && (
+          <div style={{ display: "flex", gap: 24, fontSize: 12, fontWeight: 500, letterSpacing: 0 }}>
+            {CHAPTERS.map((c) => (
+              <a key={c.id} href={`#${c.id}`} style={{ color: "var(--ink-2)" }}>
+                {c.eyebrow}
+              </a>
+            ))}
+            <Link href="/how-it-works" style={{ color: "var(--ink-2)" }}>
+              How it works
+            </Link>
+          </div>
+        )}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <button
-            type="button"
-            className="lp-themetoggle"
             onClick={toggleTheme}
-            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            aria-label="Toggle appearance"
+            className="mx-press"
+            style={{ width: 28, height: 28, borderRadius: "50%", border: 0, background: "var(--seg)", color: "var(--ink-2)", cursor: "pointer", display: "grid", placeItems: "center" }}
           >
-            {theme === "dark" ? "☀" : "☾"}
+            <span className="msr" aria-hidden style={{ fontSize: 17 }}>
+              {theme === "dark" ? "light_mode" : "dark_mode"}
+            </span>
           </button>
-          <a className="lp-btn" href="/desk">
-            <span className="dot" aria-hidden />
-            Talk to the operators
-          </a>
+          <Link href="/sign-in" style={{ fontSize: 12, color: "var(--ink)" }}>
+            Sign in
+          </Link>
+          <Link href="/desk" className="mx-press" style={{ fontSize: 12, fontWeight: 500, color: "#fff", background: "var(--tint)", padding: "5px 12px", borderRadius: 980, textDecoration: "none" }}>
+            Open the desk
+          </Link>
         </div>
       </nav>
 
-      <main className="lp-main" id="top">
-        {/* hero */}
-        <header className="lp-hero" ref={heroRef}>
-          {/* WebGL centerpiece — scoped to the hero so it scrolls away */}
-          <div className="lp-hero-canvas" aria-hidden>
-            <Scene theme={theme} />
-            <div className="lp-hud">
-              {HUD.map((h, i) => (
-                <span
-                  key={i}
-                  className={`lp-hud-mark${h.l ? "" : " is-bare"}`}
-                  style={{ left: h.x, top: h.y }}
-                >
-                  {h.l && <i>{h.l}</i>}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div className="lp-hero-inner lp-wrap">
-            <span className="lp-eyebrow" data-reveal>
-              Meridian · Autonomous Capital Intelligence
-            </span>
-            <h1 data-reveal data-reveal-delay="1">
-              Autonomous
-              <br />
-              capital, <em>intelligently</em>
-              <br />
-              deployed.
-            </h1>
-            <p className="lp-hero-sub" data-reveal data-reveal-delay="2">
-              An AI-native hedge fund operating system. A swarm of agents
-              researches, allocates, and executes across global markets —
-              supervised by a small team of humans.
-            </p>
-            <div className="lp-hero-cta" data-reveal data-reveal-delay="3">
-              <a className="lp-btn lp-btn--solid" href="/desk">
-                <span className="dot" aria-hidden />
-                Get started
-              </a>
-              <a className="lp-btn" href="#approach">
-                Learn more
-              </a>
-            </div>
-          </div>
-
-          <div className="lp-hero-foot lp-wrap">
-            <div className="lp-scroll-hint">
-              <span className="bar" aria-hidden />
-              Scroll to explore
-            </div>
-            <div className="lp-hero-meta">
-              <div>
-                <b>US</b> · IBKR gateway
-              </div>
-              <div>
-                <b>IN</b> · NSE / Kite
-              </div>
-              <div>
-                Est. <b>{year}</b>
-              </div>
-            </div>
-          </div>
-        </header>
-
-        {/* statement */}
-        <section className="lp-section lp-section--plain">
-          <div className="lp-wrap">
-            <p className="lp-statement" data-reveal>
-              Markets move in microseconds.{" "}
-              <span className="muted">Most desks move in meetings.</span>{" "}
-              Meridian moves <em>at the speed of evidence.</em>
-            </p>
-          </div>
-        </section>
-
-        {/* trusted-by marquee */}
-        <div className="lp-marquee" aria-hidden>
-          <div className="lp-marquee-track">
-            {[...Array(2)].map((_, dup) => (
-              <div className="lp-marquee-item" key={dup}>
-                {[
-                  "Interactive Brokers",
-                  "Zerodha Kite",
-                  "NSE",
-                  "NASDAQ",
-                  "Upstash Vector",
-                  "Appwrite",
-                  "Anthropic",
-                  "EDGAR",
-                ].map((b) => (
-                  <span key={b}>{b}</span>
-                ))}
-              </div>
-            ))}
-          </div>
+      <header id="top" style={{ textAlign: "center", padding: "clamp(72px,11vw,132px) 20px 0" }}>
+        <h1 style={{ ...DISPLAY, margin: "0 auto", maxWidth: 900, fontSize: "clamp(46px,7.6vw,92px)", lineHeight: 1.02, letterSpacing: "-0.05em" }}>
+          A hedge fund run by agents. Supervised by you.
+        </h1>
+        <p style={{ margin: "24px auto 0", fontSize: "clamp(19px,2.1vw,23px)", lineHeight: 1.38, color: "var(--ink-2)", maxWidth: 620, textWrap: "pretty" }}>
+          Meridian reads every filing, drafts the thesis, sizes the trade and checks the risk. You approve what goes to market.
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center", justifyContent: "center", marginTop: 32 }}>
+          <Link href="/desk" className="mx-press" style={PRIMARY_CTA}>
+            Open the desk
+          </Link>
+          <Link href="/guided" style={{ fontSize: 17 }}>
+            Take the guided tour ›
+          </Link>
         </div>
 
-        {/* strategies */}
-        <section className="lp-section" id="approach">
-          <div className="lp-wrap">
-            <div className="lp-section-head">
-              <h2 className="lp-section-title" data-reveal>
-                An approach built on <em>three</em> strategies
-              </h2>
-              <span className="lp-index" data-reveal>
-                [ 01 — Approach ]
-              </span>
-            </div>
-            <div className="lp-grid-3">
-              {STRATEGIES.map((s, i) => (
-                <article className="lp-cell" key={s.title} data-reveal data-reveal-delay={i}>
-                  <span className="lp-cell-num">{s.n}</span>
-                  <h3>{s.title}</h3>
-                  <p>{s.body}</p>
-                  <span className="lp-cell-icon">
-                    <span className="lp-mark" style={{ width: 12, height: 12 }} aria-hidden />
-                    {s.icon}
-                  </span>
-                </article>
-              ))}
+        <div ref={frameRef} style={{ position: "relative", maxWidth: 1240, margin: "clamp(48px,7vw,88px) auto 0", height: Math.round(830 * sc), perspective: 2400 }}>
+          <div style={{ width: 1280, transformOrigin: "top left", transform: `scale(${sc.toFixed(4)})` }}>
+            <div
+              style={{
+                transformOrigin: "50% 0%",
+                transform: `rotateX(${reduce ? 0 : tilt}deg)`,
+                borderRadius: 16,
+                overflow: "hidden",
+                background: "var(--frame)",
+                boxShadow: "0 0 0 1px var(--line),0 40px 120px rgba(0,0,0,0.45)",
+              }}
+            >
+              <div style={{ height: 30, display: "flex", alignItems: "center", gap: 8, padding: "0 14px", borderBottom: "1px solid var(--line)" }}>
+                <span style={{ width: 12, height: 12, borderRadius: "50%", background: "#ff5f57" }} />
+                <span style={{ width: 12, height: 12, borderRadius: "50%", background: "#febc2e" }} />
+                <span style={{ width: 12, height: 12, borderRadius: "50%", background: "#28c840" }} />
+                <span style={{ margin: "0 auto", fontSize: 12, color: "var(--ink-3)", fontFamily: "var(--f-mono)" }}>meridian.fund/desk</span>
+              </div>
+              <div style={{ height: 800, textAlign: "left" }}>
+                <DeskDemo theme={theme} onToggleTheme={toggleTheme} />
+              </div>
             </div>
           </div>
-        </section>
+        </div>
+        <div style={{ marginTop: 18, fontSize: 14, color: "var(--ink-3)" }}>The real desk, running on sample data. Click around.</div>
+      </header>
 
-        {/* stats */}
-        <section className="lp-section lp-section--plain">
-          <div className="lp-wrap">
-            <div className="lp-stats">
-              {STATS.map((s, i) => (
-                <div className="lp-stat" key={s.k} data-reveal data-reveal-delay={i}>
-                  <div className="v">
-                    <em>{s.v}</em>
-                  </div>
-                  <div className="k">{s.k}</div>
+      <div style={{ height: "clamp(80px,10vw,140px)" }} />
+
+      {CHAPTERS.map((c, i) => {
+        const p = prog[i];
+        const { w: W, h: H } = stage[i];
+        const s0 = Math.min(W / 1280, H / 800);
+        const tx0 = (W - 1280 * s0) / 2;
+        const ty0 = (H - 800 * s0) / 2;
+        const r = regions[i] ?? { x: 880, y: 100, w: 380, h: 420 };
+        const s1 = Math.min(W / r.w, H / r.h, 2.4);
+        const tx1 = W / 2 - (r.x + r.w / 2) * s1;
+        const ty1 = H / 2 - (r.y + r.h / 2) * s1;
+        const z = reduce ? (p >= 0.45 ? 1 : 0) : ease(clamp01((p - 0.28) / 0.4));
+        const s = s0 + (s1 - s0) * z;
+        const tx = tx0 + (tx1 - tx0) * z;
+        const ty = ty0 + (ty1 - ty0) * z;
+        const fa = reduce ? (p < 0.45 ? 1 : 0) : 1 - clamp01((p - 0.36) / 0.1);
+        const fb = reduce ? (p < 0.45 ? 0 : 1) : clamp01((p - 0.44) / 0.1);
+        const k = clamp01((p - 0.3) / 0.3);
+        const beats = [
+          { h: c.ah, p: c.ap, op: fa, y: reduce ? 0 : -(1 - fa) * 14 },
+          { h: c.bh, p: c.bp, op: fb, y: reduce ? 0 : (1 - fb) * 14 },
+        ];
+        return (
+          <section
+            key={c.id}
+            id={c.id}
+            ref={(el) => {
+              secRefs.current[i] = el;
+            }}
+            style={{ position: "relative", height: wide ? "260vh" : "220vh", borderTop: "1px solid var(--line)" }}
+          >
+            <div
+              style={{
+                position: "sticky",
+                top: 48,
+                height: "calc(100vh - 48px)",
+                display: "flex",
+                flexDirection: wide ? "row" : "column",
+                alignItems: "center",
+                gap: "clamp(20px,4vw,56px)",
+                maxWidth: 1240,
+                margin: "0 auto",
+                padding: "clamp(16px,3vw,40px) 20px",
+              }}
+            >
+              <div style={{ position: "relative", flex: `0 0 ${wide ? "360px" : "auto"}`, width: "100%", minHeight: wide ? 370 : 250 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "var(--accent-ink)", display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontFamily: "var(--f-mono)", color: "var(--ink-3)" }}>{c.num}</span>
+                  {c.eyebrow}
                 </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* case studies */}
-        <section className="lp-section" id="platform">
-          <div className="lp-wrap">
-            <div className="lp-section-head">
-              <h2 className="lp-section-title" data-reveal>
-                Where ambition meets <em>velocity</em>
-              </h2>
-              <span className="lp-index" data-reveal>
-                [ 02 — Case studies ]
-              </span>
-            </div>
-            <div className="lp-cases">
-              {CASES.map((c, i) => (
-                <article className="lp-case" key={c.title} data-reveal data-reveal-delay={i % 2}>
-                  <div className="lp-case-top">
-                    <span className="lp-case-tag">{c.tag}</span>
-                    <span className="lp-index">0{i + 1}</span>
-                  </div>
-                  <div>
-                    <h3>{c.title}</h3>
-                    <p>{c.body}</p>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* pillars */}
-        <section className="lp-section lp-section--plain" id="research">
-          <div className="lp-wrap">
-            <div className="lp-section-head">
-              <h2 className="lp-section-title" data-reveal>
-                Four constants behind every <em>trade</em>
-              </h2>
-              <span className="lp-index" data-reveal>
-                [ 03 — Principles ]
-              </span>
-            </div>
-            <div className="lp-pillars">
-              {PILLARS.map((p, i) => (
-                <div className="lp-pillar" key={p.h} data-reveal data-reveal-delay={i % 3}>
-                  <span className="n">{p.n}</span>
-                  <h4>{p.h}</h4>
-                  <p>{p.p}</p>
+                <div style={{ position: "relative", marginTop: 14, height: wide ? 300 : 230 }}>
+                  {beats.map((b, j) => (
+                    <div
+                      key={j}
+                      aria-hidden={b.op < 0.5}
+                      style={{ position: "absolute", left: 0, right: 0, top: 0, opacity: b.op.toFixed(3), transform: `translateY(${b.y.toFixed(1)}px)`, willChange: "opacity,transform" }}
+                    >
+                      <h2 style={{ ...DISPLAY, margin: 0, fontSize: "clamp(30px,3.6vw,46px)", lineHeight: 1.06, letterSpacing: "-0.045em" }}>{b.h}</h2>
+                      <p style={{ margin: "16px 0 0", fontSize: "clamp(17px,1.5vw,19px)", color: "var(--ink-2)", textWrap: "pretty" }}>{b.p}</p>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* how it works */}
-        <section className="lp-section">
-          <div className="lp-wrap">
-            <div className="lp-section-head">
-              <h2 className="lp-section-title" data-reveal>
-                From mandate to <em>autopilot</em>
-              </h2>
-              <span className="lp-index" data-reveal>
-                [ 04 — How it works ]
-              </span>
-            </div>
-            <div className="lp-steps">
-              {STEPS.map((s) => (
-                <div className="lp-step" key={s.n} data-reveal>
-                  <span className="lp-step-num">/ {s.n}</span>
-                  <div className="lp-step-body">
-                    <h4>{s.h}</h4>
-                    <p>{s.p}</p>
-                  </div>
-                  <span className="lp-step-arrow" aria-hidden>
-                    →
-                  </span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <span style={{ width: (22 - k * 16).toFixed(1) + "px", height: 6, borderRadius: 3, background: `color-mix(in oklch,var(--ink) ${Math.round(100 - k * 70)}%,transparent)` }} />
+                  <span style={{ width: (6 + k * 16).toFixed(1) + "px", height: 6, borderRadius: 3, background: `color-mix(in oklch,var(--ink) ${Math.round(30 + k * 70)}%,transparent)` }} />
                 </div>
-              ))}
+              </div>
+              <div
+                ref={(el) => {
+                  stageRefs.current[i] = el;
+                }}
+                aria-hidden
+                style={{
+                  position: "relative",
+                  flex: "1 1 0",
+                  minWidth: 0,
+                  width: "100%",
+                  height: wide ? "min(78vh,720px)" : "48vh",
+                  borderRadius: 20,
+                  overflow: "hidden",
+                  background: "var(--frame)",
+                  boxShadow: "0 0 0 1px var(--line)",
+                }}
+              >
+                <div
+                  data-desk="1"
+                  inert
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    top: 0,
+                    width: 1280,
+                    height: 800,
+                    transformOrigin: "0 0",
+                    transform: `translate(${tx.toFixed(1)}px,${ty.toFixed(1)}px) scale(${s.toFixed(4)})`,
+                    pointerEvents: "none",
+                  }}
+                >
+                  <DeskDemo theme={theme} screen={c.screen} />
+                </div>
+              </div>
             </div>
-            <div className="lp-hero-cta" style={{ marginTop: 40 }} data-reveal>
-              <a className="lp-btn" href="/how-it-works">
-                See every agent &amp; loop in detail →
-              </a>
-            </div>
-          </div>
-        </section>
+          </section>
+        );
+      })}
 
-        {/* final CTA */}
-        <section className="lp-cta" id="contact">
-          <div className="lp-wrap">
-            <span className="lp-eyebrow" data-reveal>
-              Ready when you are
-            </span>
-            <h2 data-reveal data-reveal-delay="1">
-              Ready to <em>automate</em> everything?
+      <section style={{ borderTop: "1px solid var(--line)" }}>
+        <div
+          style={{
+            maxWidth: 1040,
+            margin: "0 auto",
+            padding: "clamp(96px,12vw,150px) 20px",
+            display: "grid",
+            gridTemplateColumns: wide ? "minmax(0,1.2fr) minmax(0,1fr)" : "minmax(0,1fr)",
+            gap: 40,
+            alignItems: "end",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--accent-ink)" }}>Under the hood</div>
+            <h2 style={{ ...DISPLAY, margin: "12px 0 0", fontSize: "clamp(34px,4.6vw,56px)", lineHeight: 1.04, letterSpacing: "-0.045em" }}>
+              Sixteen hand-offs between a filing and a fill.
             </h2>
-            <div className="lp-hero-cta" style={{ justifyContent: "center" }} data-reveal data-reveal-delay="2">
-              <a className="lp-btn lp-btn--solid" href="/desk">
-                <span className="dot" aria-hidden />
-                Enter the desk
-              </a>
-              <a className="lp-btn" href="#top">
-                Back to top
-              </a>
-            </div>
           </div>
-        </section>
+          <div>
+            <p style={{ margin: 0, color: "var(--ink-2)", textWrap: "pretty" }}>
+              Budget check, parsing, sector analysis, red-team critique, valuation, committee, sizing, treasury, risk, compliance, routing, execution, cost analysis and reconciliation. Each stage does one job and can&apos;t do another&apos;s.
+            </p>
+            <Link href="/how-it-works" style={{ display: "inline-block", marginTop: 16 }}>
+              See the full pipeline ›
+            </Link>
+          </div>
+        </div>
+        <div style={{ maxWidth: 1040, margin: "0 auto", padding: "0 20px", display: "flex", gap: 3 }}>
+          {STAGES.map(([n, name, role]) => (
+            <div key={n} title={name} style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ height: 44, borderRadius: 4, background: ROLE[role] }} />
+              <div style={{ fontSize: 10, color: "var(--ink-3)", marginTop: 6, fontFamily: "var(--f-mono)" }}>{n}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ maxWidth: 1040, margin: "14px auto 0", padding: "0 20px", display: "flex", flexWrap: "wrap", gap: 18, fontSize: 12, color: "var(--ink-2)" }}>
+          {ROLE_KEY.map(([k, label]) => (
+            <span key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: ROLE[k] }} />
+              {label}
+            </span>
+          ))}
+        </div>
+      </section>
 
-        {/* footer */}
-        <footer className="lp-footer">
-          <div className="lp-wrap">
-            <div className="lp-footer-top">
-              <div className="lp-footer-brand">
-                Meridian<em>.</em>
-              </div>
-              <div className="lp-footer-cols">
-                <div className="lp-fcol">
-                  <h5>Navigate</h5>
-                  <a href="/how-it-works">How it works</a>
-                  <a href="#approach">Approach</a>
-                  <a href="#platform">Platform</a>
-                  <a href="#research">Research</a>
-                  <a href="#contact">Contact</a>
-                </div>
-                <div className="lp-fcol">
-                  <h5>Desks</h5>
-                  <a href="#platform">US · IBKR</a>
-                  <a href="#platform">India · Kite</a>
-                  <a href="#platform">Macro</a>
-                  <a href="#platform">Risk</a>
-                </div>
-                <div className="lp-fcol">
-                  <h5>Social</h5>
-                  <a href="#">X / Twitter</a>
-                  <a href="#">LinkedIn</a>
-                  <a href="#">GitHub</a>
-                  <a href="mailto:hello@meridian.fund">Email</a>
-                </div>
-              </div>
-            </div>
-            <div className="lp-footer-bottom">
-              <span>© {year} Meridian Capital Intelligence</span>
-              <span>Built with three.js · React Three Fiber</span>
-            </div>
-          </div>
-        </footer>
-      </main>
+      <section style={{ textAlign: "center", padding: "clamp(110px,14vw,180px) 20px" }}>
+        <h2 style={{ ...DISPLAY, margin: "0 auto", maxWidth: 820, fontSize: "clamp(40px,6.4vw,80px)", lineHeight: 1.02, letterSpacing: "-0.05em" }}>
+          Connect a brokerage. Watch it work.
+        </h2>
+        <p style={{ margin: "20px auto 0", fontSize: 19, color: "var(--ink-2)", maxWidth: 560 }}>
+          Works with Interactive Brokers for US equities and Zerodha Kite for NSE. Read-only until you approve a trade.
+        </p>
+        <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap", marginTop: 32, alignItems: "center" }}>
+          <Link href="/desk" className="mx-press" style={PRIMARY_CTA}>
+            Open the desk
+          </Link>
+          <Link href="/guided">Take the guided tour ›</Link>
+        </div>
+      </section>
+
+      <footer style={{ borderTop: "1px solid var(--line)" }}>
+        <div style={{ maxWidth: 1040, margin: "0 auto", padding: "28px 20px 40px", display: "flex", flexWrap: "wrap", gap: "12px 28px", fontSize: 12, color: "var(--ink-3)" }}>
+          <span style={{ marginRight: "auto" }}>© 2026 Meridian Capital Intelligence</span>
+          <Link href="/how-it-works" style={{ color: "var(--ink-2)" }}>How it works</Link>
+          <Link href="/guided" style={{ color: "var(--ink-2)" }}>Guided tour</Link>
+          <Link href="/sign-in" style={{ color: "var(--ink-2)" }}>Operator sign-in</Link>
+          <a href="mailto:hello@meridian.fund" style={{ color: "var(--ink-2)" }}>hello@meridian.fund</a>
+        </div>
+      </footer>
     </div>
   );
 }

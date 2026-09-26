@@ -19,7 +19,7 @@ const SCREENS = {
 } as const;
 
 export default function Desk() {
-  const [active, setActive] = useState<ScreenId>("swarm");
+  const [active, setActive] = useState<ScreenId>("portfolio");
   const Screen = SCREENS[active];
   return (
     <AuthGate>

@@ -8,82 +8,76 @@ import { useOperator } from "./AuthGate";
 import { useMarket } from "./MarketContext";
 import { signOutOperator } from "@/lib/auth/operator";
 import { listPositions, listIbkrAccounts, listFundSnapshots } from "@/lib/appwrite/queries";
-import { fmtFullMoney } from "@/lib/meridian/format";
+import type { Position } from "@/lib/appwrite/schema";
+import { fmtFullMoney, type Market } from "@/lib/meridian/format";
+import { useTheme } from "@/lib/meridian/theme";
 
 export type ScreenId = "swarm" | "research" | "portfolio" | "console" | "compute";
 
-const SCREENS: { id: ScreenId; num: string; label: string }[] = [
-  { id: "swarm",     num: "01", label: "Swarm Command" },
-  { id: "research",  num: "02", label: "Research Engine" },
-  { id: "portfolio", num: "03", label: "Portfolio OS" },
-  { id: "console",   num: "04", label: "Operator Console" },
-  { id: "compute",   num: "05", label: "Compute Layer" },
+// id, label, crumb, Material Symbols glyph
+const SCREENS: { id: ScreenId; label: string; crumb: string; icon: string }[] = [
+  { id: "portfolio", label: "Portfolio", crumb: "Capital", icon: "pie_chart" },
+  { id: "swarm", label: "Swarm", crumb: "Intelligence", icon: "hub" },
+  { id: "research", label: "Research", crumb: "Intelligence", icon: "description" },
+  { id: "console", label: "Console", crumb: "Operator", icon: "forum" },
+  { id: "compute", label: "Compute", crumb: "System", icon: "memory" },
 ];
 
-const CRUMBS: Record<ScreenId, [string, string]> = {
-  swarm:     ["Intelligence", "Swarm Command"],
-  research:  ["Intelligence", "Research Engine"],
-  portfolio: ["Capital", "Portfolio OS"],
-  console:   ["Operator", "Console"],
-  compute:   ["System", "Compute Layer"],
-};
-
-type UsBook = {
+type Posture = {
   nav: number;
   cash: number;
   leverage: number;
   cashPct: number;
   var99: number | null;
-  count: number;
   connected: boolean;
 };
 
+type Book = { positions: Position[]; posture: Posture | null };
+
 /**
- * Live US-desk rail stats, derived from the real IBKR book — NAV/cash from the
- * connected account, leverage & cash% from the live positions, and a 99%/1d
+ * The live book behind the sidebar: held positions for the active desk and,
+ * on the US desk, posture derived from the real IBKR account — NAV/cash from
+ * the connected account, leverage & cash% from the positions, and a 99%/1d
  * historical VaR from the fund's NAV return series (— until there's history).
  */
-function useUsBook(market: string): UsBook | null {
-  const [book, setBook] = useState<UsBook | null>(null);
+function useBook(market: Market): Book | null {
+  const [book, setBook] = useState<Book | null>(null);
   useEffect(() => {
     let cancelled = false;
-    if (market !== "US") {
-      // Clear off the render path to avoid a synchronous cascading update.
-      Promise.resolve().then(() => {
-        if (!cancelled) setBook(null);
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    Promise.all([listPositions(50, "US"), listIbkrAccounts(10), listFundSnapshots(200, "US")])
-      .then(([pos, accts, snaps]) => {
-        if (cancelled) return;
-        const cash = accts.reduce((s, a) => s + (a.equity_cash || 0), 0);
-        const grossMV = pos.reduce((s, p) => s + Math.abs(p.market_value || 0), 0);
-        const netMV = pos.reduce((s, p) => s + (p.market_value || 0), 0);
-        const nav = netMV + cash;
-        const navs = snaps.map((s) => s.nav_usd);
-        const rets: number[] = [];
-        for (let i = 1; i < navs.length; i++) if (navs[i - 1]) rets.push(navs[i] / navs[i - 1] - 1);
-        let var99: number | null = null;
-        if (rets.length >= 2) {
-          const sorted = [...rets].sort((a, b) => a - b);
-          var99 = Math.abs(sorted[Math.floor(0.01 * sorted.length)] ?? sorted[0]);
-        }
-        setBook({
+    const load = async (): Promise<Book> => {
+      if (market !== "US") return { positions: await listPositions(50, market), posture: null };
+      const [pos, accts, snaps] = await Promise.all([
+        listPositions(50, "US"),
+        listIbkrAccounts(10),
+        listFundSnapshots(200, "US"),
+      ]);
+      const cash = accts.reduce((s, a) => s + (a.equity_cash || 0), 0);
+      const grossMV = pos.reduce((s, p) => s + Math.abs(p.market_value || 0), 0);
+      const netMV = pos.reduce((s, p) => s + (p.market_value || 0), 0);
+      const nav = netMV + cash;
+      const navs = snaps.map((s) => s.nav_usd);
+      const rets: number[] = [];
+      for (let i = 1; i < navs.length; i++) if (navs[i - 1]) rets.push(navs[i] / navs[i - 1] - 1);
+      let var99: number | null = null;
+      if (rets.length >= 2) {
+        const sorted = [...rets].sort((a, b) => a - b);
+        var99 = Math.abs(sorted[Math.floor(0.01 * sorted.length)] ?? sorted[0]);
+      }
+      return {
+        positions: pos,
+        posture: {
           nav,
           cash,
           leverage: nav ? grossMV / nav : 0,
           cashPct: nav ? cash / nav : 0,
           var99,
-          count: pos.length,
           connected: accts.some((a) => a.ibkr_account_id),
-        });
-      })
-      .catch(() => {
-        if (!cancelled) setBook(null);
-      });
+        },
+      };
+    };
+    load()
+      .then((b) => !cancelled && setBook(b))
+      .catch(() => !cancelled && setBook(null));
     return () => {
       cancelled = true;
     };
@@ -91,115 +85,99 @@ function useUsBook(market: string): UsBook | null {
   return book;
 }
 
-function Rail({ active, setActive }: { active: ScreenId; setActive: (id: ScreenId) => void }) {
-  const { market } = useMarket();
-  const usBook = useUsBook(market);
+function Icon({ name, fill = 0, size = 19 }: { name: string; fill?: number; size?: number }) {
   return (
-    <aside className="rail">
-      <div className="rail-brand">
-        <div className="mark" />
-        <div>
-          <div className="name">MERIDIAN</div>
-          <div className="sub">{market === "IN" ? "INDIA DESK · NSE / BSE" : "AUTONOMOUS CAPITAL INTELLIGENCE"}</div>
-        </div>
-      </div>
-
-      <div className="rail-section">Workspaces</div>
-      <nav className="rail-nav">
-        {SCREENS.map((s) => (
-          <button
-            key={s.id}
-            className={active === s.id ? "active" : ""}
-            onClick={() => setActive(s.id)}
-          >
-            <span className="dot" />
-            <span>{s.label}</span>
-            <span className="num">{s.num}</span>
-          </button>
-        ))}
-      </nav>
-
-      <div className="rail-section">Books</div>
-      <div
-        style={{
-          padding: "4px 16px 0",
-          fontFamily: "var(--mono)",
-          fontSize: 11,
-          color: "var(--ink-2)",
-          letterSpacing: "0.04em",
-          lineHeight: 1.95,
-        }}
-      >
-        {market === "IN" ? (
-          <>
-            <div><span className="amber">●</span> India Fund · KITE</div>
-            <div><span className="amber">●</span> NSE Equities · live</div>
-            <div style={{ color: "var(--ink-4)" }}>connect a Kite account →</div>
-          </>
-        ) : usBook?.connected ? (
-          <>
-            <div><span className="amber">●</span> IBKR Fund · {fmtFullMoney(usBook.nav, "US")}</div>
-            <div><span className="amber">●</span> US Equities · {usBook.count} live</div>
-            <div style={{ color: "var(--ink-4)" }}>cash {fmtFullMoney(usBook.cash, "US")}</div>
-          </>
-        ) : (
-          <>
-            <div><span className="amber">●</span> US Fund · IBKR</div>
-            <div style={{ color: "var(--ink-4)" }}>connect an IBKR account →</div>
-          </>
-        )}
-      </div>
-
-      <div className="rail-section">Posture</div>
-      <div
-        style={{
-          padding: "4px 16px 14px",
-          fontFamily: "var(--mono)",
-          fontSize: 11,
-          color: "var(--ink-2)",
-          lineHeight: 1.95,
-        }}
-      >
-        {market === "US" && !usBook?.connected ? (
-          <div style={{ color: "var(--ink-4)" }}>— no live book —</div>
-        ) : (
-          <>
-            <div>
-              Net leverage{" "}
-              <span style={{ color: "var(--ink-0)" }}>
-                {usBook ? usBook.leverage.toFixed(2) + "×" : "—"}
-              </span>
-            </div>
-            <div>
-              VaR (99,1d){" "}
-              <span style={{ color: "var(--ink-0)" }}>
-                {usBook?.var99 != null ? (usBook.var99 * 100).toFixed(2) + "%" : "—"}
-              </span>
-            </div>
-            <div>
-              Cash{" "}
-              <span style={{ color: "var(--ink-0)" }}>
-                {usBook ? (usBook.cashPct * 100).toFixed(1) + "%" : "—"}
-              </span>
-            </div>
-          </>
-        )}
-      </div>
-
-      <RailFoot />
-    </aside>
+    <span className="msr" aria-hidden style={{ fontSize: size, fontVariationSettings: `'FILL' ${fill}` }}>
+      {name}
+    </span>
   );
 }
 
-function RailFoot() {
+function MarketSeg() {
+  const { market, setMarket } = useMarket();
+  return (
+    <div className="v2-seg" role="group" aria-label="Market">
+      {(["US", "IN"] as const).map((m) => (
+        <button key={m} className={market === m ? "on" : ""} aria-pressed={market === m} onClick={() => setMarket(m)}>
+          {m === "US" ? "US" : "India"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Holdings({ book, market }: { book: Book | null; market: Market }) {
+  const rows = [...(book?.positions ?? [])].sort((a, b) => Math.abs(b.market_value) - Math.abs(a.market_value));
+  const locale = market === "IN" ? "en-IN" : "en-US";
+  return (
+    <>
+      <div className="v2-hold-head">
+        <span>Holdings</span>
+        <span className="meta">{market === "IN" ? "India Fund · Kite" : "US Fund · IBKR"}</span>
+      </div>
+      <div className="v2-hold">
+        {book && rows.length === 0 && (
+          <div className="v2-empty">
+            No positions yet. Connect {market === "IN" ? "a Kite account" : "IBKR"} from Portfolio.
+          </div>
+        )}
+        {rows.map((p) => {
+          const cost = p.market_value - p.unrealized_pnl;
+          const pct = cost ? (p.unrealized_pnl / Math.abs(cost)) * 100 : 0;
+          const px = p.qty ? p.market_value / p.qty : 0;
+          const tone = pct >= 0 ? "up" : "down";
+          return (
+            <div key={p.$id} className="v2-hold-row" title="Unrealised P&L vs. average cost">
+              <div className="who">
+                <div className="sym">{p.ticker}</div>
+                <div className="sub">
+                  {p.qty.toLocaleString(locale)} sh · {(p.weight * 100).toFixed(1)}%
+                </div>
+              </div>
+              <div className="px">
+                <div>{px.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <span className={"chg " + tone}>
+                  {(pct >= 0 ? "+" : "−") + Math.abs(pct).toFixed(2)}%
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function PostureLine({ posture }: { posture: Posture | null }) {
+  if (!posture?.connected) return null;
+  return (
+    <div className="v2-posture">
+      <span>
+        NAV <b>{fmtFullMoney(posture.nav, "US")}</b>
+      </span>
+      <span>
+        Lev <b>{posture.leverage.toFixed(2)}×</b>
+      </span>
+      <span>
+        VaR <b>{posture.var99 != null ? (posture.var99 * 100).toFixed(2) + "%" : "—"}</b>
+      </span>
+      <span>
+        Cash <b>{(posture.cashPct * 100).toFixed(1)}%</b>
+      </span>
+    </div>
+  );
+}
+
+function Operator() {
   const op = useOperator();
   const router = useRouter();
-  const initials = (op?.name || op?.email || "OP")
-    .split(/[\s@.]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((s) => s[0]?.toUpperCase() || "")
-    .join("") || "OP";
+  const initials =
+    (op?.name || op?.email || "OP")
+      .split(/[\s@.]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((s) => s[0]?.toUpperCase() || "")
+      .join("") || "OP";
 
   async function handleSignOut() {
     await signOutOperator();
@@ -207,79 +185,30 @@ function RailFoot() {
   }
 
   return (
-    <div className="rail-foot">
+    <div className="v2-foot">
       <div className="avatar">{initials}</div>
       <div className="who">
         <div className="name">{op?.name || op?.email || "Operator"}</div>
-        <div className="role" style={{ display: "flex", gap: 10 }}>
-          <Link href="/guided" style={{ color: "var(--ink-3)", textDecoration: "none" }}>
-            ↗ Guided tour
-          </Link>
-          <button
-            onClick={handleSignOut}
-            style={{
-              background: "transparent",
-              border: 0,
-              padding: 0,
-              color: "var(--ink-3)",
-              cursor: "pointer",
-              font: "inherit",
-            }}
-          >
-            ↩ Sign out
-          </button>
-        </div>
+        <Link href="/guided" className="role">
+          Guided tour
+        </Link>
       </div>
-    </div>
-  );
-}
-
-function MarketToggle() {
-  const { market, setMarket } = useMarket();
-  const base: React.CSSProperties = {
-    background: "transparent",
-    border: 0,
-    padding: "3px 9px",
-    font: "inherit",
-    fontFamily: "var(--mono)",
-    fontSize: 11,
-    letterSpacing: "0.08em",
-    cursor: "pointer",
-    color: "var(--ink-3)",
-    borderRadius: 4,
-  };
-  const on: React.CSSProperties = { ...base, color: "var(--ink-0)", background: "var(--line-soft)" };
-  return (
-    <div
-      role="group"
-      aria-label="Market"
-      style={{
-        display: "inline-flex",
-        border: "1px solid var(--line-strong)",
-        borderRadius: 6,
-        padding: 1,
-        gap: 1,
-      }}
-    >
-      <button style={market === "US" ? on : base} onClick={() => setMarket("US")} aria-pressed={market === "US"}>
-        🇺🇸 US
-      </button>
-      <button style={market === "IN" ? on : base} onClick={() => setMarket("IN")} aria-pressed={market === "IN"}>
-        🇮🇳 IN
+      <button onClick={handleSignOut} className="out">
+        Sign out
       </button>
     </div>
   );
 }
 
 const STATUS_LABEL: Record<ExchangeStatus, string> = {
-  open: "MARKETS OPEN",
-  pre: "PRE-OPEN",
-  after: "AFTER HOURS",
-  closed: "MARKETS CLOSED",
+  open: "Market open",
+  pre: "Pre-open",
+  after: "After hours",
+  closed: "Market closed",
 };
 
-function MarketsPill({ market }: { market: "US" | "IN" }) {
-  // Recompute on the client every 30s so the pill flips as sessions open/close.
+function MarketStatus({ market }: { market: Market }) {
+  // Recompute on the client every 30s so the status flips as sessions open/close.
   // SSR renders nothing; the effect hydrates the real status.
   const [status, setStatus] = useState<ExchangeStatus | null>(null);
   useEffect(() => {
@@ -288,58 +217,12 @@ function MarketsPill({ market }: { market: "US" | "IN" }) {
     const id = setInterval(tick, 30_000);
     return () => clearInterval(id);
   }, [market]);
-  const exch = market === "IN" ? "NSE" : "NYSE";
-  if (!status) {
-    return (
-      <span className="pill" suppressHydrationWarning>
-        <span className="pulse" />· {exch}
-      </span>
-    );
-  }
-  const cls = status === "open" ? "pill" : `pill ${status}`;
+  if (!status) return null;
   return (
-    <span className={cls} suppressHydrationWarning>
-      <span className="pulse" />
-      {STATUS_LABEL[status]} · {exch}
+    <span className={"v2-status " + status}>
+      <span className="ping" aria-hidden />
+      {STATUS_LABEL[status]} · {market === "IN" ? "NSE" : "NYSE"}
     </span>
-  );
-}
-
-function TopBar({ active }: { active: ScreenId }) {
-  const [a, b] = CRUMBS[active];
-  const { market } = useMarket();
-  return (
-    <header className="topbar">
-      <div className="crumbs">
-        <span>{a}</span>
-        <span className="sep">/</span>
-        <span className="cur">{b}</span>
-      </div>
-      <MarketTicker />
-      <div className="topbar-right">
-        <MarketToggle />
-        <MarketsPill market={market} />
-        <span className="mono">
-          <ExchangeClock market={market} />
-        </span>
-      </div>
-    </header>
-  );
-}
-
-function StatusBar() {
-  const op = useOperator();
-  const operatorName = op?.name || op?.email || "—";
-  return (
-    <footer className="status">
-      <div className="cell"><span className="k">Session</span><span className="v mono">#2,841</span></div>
-      <div className="cell"><span className="k">Operator</span><span className="v">{operatorName}</span></div>
-      <div className="cell"><span className="k">Net</span><span className="v mono">+$10.45M</span><span className="ok">▲ 0.82%</span></div>
-      <div className="cell"><span className="k">Agents</span><span className="v mono">4,552 / 6,128</span></div>
-      <div className="cell"><span className="k">Inference</span><span className="v mono">48,221 /s</span></div>
-      <div className="cell"><span className="k">Risk</span><span className="ok">●</span><span className="v">within bounds</span></div>
-      <div className="cell"><span className="k">Build</span><span className="v mono">v4.7.21 · stable</span></div>
-    </footer>
   );
 }
 
@@ -352,13 +235,69 @@ export function Shell({
   setActive: (id: ScreenId) => void;
   children: ReactNode;
 }) {
+  const { market } = useMarket();
+  const [theme, toggleTheme] = useTheme("dark");
+  const book = useBook(market);
+  const cur = SCREENS.find((s) => s.id === active)!;
+
   return (
-    <div className="meridian-root">
-      <div className="app">
-        <Rail active={active} setActive={setActive} />
-        <TopBar active={active} />
+    <div className="meridian-root mx-desk" data-theme={theme}>
+      <div className="app v2">
+        <aside className="v2-side mx-glass">
+          <div className="v2-brand">
+            <span className="mark" aria-hidden>
+              <span />
+            </span>
+            <Link href="/" className="name">
+              Meridian
+            </Link>
+            <button className="v2-round" onClick={toggleTheme} aria-label="Toggle appearance">
+              <Icon name={theme === "dark" ? "light_mode" : "dark_mode"} size={18} />
+            </button>
+          </div>
+          <MarketSeg />
+          <nav className="v2-nav">
+            {SCREENS.map((s) => (
+              <button
+                key={s.id}
+                className={active === s.id ? "on" : ""}
+                aria-current={active === s.id ? "page" : undefined}
+                onClick={() => setActive(s.id)}
+              >
+                <Icon name={s.icon} fill={active === s.id ? 1 : 0} />
+                {s.label}
+              </button>
+            ))}
+          </nav>
+          <Holdings book={book} market={market} />
+          <PostureLine posture={market === "US" ? (book?.posture ?? null) : null} />
+          <Operator />
+        </aside>
+
+        <header className="v2-head mx-glass">
+          <div className="row">
+            <span className="title">{cur.label}</span>
+            <span className="crumb">{cur.crumb}</span>
+            <div className="right">
+              <MarketStatus market={market} />
+              <span className="clock">
+                <ExchangeClock market={market} />
+              </span>
+            </div>
+          </div>
+          <MarketTicker />
+        </header>
+
         <main className="main">{children}</main>
-        <StatusBar />
+
+        <nav className="v2-tabs mx-glass" aria-label="Screens">
+          {SCREENS.map((s) => (
+            <button key={s.id} className={active === s.id ? "on" : ""} onClick={() => setActive(s.id)}>
+              <Icon name={s.icon} fill={active === s.id ? 1 : 0} size={26} />
+              <span>{s.label}</span>
+            </button>
+          ))}
+        </nav>
       </div>
     </div>
   );
@@ -366,6 +305,6 @@ export function Shell({
 
 export { SCREENS };
 
-export function useScreenState(initial: ScreenId = "swarm") {
+export function useScreenState(initial: ScreenId = "portfolio") {
   return useState<ScreenId>(initial);
 }

@@ -1,163 +1,185 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { CSSProperties, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   signInOperator,
   bootstrapOperatorOnce,
   isOperatorEmail,
 } from "@/lib/auth/operator";
-import "../glass.css";
-import "./sign-in.css";
+import { useTheme } from "@/lib/meridian/theme";
+
+const LABEL: CSSProperties = { fontSize: 13, fontWeight: 500, color: "var(--ink-2)", margin: "0 0 6px 4px" };
+const INPUT: CSSProperties = {
+  height: 50,
+  borderRadius: 14,
+  border: "1px solid var(--line)",
+  background: "var(--field)",
+  color: "var(--ink)",
+  padding: "0 16px",
+  font: "inherit",
+  fontSize: 17,
+};
 
 export default function SignInPage() {
   const router = useRouter();
+  const [theme, toggleTheme] = useTheme("light", true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [mode, setMode] = useState<"sign-in" | "bootstrap">("sign-in");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
-
-  // Share the landing's theme preference so the look stays consistent.
-  useEffect(() => {
-    const stored = window.localStorage.getItem("lp-theme");
-    if (stored === "dark" || stored === "light") setTheme(stored);
-    else if (window.matchMedia("(prefers-color-scheme: dark)").matches) setTheme("dark");
-  }, []);
-  const toggleTheme = () =>
-    setTheme((t) => {
-      const next = t === "light" ? "dark" : "light";
-      window.localStorage.setItem("lp-theme", next);
-      return next;
-    });
+  const boot = mode === "bootstrap";
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return;
     setBusy(true);
     setErr(null);
     try {
       if (!isOperatorEmail(email)) {
-        throw new Error(
-          "This email is not on the operator allowlist (NEXT_PUBLIC_OPERATOR_EMAILS).",
-        );
+        throw new Error("This email isn't on the operator allowlist (NEXT_PUBLIC_OPERATOR_EMAILS).");
       }
-      if (mode === "sign-in") {
-        await signInOperator(email, password);
-      } else {
+      if (boot) {
         await bootstrapOperatorOnce(email, password, name || "Operator");
+      } else {
+        await signInOperator(email, password);
       }
       router.replace("/desk");
     } catch (e2) {
-      const msg = e2 instanceof Error ? e2.message : "Sign-in failed.";
-      setErr(msg);
+      setErr(e2 instanceof Error ? e2.message : "Sign-in failed.");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="lg si" data-theme={theme}>
-      <div className="lg-field" aria-hidden>
-        <span className="blob b1" />
-        <span className="blob b2" />
-        <span className="blob b3" />
-        <span className="grain" />
-      </div>
+    <div
+      className="mx-page"
+      data-theme={theme}
+      style={{
+        minHeight: "100vh",
+        background: "var(--bg)",
+        color: "var(--ink)",
+        fontFamily: "var(--f-text)",
+        fontSize: 17,
+        lineHeight: 1.47,
+        letterSpacing: "-0.01em",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <main style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px 20px", position: "relative" }}>
+        <button
+          onClick={toggleTheme}
+          aria-label="Toggle appearance"
+          style={{ position: "absolute", top: 16, right: 16, width: 36, height: 36, borderRadius: "50%", border: 0, background: "var(--fill)", color: "var(--ink)", cursor: "pointer", fontSize: 15 }}
+        >
+          {theme === "dark" ? "☀" : "☾"}
+        </button>
 
-      <button
-        type="button"
-        className="lg-themetoggle si-theme"
-        onClick={toggleTheme}
-        aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-      >
-        {theme === "dark" ? "☀" : "☾"}
-      </button>
-
-      <div className="lg-content si-stage">
-        <form onSubmit={submit} className="lg-glass si-card">
-          <div className="si-brand">
-            <span className="lg-mark" aria-hidden />
-            <div>
-              <div className="si-brandname">MERIDIAN</div>
-              <div className="si-brandsub">Autonomous Capital Intelligence</div>
-            </div>
+        <form
+          onSubmit={submit}
+          style={{
+            width: "100%",
+            maxWidth: 400,
+            background: "var(--surface)",
+            borderRadius: 28,
+            boxShadow: "var(--shadow)",
+            padding: "40px 32px 28px",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <div style={{ width: 56, height: 56, borderRadius: 16, background: "var(--btn)", display: "grid", placeItems: "center", margin: "0 auto 20px" }}>
+            <span style={{ width: 24, height: 24, borderRadius: "50%", border: "2.5px solid var(--btn-ink)", display: "grid", placeItems: "center" }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent)" }} />
+            </span>
           </div>
-
-          <h1 className="si-title">
-            {mode === "sign-in" ? (
-              <>Operator <em>sign-in</em></>
-            ) : (
-              <>First-run <em>bootstrap</em></>
-            )}
+          <h1 style={{ margin: 0, fontSize: 32, fontWeight: 700, letterSpacing: "-0.035em", textAlign: "center" }}>
+            {boot ? "Create the first operator" : "Sign in to Meridian"}
           </h1>
-          <p className="si-lede">
-            {mode === "sign-in"
-              ? "Authenticate to take the desk and supervise the swarm."
-              : "Create the first operator for this deployment."}
+          <p style={{ margin: "6px 0 28px", color: "var(--ink-2)", fontSize: 17, textAlign: "center" }}>
+            {boot ? "Set up the first operator for this deployment." : "Take the desk and supervise the swarm."}
           </p>
 
-          <label className="si-label">Email</label>
+          <label htmlFor="si-email" style={LABEL}>Email</label>
           <input
+            id="si-email"
             type="email"
             required
             autoComplete="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="si-input"
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setErr(null);
+            }}
             placeholder="operator@fund.com"
+            style={{ ...INPUT, marginBottom: 16 }}
           />
 
-          {mode === "bootstrap" && (
+          {boot && (
             <>
-              <label className="si-label">Name</label>
+              <label htmlFor="si-name" style={LABEL}>Name</label>
               <input
+                id="si-name"
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="si-input"
-                placeholder="Operator"
+                placeholder="Your name"
+                style={{ ...INPUT, marginBottom: 16 }}
               />
             </>
           )}
 
-          <label className="si-label">Password</label>
+          <label htmlFor="si-password" style={LABEL}>Password</label>
           <input
+            id="si-password"
             type="password"
             required
             minLength={8}
-            autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
+            autoComplete={boot ? "new-password" : "current-password"}
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="si-input"
-            placeholder="••••••••"
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setErr(null);
+            }}
+            placeholder="At least 8 characters"
+            style={INPUT}
           />
 
-          {err && <div className="si-error">{err}</div>}
+          {err && (
+            <div role="alert" style={{ marginTop: 14, padding: "12px 14px", borderRadius: 12, background: "color-mix(in oklch,var(--down) 12%,transparent)", color: "var(--down)", fontSize: 14 }}>
+              {err}
+            </div>
+          )}
 
-          <button type="submit" disabled={busy} className="lg-btn lg-btn--solid si-submit">
-            {busy ? "···" : mode === "sign-in" ? "Sign in" : "Create operator"}
+          <button
+            type="submit"
+            disabled={busy}
+            style={{ marginTop: 24, height: 50, border: 0, borderRadius: 14, background: "var(--btn)", color: "var(--btn-ink)", font: "inherit", fontSize: 17, fontWeight: 600, cursor: "pointer", opacity: busy ? 0.6 : 1 }}
+          >
+            {busy ? (boot ? "Creating…" : "Signing in…") : boot ? "Create operator" : "Sign in"}
           </button>
 
           <button
             type="button"
-            className="si-switch"
             onClick={() => {
               setErr(null);
-              setMode(mode === "sign-in" ? "bootstrap" : "sign-in");
+              setMode(boot ? "sign-in" : "bootstrap");
             }}
+            style={{ marginTop: 16, border: 0, background: "transparent", color: "var(--accent-ink)", font: "inherit", fontSize: 15, cursor: "pointer" }}
           >
-            {mode === "sign-in"
-              ? "First-time setup → create operator"
-              : "← back to sign-in"}
+            {boot ? "Back to sign in" : "First time here? Create an operator"}
           </button>
         </form>
 
-        <div className="si-foot mono">
-          MERIDIAN OS · {new Date().getFullYear()} · operator access only
+        <div style={{ marginTop: 28, fontSize: 12, color: "var(--ink-3)", textAlign: "center" }}>
+          Operator access only · <Link href="/">Back to Meridian</Link>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
