@@ -9,14 +9,19 @@ dotenv.config(); // fall back to .env if .env.local missing
 
 const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!;
 const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!;
-const apiKey = process.env.APPWRITE_API_KEY!;
+const apiKey = process.env.APPWRITE_API_KEY;
 export const DB = process.env.NEXT_PUBLIC_APPWRITE_DATABASE_ID || "meridian";
+// In a cloud routine the key never enters the process: the sandbox's egress
+// proxy adds the X-Appwrite-Key header itself (a per-host network secret).
+// Opt-in, so a missing key still fails loudly everywhere else.
+const keyViaProxy = process.env.MERIDIAN_APPWRITE_KEY_VIA_PROXY === "1";
 
-if (!endpoint || !projectId || !apiKey) {
+if (!endpoint || !projectId || (!apiKey && !keyViaProxy)) {
   throw new Error("Missing Appwrite env vars (endpoint / project id / api key)");
 }
 
-const client = new Client().setEndpoint(endpoint).setProject(projectId).setKey(apiKey);
+const client = new Client().setEndpoint(endpoint).setProject(projectId);
+if (apiKey) client.setKey(apiKey);
 export const db = new Databases(client);
 export { ID, Query };
 
