@@ -2142,6 +2142,25 @@
                     ]
                 }
             ]
+        },
+        {
+            "$id": "agent_state",
+            "databaseId": "meridian",
+            "name": "agent_state",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [],
+            "attributes": [
+                {
+                    "key": "value_json",
+                    "type": "string",
+                    "size": 65535,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                }
+            ],
+            "indexes": []
         }
     ]
 }

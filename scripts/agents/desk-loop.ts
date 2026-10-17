@@ -32,6 +32,8 @@
  *   <PREFIX>_EVENT_BATCH       names probed for new filings per cycle (default 10)
  *   MERIDIAN_SYNC_BASE         base URL of the running app for the sync route
  *                              (default http://localhost:3000)
+ *   MERIDIAN_STATE_STORE=appwrite  keep cursors/watermarks in Appwrite instead
+ *                              of dotfiles (for throwaway checkouts, e.g. cloud)
  */
 import type { Sector } from "./universe";
 import { db, DB, Query, emit } from "./appwrite";
@@ -60,7 +62,7 @@ export type DeskConfig = {
   /** Boots this desk's agent roster and returns the id map. */
   bootstrap: () => Promise<Record<string, string>>;
   /** Round-robins the desk universe, skipping/rotating past held names. */
-  nextTicker: (held: readonly string[]) => string;
+  nextTicker: (held: readonly string[]) => Promise<string>;
   /** Resolves a ticker's sector for this desk. */
   sectorOf: (ticker: string) => Sector;
   /** Static universe scanned for new filings (event-driven selection). */
@@ -205,7 +207,7 @@ export async function runDesk(config: DeskConfig): Promise<void> {
         /* feed emit is non-fatal — the cycle proceeds regardless */
       }
     } else {
-      ticker = config.nextTicker(held);
+      ticker = await config.nextTicker(held);
       via = "round-robin";
     }
     const sector = config.sectorOf(ticker);

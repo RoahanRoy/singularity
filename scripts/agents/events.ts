@@ -15,8 +15,9 @@
  *   2. FILING — a rolling slice of the universe probed against EDGAR (US) or NSE
  *               (IN) via the desk's `latestFilingKey`, meta only (no doc fetch).
  *
- * Watermarks live in a per-market state file (`.agents-events-<market>.json`):
- * a `newsSince` timestamp and a per-ticker `filingKeys` map. The FIRST time we
+ * Watermarks live in a per-market state slot (`.agents-events-<market>.json`,
+ * or Appwrite `agent_state` — see state-store.ts): a `newsSince` timestamp and
+ * a per-ticker `filingKeys` map. The FIRST time we
  * see a ticker or start a desk we seed the watermark SILENTLY — only a *change*
  * from a known baseline fires an event, so a fresh boot never stampedes the
  * whole universe into the queue.
@@ -27,9 +28,8 @@
  * or a double trade. That safety net is what lets this module stay best-effort:
  * every fetch is wrapped, and any failure degrades to round-robin.
  */
-import fs from "node:fs";
-import path from "node:path";
 import { db, DB, Query, type Market } from "./appwrite";
+import { readState, writeState } from "./state-store";
 
 export type EventKind = "filing" | "news";
 
@@ -60,24 +60,20 @@ type EventState = {
   scanCursor: number;
 };
 
-const stateFile = (market: Market) => path.resolve(`.agents-events-${market}.json`);
+const stateFile = (market: Market) => `.agents-events-${market}.json`;
 
-function loadState(market: Market): EventState {
-  try {
-    const raw = JSON.parse(fs.readFileSync(stateFile(market), "utf8")) as Partial<EventState>;
-    return {
-      newsSince: raw.newsSince ?? null,
-      filingKeys: raw.filingKeys ?? {},
-      scanCursor: raw.scanCursor ?? 0,
-    };
-  } catch {
-    return { newsSince: null, filingKeys: {}, scanCursor: 0 };
-  }
+async function loadState(market: Market): Promise<EventState> {
+  const raw = (await readState<Partial<EventState>>(stateFile(market))) ?? {};
+  return {
+    newsSince: raw.newsSince ?? null,
+    filingKeys: raw.filingKeys ?? {},
+    scanCursor: raw.scanCursor ?? 0,
+  };
 }
 
-function saveState(market: Market, state: EventState): void {
+async function saveState(market: Market, state: EventState): Promise<void> {
   try {
-    fs.writeFileSync(stateFile(market), JSON.stringify(state));
+    await writeState(stateFile(market), state);
   } catch (err) {
     console.warn(`[events] could not persist ${market} state: ${(err as Error).message}`);
   }
@@ -194,7 +190,7 @@ export type CollectEventsArgs = {
  */
 export async function collectEvents(args: CollectEventsArgs): Promise<EventHit[]> {
   const { market, held, universe, batch, latestFilingKey } = args;
-  const state = loadState(market);
+  const state = await loadState(market);
   const heldSet = new Set(held.map((t) => t.toUpperCase()));
 
   const news = await collectNewsEvents(market, state);
@@ -209,7 +205,7 @@ export async function collectEvents(args: CollectEventsArgs): Promise<EventHit[]
   // Tag news hits with held-ness now that we know the book.
   for (const h of news) h.held = heldSet.has(h.ticker);
 
-  saveState(market, state);
+  await saveState(market, state);
 
   const all = [...filings, ...news];
   // Held book first; within each tier, most recent disclosure first.

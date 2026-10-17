@@ -4,8 +4,7 @@
  * stays cheap on tokens. Sector is resolved from the ticker so the orchestrator
  * can route to the right sector analyst.
  */
-import fs from "node:fs";
-import path from "node:path";
+import { readState, writeState } from "./state-store";
 
 export type Sector =
   | "tech"
@@ -102,19 +101,23 @@ export function sectorFromIndustry(label?: string | null): Sector | null {
   return null;
 }
 
-const CURSOR = path.resolve(".agents-cursor");
-const INDIA_CURSOR = path.resolve(".agents-cursor-india");
+const CURSOR = ".agents-cursor";
+const INDIA_CURSOR = ".agents-cursor-india";
+
+/** Advance a persisted round-robin cursor over `pool` and return the pick. */
+async function advance(file: string, pool: readonly string[]): Promise<string> {
+  const prev = await readState<number>(file);
+  const i = prev !== null && Number.isFinite(Number(prev)) ? (Number(prev) + 1) % pool.length : 0;
+  await writeState(file, i);
+  return pool[i % pool.length];
+}
 
 /**
  * Round-robin across the held India book (preferred) or the static NSE
  * universe as a fallback when nothing is connected yet.
  */
-export function nextIndiaTicker(held: readonly string[] = []): string {
-  const pool = held.length ? held : INDIA_UNIVERSE;
-  let i = 0;
-  if (fs.existsSync(INDIA_CURSOR)) i = (Number(fs.readFileSync(INDIA_CURSOR, "utf8")) + 1) % pool.length;
-  fs.writeFileSync(INDIA_CURSOR, String(i));
-  return pool[i % pool.length];
+export function nextIndiaTicker(held: readonly string[] = []): Promise<string> {
+  return advance(INDIA_CURSOR, held.length ? held : INDIA_UNIVERSE);
 }
 
 /**
@@ -122,10 +125,6 @@ export function nextIndiaTicker(held: readonly string[] = []): string {
  * universe as a fallback when nothing is connected yet. Mirrors the India
  * loop's nextIndiaTicker() so the analyst chain walks the actual portfolio.
  */
-export function nextTicker(held: readonly string[] = []): string {
-  const pool = held.length ? held : FULL_UNIVERSE;
-  let i = 0;
-  if (fs.existsSync(CURSOR)) i = (Number(fs.readFileSync(CURSOR, "utf8")) + 1) % pool.length;
-  fs.writeFileSync(CURSOR, String(i));
-  return pool[i % pool.length];
+export function nextTicker(held: readonly string[] = []): Promise<string> {
+  return advance(CURSOR, held.length ? held : FULL_UNIVERSE);
 }
