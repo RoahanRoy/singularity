@@ -111,7 +111,8 @@ async function indexItem(ticker: string, market: "US" | "IN", item: RssItem): Pr
   } catch (err) {
     const msg = (err as Error).message || "";
     // unique index on `url_hash` rejects duplicates — treat as a quiet no-op.
-    if (/already exists|duplicate|conflict/i.test(msg)) return "dup";
+    // Appwrite answers 409 ("Document violates a unique attribute constraint").
+    if ((err as { code?: number }).code === 409 || /already exists|duplicate|conflict|unique/i.test(msg)) return "dup";
     throw err;
   }
 }
