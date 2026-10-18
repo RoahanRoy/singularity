@@ -3,6 +3,7 @@
 import { ID } from "appwrite";
 import { account } from "@/lib/appwrite/client";
 import { clearOperatorJwt } from "@/lib/auth/operator-fetch";
+import { isOperatorEmail } from "@/lib/auth/allowlist";
 
 export type OperatorUser = {
   $id: string;
@@ -10,20 +11,7 @@ export type OperatorUser = {
   name: string;
 };
 
-function allowlist(): string[] {
-  const raw = process.env.NEXT_PUBLIC_OPERATOR_EMAILS || "";
-  return raw
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-export function isOperatorEmail(email: string | undefined | null): boolean {
-  if (!email) return false;
-  const list = allowlist();
-  if (list.length === 0) return false;
-  return list.includes(email.toLowerCase());
-}
+export { isOperatorEmail };
 
 export async function getCurrentOperator(): Promise<OperatorUser | null> {
   try {

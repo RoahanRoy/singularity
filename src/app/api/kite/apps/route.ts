@@ -1,4 +1,5 @@
 import { listApps } from "@/lib/kite/client";
+import { requireOperator } from "@/lib/appwrite/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,7 +10,9 @@ export const dynamic = "force-dynamic";
  * not sensitive (it's sent to Kite in the public login URL) and lets the client
  * map an existing account to the app it should reconnect through.
  */
-export function GET() {
+export async function GET(req: Request) {
+  const denied = await requireOperator(req);
+  if (denied) return denied;
   const apps = listApps().map((a) => ({ slug: a.slug, label: a.label, apiKey: a.apiKey }));
   return Response.json({ apps });
 }

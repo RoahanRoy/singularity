@@ -1,4 +1,5 @@
 import { authStatus, gatewayUrl } from "@/lib/ibkr/client";
+import { requireOperator } from "@/lib/appwrite/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,7 +9,9 @@ export const dynamic = "force-dynamic";
  * session? The "Connect IBKR" UI polls this to know whether the operator still
  * needs to log into the gateway in their browser.
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const denied = await requireOperator(req);
+  if (denied) return denied;
   try {
     const auth = await authStatus();
     return Response.json({ gateway: gatewayUrl(), ...auth });

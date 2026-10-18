@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { listKiteAccounts, subscribeKiteAccounts } from "@/lib/appwrite/queries";
 import type { KiteAccount } from "@/lib/appwrite/schema";
-import { operatorFetch } from "@/lib/auth/operator-fetch";
+import { clearOperatorJwt, operatorFetch } from "@/lib/auth/operator-fetch";
 
 const STATUS_COLOR: Record<KiteAccount["status"], string> = {
   connected: "var(--green)",
@@ -40,7 +40,7 @@ export function KiteAccountsPanel() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/kite/apps")
+    operatorFetch("/api/kite/apps")
       .then((r) => r.json())
       .then((d: { apps?: KiteAppInfo[] }) => { if (!cancelled) setApps(d.apps ?? []); })
       .catch(() => {});
@@ -48,8 +48,22 @@ export function KiteAccountsPanel() {
   }, []);
 
   // Each configured app is one Personal Kite app (one Zerodha user). Connect and
-  // reconnect must target the right app via ?app=<slug>.
-  const loginHref = (slug?: string) => `/api/kite/login${slug ? `?app=${slug}` : ""}`;
+  // reconnect must target the right app via ?app=<slug>. The login route is
+  // operator-gated, so we POST for the Kite URL (it also parks our JWT in a
+  // cookie for the callback) and then navigate there.
+  async function connect(slug?: string) {
+    // Mint a fresh JWT: the callback re-checks it after the Zerodha login, so
+    // it should have its full 15 minutes left.
+    clearOperatorJwt();
+    try {
+      const res = await operatorFetch(`/api/kite/login${slug ? `?app=${slug}` : ""}`, { method: "POST" });
+      const d = (await res.json()) as { url?: string };
+      if (!res.ok || !d.url) throw new Error(`kite login ${res.status}`);
+      window.location.assign(d.url);
+    } catch {
+      setBanner("error");
+    }
+  }
   const slugForKey = (apiKey: string) => apps.find((a) => a.apiKey === apiKey)?.slug;
 
   useEffect(() => {
@@ -116,7 +130,7 @@ export function KiteAccountsPanel() {
       )}
 
       {apps.length <= 1 ? (
-        <button style={btn} onClick={() => { window.location.href = loginHref(apps[0]?.slug); }}>
+        <button style={btn} onClick={() => connect(apps[0]?.slug)}>
           + Connect KITE account
         </button>
       ) : (
@@ -125,7 +139,7 @@ export function KiteAccountsPanel() {
             <button
               key={app.slug}
               style={btn}
-              onClick={() => { window.location.href = loginHref(app.slug); }}
+              onClick={() => connect(app.slug)}
             >
               + Connect via {app.label}
             </button>
@@ -169,7 +183,7 @@ export function KiteAccountsPanel() {
               {a.status === "needs_reauth" ? (
                 <button
                   style={{ ...btn, background: "var(--amber)", padding: "3px 10px" }}
-                  onClick={() => { window.location.href = loginHref(slugForKey(a.api_key)); }}
+                  onClick={() => connect(slugForKey(a.api_key))}
                 >
                   reconnect
                 </button>
