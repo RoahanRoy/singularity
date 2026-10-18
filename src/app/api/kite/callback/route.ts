@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { exchangeToken, listApps, type KiteSession } from "@/lib/kite/client";
 import { upsertAccount, syncAccount } from "@/lib/kite/sync";
 import { KITE_AUTH_COOKIE, kiteAuthCookieOptions, verifyOperatorJwt } from "@/lib/appwrite/server";
+import { horizonConfigured } from "@/lib/horizon/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,8 +62,9 @@ export async function GET(req: NextRequest) {
     if (!session) throw lastErr ?? new Error("Kite token exchange failed");
 
     const accountId = await upsertAccount(session, usedApiKey);
-    // First sync is best-effort — the account is connected either way.
-    await syncAccount(accountId).catch(() => {});
+    // First sync is best-effort — the account is connected either way. Skipped
+    // while Horizon is the book source: it already carries these holdings.
+    if (!horizonConfigured()) await syncAccount(accountId).catch(() => {});
     return back(base, "connected");
   } catch (err) {
     console.error("[kite/callback]", (err as Error).message);

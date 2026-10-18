@@ -60,7 +60,8 @@ async function heldTickers(market: Market): Promise<string[]> {
     const page = await db.listDocuments(DB, "positions", queries);
     for (const d of page.documents) {
       const t = String(d.ticker ?? "").trim().toUpperCase();
-      if (t) rows.push(t);
+      // "MF:" rows are mutual funds pulled from Horizon — they file nothing.
+      if (t && !t.startsWith("MF:")) rows.push(t);
     }
     if (page.documents.length < 100) break;
     cursor = page.documents[page.documents.length - 1].$id;

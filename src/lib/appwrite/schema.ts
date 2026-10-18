@@ -112,6 +112,14 @@ export type Position = Base & {
   market?: Market | null;
   kite_account_id?: string | null;
   ibkr_account_id?: string | null;
+  /**
+   * Set on rows pulled from Horizon (the operator's finance app): the brokers
+   * the holding sits with there, e.g. "Kite · Groww". Like the account ids
+   * above, it marks the row as a cache of real holdings, not the paper book.
+   */
+  horizon_source?: string | null;
+  /** Display name when the ticker alone doesn't say it — a fund's scheme name. */
+  label?: string | null;
 };
 
 export type Trade = Base & {
