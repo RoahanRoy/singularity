@@ -32,6 +32,7 @@
  *   <PREFIX>_EVENT_BATCH       names probed for new filings per cycle (default 10)
  *   MERIDIAN_SYNC_BASE         base URL of the running app for the sync route
  *                              (default http://localhost:3000)
+ *   CRON_SECRET                bearer for that sync route (must match the app's)
  *   MERIDIAN_STATE_STORE=appwrite  keep cursors/watermarks in Appwrite instead
  *                              of dotfiles (for throwaway checkouts, e.g. cloud)
  */
@@ -119,7 +120,13 @@ export async function runDesk(config: DeskConfig): Promise<void> {
   /** Refresh connected holdings via the app's sync route. Best-effort. */
   async function refreshHoldings(): Promise<void> {
     try {
-      const res = await fetch(`${SYNC_BASE}${config.syncPath}`, { method: "POST" });
+      // The sync route is operator-gated; the loop authenticates with the
+      // app's CRON_SECRET (same value as the deployment's env).
+      const secret = process.env.CRON_SECRET;
+      const res = await fetch(`${SYNC_BASE}${config.syncPath}`, {
+        method: "POST",
+        headers: secret ? { Authorization: `Bearer ${secret}` } : undefined,
+      });
       if (!res.ok) console.warn(`[${key}] sync route ${res.status} (continuing)`);
     } catch (err) {
       console.warn(`[${key}] holdings sync skipped (${(err as Error).message})`);

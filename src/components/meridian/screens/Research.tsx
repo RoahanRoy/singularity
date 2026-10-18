@@ -6,6 +6,7 @@ import { useMarket } from "../MarketContext";
 import { listFilings, subscribeFilings, getTopMemo, listMemosByFiling, listPositions } from "@/lib/appwrite/queries";
 import type { Filing, Memo, MemoEntity } from "@/lib/appwrite/schema";
 import type { Market } from "@/lib/meridian/format";
+import { operatorFetch } from "@/lib/auth/operator-fetch";
 
 const FALLBACK_ENTITIES_US: MemoEntity[] = [
   { name: "Taiwan Semiconductor (TSM)", role: "subject",    weight: 1.0  },
@@ -179,7 +180,7 @@ function FilingDetail({ filing }: { filing: Filing }) {
   async function actOnMemo(memoId: string, action: "approve" | "reject") {
     setBusyId(memoId);
     try {
-      const res = await fetch("/api/memos/approve", {
+      const res = await operatorFetch("/api/memos/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ memoId, action }),

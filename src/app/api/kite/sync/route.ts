@@ -1,4 +1,5 @@
 import { syncAccount, syncAllAccounts } from "@/lib/kite/sync";
+import { requireOperator } from "@/lib/appwrite/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,6 +9,8 @@ export const dynamic = "force-dynamic";
  * (no body). Used by the "Sync now" button and the India agent loop.
  */
 export async function POST(req: Request) {
+  const denied = await requireOperator(req, { allowMachine: true });
+  if (denied) return denied;
   let accountId: string | undefined;
   try {
     const body = (await req.json()) as { accountId?: string };

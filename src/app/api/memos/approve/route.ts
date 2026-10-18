@@ -1,4 +1,4 @@
-import { createAdminClient, DATABASE_ID } from "@/lib/appwrite/server";
+import { createAdminClient, DATABASE_ID, requireOperator } from "@/lib/appwrite/server";
 import { COLLECTIONS } from "@/lib/appwrite/schema";
 
 export const runtime = "nodejs";
@@ -19,6 +19,8 @@ type Body = { memoId?: string; action?: string };
 type MemoRow = { status?: string; pending_exec_json?: string | null };
 
 export async function POST(req: Request) {
+  const denied = await requireOperator(req);
+  if (denied) return denied;
   let body: Body;
   try {
     body = (await req.json()) as Body;

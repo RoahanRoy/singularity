@@ -1,4 +1,5 @@
 import { syncAccount, syncAllAccounts } from "@/lib/ibkr/sync";
+import { requireOperator } from "@/lib/appwrite/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +10,8 @@ export const dynamic = "force-dynamic";
  * here is the Appwrite document id (matches the sync function's argument).
  */
 export async function POST(req: Request) {
+  const denied = await requireOperator(req, { allowMachine: true });
+  if (denied) return denied;
   let accountId: string | undefined;
   try {
     const body = (await req.json()) as { accountId?: string };

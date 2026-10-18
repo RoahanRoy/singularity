@@ -1,4 +1,5 @@
 import { AGENT_NAMES, getStatus, startAgent, stopAgent, type AgentName } from "@/lib/agents/supervisor";
+import { requireOperator } from "@/lib/appwrite/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,6 +11,8 @@ function isAgentName(s: string): s is AgentName {
 }
 
 export async function POST(req: Request) {
+  const denied = await requireOperator(req);
+  if (denied) return denied;
   let body: Body;
   try {
     body = (await req.json()) as Body;
@@ -36,6 +39,8 @@ export async function POST(req: Request) {
 }
 
 export async function GET(req: Request) {
+  const denied = await requireOperator(req);
+  if (denied) return denied;
   const url = new URL(req.url);
   const name = url.searchParams.get("name");
   if (!name || !isAgentName(name)) {

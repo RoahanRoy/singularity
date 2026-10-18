@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { listKiteAccounts, subscribeKiteAccounts } from "@/lib/appwrite/queries";
 import type { KiteAccount } from "@/lib/appwrite/schema";
+import { operatorFetch } from "@/lib/auth/operator-fetch";
 
 const STATUS_COLOR: Record<KiteAccount["status"], string> = {
   connected: "var(--green)",
@@ -73,7 +74,7 @@ export function KiteAccountsPanel() {
   async function syncNow(accountId: string) {
     setSyncing(accountId);
     try {
-      await fetch("/api/kite/sync", {
+      await operatorFetch("/api/kite/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId }),
