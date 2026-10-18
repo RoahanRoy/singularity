@@ -50,7 +50,7 @@ export const clusters: Cluster[] = [
 
 // ── India market ─────────────────────────────────────────────────────────────
 // Shown when the operator switches the desk to Indian markets. Prices are
-// indicative seeds for the marquee; live position data comes from Kite.
+// indicative seeds for the marquee; live position data comes from Horizon.
 const rawTicksIN: [string, number, number][] = [
   ["NIFTY", 24010.6, 0.38], ["SENSEX", 79045.2, 0.31], ["BANKNIFTY", 51820.4, 0.52],
   ["NIFTYIT", 41230.8, -0.24], ["USDINR", 83.42, 0.06], ["INDIA10Y", 6.984, -0.012],

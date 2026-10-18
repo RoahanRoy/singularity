@@ -59,8 +59,6 @@ export type DeskConfig = {
   market: "US" | "IN";
   /** App sync route that refreshes this desk's holdings (best-effort). */
   syncPath: string;
-  /** Extra fallback for the sync base URL (India uses KITE_REDIRECT_BASE). */
-  syncBaseFallback?: string;
   /** Boots this desk's agent roster and returns the id map. */
   bootstrap: () => Promise<Record<string, string>>;
   /** Round-robins the desk universe, skipping/rotating past held names. */
@@ -85,9 +83,7 @@ export async function runDesk(config: DeskConfig): Promise<void> {
   // so we resume promptly at the open. RUN_ONCE ignores hours (manual test).
   const IGNORE_HOURS = process.env.MERIDIAN_IGNORE_MARKET_HOURS === "1";
   const CLOSED_POLL_MS = Number(process.env[`${envPrefix}_CLOSED_POLL_MS`] || 10 * 60_000);
-  const SYNC_BASE = (
-    process.env.MERIDIAN_SYNC_BASE || config.syncBaseFallback || "http://localhost:3000"
-  ).replace(/\/$/, "");
+  const SYNC_BASE = (process.env.MERIDIAN_SYNC_BASE || "http://localhost:3000").replace(/\/$/, "");
   // Event-driven selection: react to fresh filings/news instead of blindly
   // round-robining the universe. Off when the desk has no universe wired, or
   // when the operator disables it. Round-robin always runs underneath as the

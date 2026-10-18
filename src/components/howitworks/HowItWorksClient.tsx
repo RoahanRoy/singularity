@@ -88,7 +88,7 @@ const RULES: [string, ReactNode][] = [
 // name, npm script, cadence, what, why, when
 const LOOPS: [string, string, string, string, string, string][] = [
   ["Tech Loop", "agents:tech", "~60s / cycle", "The US desk orchestrator. Refreshes IBKR holdings, picks one ticker round-robin and runs the full chain, writing every step so screens update live.", "It's the engine. Swarm, Research and Portfolio are all its output.", "Start from the Console or npm. A stop finishes the current cycle, then exits cleanly."],
-  ["India Loop", "agents:india", "~60s / cycle", "The same chain for the NSE book. Refreshes Kite holdings each cycle; the parser reasons from knowledge instead of EDGAR.", "India filings aren't on EDGAR, so the desk needs its own roster and universe.", "Runs independently, usually after the morning Kite login."],
+  ["India Loop", "agents:india", "~60s / cycle", "The same chain for the NSE book. Refreshes the book from Horizon (at most every 15 min); the parser reasons from knowledge instead of EDGAR.", "India filings aren't on EDGAR, so the desk needs its own roster and universe.", "Runs independently of the US desk."],
   ["Console Responder", "agents:responder", "polls 3s", "Replies to any operator message without a follow-up, grounded in a fresh snapshot of memos, positions, news and governance.", "It's the voice you actually talk to in the Console.", "Starts with the server. Only answers messages newer than its boot time."],
   ["News Ingestor", "agents:news", "~30 min", "Fetches Google News RSS per ticker for both books and indexes it, deduped by URL. No API key, no LLM.", "A free, live headline feed for the responder and desks.", "Runs continuously, or once with MERIDIAN_NEWS_ONCE=1."],
   ["Held-Book Ingest", "agents:ingest", "~30 min", "Tops up filings for every held ticker — EDGAR for US, NSE announcements for India. Pure HTTP, no LLM.", "Keeps Research stocked with what's actually on the book.", "Runs in the background; failures skip the ticker rather than write junk."],
@@ -98,7 +98,7 @@ const LOOPS: [string, string, string, string, string, string][] = [
 const RUNBOOK: [string, string][] = [
   ["Sign in as an operator", "Access is an email allowlist. Anyone outside it is signed straight back out. The guided tour stays open to everyone."],
   ["Connect the US book (IBKR)", "Run IBKR's Client Portal Gateway locally, log in, then tap Connect in Portfolio. No password is stored — only the account id."],
-  ["Connect the India book (Kite)", "Link each Zerodha account via Kite Connect. Tokens expire daily, so expect a quick login each trading morning."],
+  ["Connect the India book (Horizon)", "Point Meridian at Horizon with HORIZON_URL and HORIZON_EXPORT_TOKEN, then sync from Portfolio. Horizon keeps the broker logins; Meridian never sees them."],
   ["Start the loops", "Start, stop or restart desks from the Console. The responder is already running."],
   ["Choose the autonomy level", "By default every trade waits for your approval. Turn on auto-approve for a session and only high-conviction, critic-passed trades fire."],
   ["Supervise, don't micromanage", "Watch spend and governance. Talk to the system. Veto, trim or unwind through the risk layer."],

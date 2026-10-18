@@ -40,26 +40,8 @@ export async function tryCreateSessionClient() {
 /** Appwrite user label that grants operator access — DB permissions use the same label. */
 export const OPERATOR_LABEL = "operator";
 
-/**
- * Short-lived, HttpOnly cookie carrying the operator's Appwrite JWT across the
- * Zerodha login round-trip: /api/kite/login sets it, /api/kite/callback (a
- * browser redirect, so no Authorization header) verifies and clears it.
- */
-export const KITE_AUTH_COOKIE = "meridian-kite-auth";
-
-/** Cookie options for KITE_AUTH_COOKIE; maxAge 0 clears it. */
-export function kiteAuthCookieOptions(maxAge: number) {
-  return {
-    path: "/api/kite/callback",
-    httpOnly: true,
-    sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
-    maxAge,
-  };
-}
-
 /** The bearer token from an Authorization header, or "" if there is none. */
-export function bearerToken(req: Request): string {
+function bearerToken(req: Request): string {
   const header = req.headers.get("authorization") ?? "";
   return header.startsWith("Bearer ") ? header.slice(7).trim() : "";
 }
@@ -86,8 +68,7 @@ export async function requireOperator(
   return verifyOperatorJwt(token);
 }
 
-/** The JWT half of requireOperator, for callers that get the JWT elsewhere. */
-export async function verifyOperatorJwt(jwt: string): Promise<Response | null> {
+async function verifyOperatorJwt(jwt: string): Promise<Response | null> {
   if (!jwt) return Response.json({ error: "sign in required" }, { status: 401 });
 
   let user: { email: string; labels?: string[] };

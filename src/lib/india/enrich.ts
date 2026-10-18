@@ -1,5 +1,5 @@
 /**
- * India (Kite) book enrichment — the India-desk config over the shared engine.
+ * India book enrichment — the India-desk config over the shared engine.
  *
  * The generic machinery (Yahoo history, betas, NAV reconstruction, pnl fix,
  * scenario seeding) lives in src/lib/market/enrich-core.ts and is shared with
@@ -79,7 +79,7 @@ const INDIA_CONFIG: EnrichConfig = {
   scenarios: INDIA_SCENARIOS,
   yahooSymbol: (t) => `${t}.NS`,
   snapshotCloseUtc: "10:00:00.000Z", // ~15:30 IST close
-  emptyBookHint: "No market=IN positions — connect a Kite account and sync first.",
+  emptyBookHint: "No market=IN positions — sync Horizon from Portfolio first.",
 };
 
 export type { EnrichSummary };

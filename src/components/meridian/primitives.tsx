@@ -140,7 +140,7 @@ export function MarketTicker() {
   const [live, setLive] = useState(false);
 
   // US desk: the marquee tracks the *real* held book — live quotes by ticker,
-  // no hardcoded seed. IN desk keeps its indicative index seeds (Kite-driven).
+  // no hardcoded seed. IN desk keeps its indicative index seeds.
   useEffect(() => {
     if (market !== "US") {
       setBook([]);

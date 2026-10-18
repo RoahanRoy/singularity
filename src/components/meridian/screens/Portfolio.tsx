@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Panel } from "../primitives";
 import { useMarket } from "../MarketContext";
-import { KiteAccountsPanel } from "../KiteAccounts";
 import { IbkrAccountsPanel } from "../IbkrAccounts";
 import { FundMandatePanel } from "../FundMandate";
 import { HorizonSourcePanel, useHorizonStatus } from "../HorizonSource";
@@ -100,10 +99,10 @@ const FACTOR_LABELS: Record<string, string> = {
 };
 const FACTOR_ORDER = Object.keys(FACTOR_LABELS);
 
-// Kite computes each account's `weight` relative to that account's own book, so
-// across multiple connected accounts the per-row weights no longer sum to 1.
-// Recompute them book-globally from market value so weight% and the weighted
-// factor exposures stay correct regardless of how many accounts feed the book.
+// Each sync computes `weight` relative to the rows it wrote, so with several
+// sources on one desk (a broker sync plus the paper book) the per-row weights no
+// longer sum to 1. Recompute them book-globally from market value so weight% and
+// the weighted factor exposures stay correct however many sources feed the book.
 function normalizeWeights(positions: Position[]): Position[] {
   const total = positions.reduce((s, p) => s + Math.abs(p.market_value || 0), 0);
   if (total <= 0) return positions;
@@ -652,8 +651,11 @@ export function PortfolioScreen() {
       )}
 
       {horizon && !horizon.configured && market === "IN" && (
-        <Panel title="KITE Accounts · India" meta="Zerodha · real holdings" bodyClassName="tight">
-          <KiteAccountsPanel />
+        <Panel title="Horizon · Real Book" meta="not configured" bodyClassName="tight">
+          <div className="dim" style={{ padding: "10px 14px", fontFamily: "var(--mono)", fontSize: 11, lineHeight: 1.6 }}>
+            The India book comes from Horizon. Set HORIZON_URL and HORIZON_EXPORT_TOKEN on the server,
+            then sync from here.
+          </div>
         </Panel>
       )}
 

@@ -2,7 +2,7 @@
 
 import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc, type KiteAccount, type IbkrAccount, type QuantReport, type Market } from "./schema";
+import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc, type IbkrAccount, type QuantReport, type Market } from "./schema";
 
 /**
  * Market filter. When a desk is passed we constrain to that desk's rows.
@@ -278,26 +278,6 @@ export function subscribeAgentStatus(onChange: (row: AgentStatusDoc) => void) {
   const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.agent_status}.documents`;
   return client.subscribe<AgentStatusDoc & Models.Document>(channel, (msg) => {
     if (msg.events.some((e) => e.endsWith(".create") || e.endsWith(".update"))) {
-      onChange(msg.payload);
-    }
-  });
-}
-
-/** Connected Zerodha Kite accounts backing the India fund. */
-export async function listKiteAccounts(limit = 25): Promise<KiteAccount[]> {
-  const res = await databases.listDocuments<KiteAccount & Models.Document>(
-    DATABASE_ID,
-    COLLECTIONS.kite_accounts,
-    [Query.orderDesc("$createdAt"), Query.limit(limit)],
-  );
-  return res.documents;
-}
-
-/** Realtime Kite-account updates (status / last-synced changes after a sync). */
-export function subscribeKiteAccounts(onChange: (row: KiteAccount) => void) {
-  const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.kite_accounts}.documents`;
-  return client.subscribe<KiteAccount & Models.Document>(channel, (msg) => {
-    if (msg.events.some((e) => e.endsWith(".create") || e.endsWith(".update") || e.endsWith(".delete"))) {
       onChange(msg.payload);
     }
   });

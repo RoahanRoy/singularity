@@ -3,7 +3,7 @@
  *
  * US books are denominated in USD and abbreviated K/M/B. India books are
  * denominated in INR and abbreviated with the Indian lakh/crore convention
- * (1 L = 1e5, 1 Cr = 1e7). The agent loop and Kite sync both store raw
+ * (1 L = 1e5, 1 Cr = 1e7). The agent loop and Horizon sync both store raw
  * numeric magnitudes in the `nav_usd` / `market_value` fields regardless of
  * currency — the `market` flag here decides how they are rendered.
  */

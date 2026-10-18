@@ -16,7 +16,7 @@ export function useMarket(): MarketState {
 
 function readInitial(): Market {
   if (typeof window === "undefined") return "US";
-  // URL hint wins (e.g. the Kite callback redirects to /?market=IN), then storage.
+  // URL hint wins (e.g. a link to /desk?market=IN), then storage.
   const fromUrl = new URLSearchParams(window.location.search).get("market");
   if (fromUrl === "IN" || fromUrl === "US") return fromUrl;
   const stored = window.localStorage.getItem(STORAGE_KEY);

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Market } from "@/lib/appwrite/schema";
+import { operatorFetch } from "@/lib/auth/operator-fetch";
 
 export type HorizonStatus = {
   configured: boolean;
@@ -31,12 +32,12 @@ function relTime(iso: string | null | undefined): string {
 /**
  * Whether Horizon is the book source (server env), and what it has on each
  * desk. `null` until the first answer, so callers can hold off rendering the
- * direct Kite / IBKR panels instead of flashing them.
+ * direct IBKR panel instead of flashing it.
  */
 export function useHorizonStatus(): { status: HorizonStatus | null; refresh: () => void } {
   const [status, setStatus] = useState<HorizonStatus | null>(null);
   const refresh = useCallback(() => {
-    fetch("/api/horizon/status", { cache: "no-store" })
+    operatorFetch("/api/horizon/status", { cache: "no-store" })
       .then((r) => r.json())
       .then((j: HorizonStatus) => setStatus(j))
       .catch(() => setStatus((s) => s ?? { configured: false }));
@@ -65,7 +66,7 @@ export function HorizonSourcePanel({
     setSyncing(true);
     setBanner(null);
     try {
-      const res = await fetch("/api/horizon/sync", { method: "POST" });
+      const res = await operatorFetch("/api/horizon/sync", { method: "POST" });
       const j = (await res.json()) as { result?: SyncResult; error?: string };
       const r = j.result;
       if (!res.ok || !r) {
@@ -78,7 +79,7 @@ export function HorizonSourcePanel({
         });
       } else {
         const parts = [`${r.holdings.IN} India · ${r.holdings.US} US holdings`];
-        if (r.superseded) parts.push(`${r.superseded} direct Kite/IBKR rows replaced`);
+        if (r.superseded) parts.push(`${r.superseded} direct broker rows replaced`);
         if (r.skipped.length) parts.push(`${r.skipped.length} skipped (${r.skipped.map((s) => s.ticker).join(", ")})`);
         setBanner({ kind: "ok", text: `✓ Synced from Horizon — ${parts.join(" · ")}.` });
         onSynced();
@@ -162,7 +163,7 @@ export function HorizonSourcePanel({
 
       <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 10.5, lineHeight: 1.6 }}>
         Horizon is the book of record: rupee holdings (Kite, Coin, Groww) land on the India desk,
-        everything held abroad on the US desk in USD. Direct Kite / IBKR links stand down while it is
+        everything held abroad on the US desk in USD. The direct IBKR link stands down while it is
         configured. Running desk loops re-pull it every 15 minutes.
       </div>
     </div>

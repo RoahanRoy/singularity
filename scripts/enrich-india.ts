@@ -1,5 +1,5 @@
 /**
- * One-shot India (Kite) book enrichment from free Yahoo Finance history, so the
+ * One-shot India book enrichment from free Yahoo Finance history, so the
  * Portfolio screen's India desk shows real numbers (factor betas, NAV series /
  * KPIs, stress scenarios) instead of empty / zero panels.
  *

@@ -24,7 +24,6 @@ export const COLLECTIONS = {
   audit_log: "audit_log",
   agent_commands: "agent_commands",
   agent_status: "agent_status",
-  kite_accounts: "kite_accounts",
   ibkr_accounts: "ibkr_accounts",
   news: "news",
   quant_reports: "quant_reports",
@@ -110,6 +109,7 @@ export type Position = Base & {
   weight: number;
   factor_exposures_json: string | null;
   market?: Market | null;
+  /** Legacy: set on rows from the removed direct Kite link. Horizon's next sync replaces them. */
   kite_account_id?: string | null;
   ibkr_account_id?: string | null;
   /**
@@ -245,27 +245,9 @@ export type AuditLog = Base & {
 export type AgentWorker = "responder" | "tech" | "india";
 
 /**
- * A connected Zerodha Kite account. Single-operator app, so the daily-expiring
- * access token is stored server-side. On a 401 from Kite the status flips to
- * `needs_reauth` and the operator re-runs the login flow.
- */
-export type KiteAccount = Base & {
-  operator_id: string | null;
-  label: string;
-  kite_user_id: string;
-  api_key: string;
-  access_token: string;
-  public_token: string | null;
-  status: "connected" | "needs_reauth" | "error";
-  equity_cash: number;
-  holdings_count: number;
-  last_synced_at: string | null;
-};
-
-/**
  * A connected Interactive Brokers account. The brokerage session lives in the
- * operator's local Client Portal Gateway (not here), so unlike KiteAccount
- * there is no stored token — this row just records which IBKR account id the
+ * operator's local Client Portal Gateway (not here), so there is no stored
+ * token — this row just records which IBKR account id the
  * authenticated gateway exposes. On a dropped gateway session the status flips
  * to `needs_reauth` and the operator re-logs into the gateway.
  */
