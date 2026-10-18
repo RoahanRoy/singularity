@@ -29,8 +29,9 @@ case "$desk" in
   *) echo "usage: $0 us|india prep|cycle" >&2; exit 64 ;;
 esac
 
-# The sandbox only egresses through its HTTPS proxy, which Node's fetch
-# ignores unless told to use it.
+# The sandbox egresses through its HTTPS proxy, which Node's fetch ignores
+# unless told to use it (appwrite.ts also unpins the Appwrite SDK's dispatcher
+# under this flag, so its requests get the proxy-added key).
 export NODE_USE_ENV_PROXY=1
 # Fresh checkout every run → cursors/watermarks live in Appwrite (agent_state).
 export MERIDIAN_STATE_STORE=appwrite
@@ -45,12 +46,13 @@ export NEXT_PUBLIC_APPWRITE_PROJECT_ID="${NEXT_PUBLIC_APPWRITE_PROJECT_ID:-$(nod
 case "$step" in
   prep)
     # Fail fast, with a pointer to the setup, if Appwrite isn't reachable/authorised.
-    if ! node --input-type=module -e "
-      import { Client, Databases } from 'node-appwrite';
-      const c = new Client().setEndpoint(process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT).setProject(process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID);
-      try { await new Databases(c).listDocuments(process.env.NEXT_PUBLIC_APPWRITE_DATABASE_ID, 'agent_state', []); }
-      catch (e) { console.error('[cloud] appwrite check: ' + (e.code ?? e.cause?.code ?? '') + ' ' + e.message); process.exit(1); }
-    "; then
+    # Goes through the agents' own client so it takes the same (proxied) route.
+    if ! npx tsx --eval "
+      const { db, DB } = require('./scripts/agents/appwrite.ts');
+      db.listDocuments(DB, 'agent_state', []).catch((e) => {
+        console.error('[cloud] appwrite check: ' + (e.code ?? e.cause?.code ?? '') + ' ' + e.message); process.exit(1);
+      });
+    " >/dev/null; then
       echo "[cloud] Appwrite unreachable or unauthorised: check the network allowlist and the X-Appwrite-Key network secret" >&2
       exit 2
     fi

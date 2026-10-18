@@ -22,6 +22,20 @@ if (!endpoint || !projectId || (!apiKey && !keyViaProxy)) {
 
 const client = new Client().setEndpoint(endpoint).setProject(projectId);
 if (apiKey) client.setKey(apiKey);
+// node-appwrite pins its own undici dispatcher on every request, which bypasses
+// Node's env-proxy support (NODE_USE_ENV_PROXY). Drop it so requests ride the
+// global, proxy-aware dispatcher — in a cloud routine that proxy is also what
+// adds X-Appwrite-Key, so without this the SDK goes out direct and unauthenticated.
+if (process.env.NODE_USE_ENV_PROXY === "1") {
+  const prepare = client.prepareRequest.bind(client);
+  client.prepareRequest = (...args) => {
+    const req = prepare(...args);
+    const options = req.options as { dispatcher?: unknown; agent?: unknown };
+    delete options.dispatcher;
+    delete options.agent;
+    return req;
+  };
+}
 export const db = new Databases(client);
 export { ID, Query };
 
