@@ -15,8 +15,7 @@ export type IbkrSyncResult = {
 
 /**
  * Pull a connected IBKR account's live positions from the gateway and project
- * them onto the US book — the same shape as the Kite → India sync, but the US
- * desk and natively USD:
+ * them onto the US book, natively USD:
  *   - replace this account's `positions` rows (market="US") with fresh marks,
  *   - append a `fund_snapshots` row (market="US") so the US fund's NAV/PnL
  *     accrues a chartable time series,

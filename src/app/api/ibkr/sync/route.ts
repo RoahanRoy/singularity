@@ -16,7 +16,6 @@ export const maxDuration = 60;
 export async function POST(req: Request) {
   const denied = await requireOperator(req, { allowMachine: true });
   if (denied) return denied;
-
   // Horizon carries these holdings when configured; a direct IBKR pull
   // would put them on the book twice. The desk loop still calls this route
   // every cycle, so it refreshes the book from Horizon instead.

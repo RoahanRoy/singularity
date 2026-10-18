@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { requireOperator } from "@/lib/appwrite/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,6 +41,8 @@ async function fetchOne(symbol: string): Promise<[string, Quote] | null> {
 }
 
 export async function GET(request: NextRequest) {
+  const denied = await requireOperator(request);
+  if (denied) return denied;
   const raw = request.nextUrl.searchParams.get("symbols") ?? "";
   const symbols = [...new Set(raw.split(",").map((s) => s.trim()).filter(Boolean))].slice(0, 40);
   if (symbols.length === 0) return Response.json({ quotes: {} });

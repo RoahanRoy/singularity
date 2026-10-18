@@ -10,7 +10,7 @@ export type HorizonSyncResult = {
   status: "synced" | "fresh" | "unauthorized" | "error";
   /** Rows written per desk. */
   holdings: Record<Market, number>;
-  /** Direct Kite / IBKR rows removed because Horizon now carries those holdings. */
+  /** Direct IBKR (or legacy Kite) rows removed because Horizon now carries those holdings. */
   superseded: number;
   /** Holdings that could not be placed on the book, and why. */
   skipped: { ticker: string; reason: string }[];
@@ -30,8 +30,9 @@ export const HORIZON_LOOP_MAX_AGE_MS = 15 * 60_000;
  *     US book (market="US", converted to USD at Horizon's own rate),
  *   - the same instrument held by several members or brokers is one row,
  *   - every prior real-holdings row is replaced — Horizon's from the last pull,
- *     and any direct Kite / IBKR rows, which Horizon supersedes (keeping both
- *     would count the same shares twice). Factor exposures carry forward,
+ *     any direct IBKR rows and rows left by the removed Kite link, which
+ *     Horizon supersedes (keeping both would count the same shares twice).
+ *     Factor exposures carry forward,
  *   - paper-book rows (no account id, no horizon_source) are never touched,
  *   - one fund_snapshots row per desk that holds anything.
  *

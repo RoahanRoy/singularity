@@ -114,12 +114,12 @@ function Holdings({ book, market }: { book: Book | null; market: Market }) {
     <>
       <div className="v2-hold-head">
         <span>Holdings</span>
-        <span className="meta">{market === "IN" ? "India Fund · Kite" : "US Fund · IBKR"}</span>
+        <span className="meta">{market === "IN" ? "India Fund · Horizon" : "US Fund · IBKR"}</span>
       </div>
       <div className="v2-hold">
         {book && rows.length === 0 && (
           <div className="v2-empty">
-            No positions yet. Connect {market === "IN" ? "a Kite account" : "IBKR"} from Portfolio.
+            No positions yet. {market === "IN" ? "Sync Horizon" : "Connect IBKR"} from Portfolio.
           </div>
         )}
         {rows.map((p) => {

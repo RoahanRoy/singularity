@@ -78,15 +78,12 @@ cp .env.local.example .env.local   # then fill in the keys below
 Required environment (`.env.local`):
 
 - `NEXT_PUBLIC_APPWRITE_ENDPOINT`, `NEXT_PUBLIC_APPWRITE_PROJECT_ID`, `NEXT_PUBLIC_APPWRITE_DATABASE_ID` — Appwrite project (defaults pre-filled in the example)
-- `NEXT_PUBLIC_OPERATOR_EMAILS` — comma-separated allowlist; signed-in users outside it are signed out
+- `NEXT_PUBLIC_OPERATOR_EMAILS` — comma-separated allowlist; signed-in users outside it are signed out. Every `/api/*` route except the crons also requires the caller's Appwrite user to carry the `operator` **label** (Appwrite console → Auth → user → Labels) *and* be on this list; otherwise it answers 401/403.
 - `APPWRITE_API_KEY` — server-only, for schema + seed scripts
 - `UPSTASH_VECTOR_REST_URL` / `_TOKEN` — embeddings
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` — LLM calls (agent loop only)
-- `KITE_API_KEY` / `KITE_API_SECRET` — Zerodha Kite Connect (India desk), server-only. Without these, linking or refreshing a Kite account fails with `KITE_API_KEY is not set`. **Must also be set in Vercel for production** — they have no `NEXT_PUBLIC_` prefix, so they don't ship with the build; add them in the project env vars and redeploy. Optional `KITE_APP_LABEL` names the app in the Connect UI.
-- `KITE_API_KEY_2` / `KITE_API_SECRET_2` (+ optional `KITE_APP_LABEL_2`), up to `_5` — **additional Kite apps**. Zerodha Personal apps are single-user (locked to the Zerodha id that created them), so to aggregate a *second* account in the India book that account holder creates their **own** Personal app and you add its key/secret here. The India desk shows one Connect button per configured app and sums every connected account's holdings into one book. Each app's Redirect URL must point at the same `<KITE_REDIRECT_BASE>/api/kite/callback`.
-- `KITE_REDIRECT_BASE` — base URL Kite redirects back to after login (e.g. `http://localhost:3000` locally, your `https://…vercel.app` in production; no trailing slash). The Kite app's Redirect URL in the [developer console](https://developers.kite.trade/apps) must be set to `<KITE_REDIRECT_BASE>/api/kite/callback` and match the environment, or the login round-trip fails. Kite access tokens expire daily, so a re-login is expected each trading morning.
-- `CRON_SECRET` — bearer token guarding the weekly India-enrichment cron (`/api/cron/enrich-india`). Set the same value in the Vercel project's env vars; Vercel attaches it to scheduled requests. Generate one with `openssl rand -hex 32`.
-- `HORIZON_URL` / `HORIZON_EXPORT_TOKEN` — make **Horizon** (the operator's finance app) the source of the real book. See **Using Horizon as the book source** below. Server-only; set in Vercel too.
+- `CRON_SECRET` — bearer token guarding the weekly enrichment crons (`/api/cron/enrich-*`). Set the same value in the Vercel project's env vars; Vercel attaches it to scheduled requests. The desk loops (`agents:tech` / `agents:india`) send it to `/api/ibkr/sync` and `/api/horizon/sync`, so set the same value wherever they run. Generate one with `openssl rand -hex 32`.
+- `HORIZON_URL` / `HORIZON_EXPORT_TOKEN` — **Horizon** (the operator's finance app) is the source of the real book; the India desk has no other. Meridian never logs into Zerodha itself. See **Using Horizon as the book source** below. Server-only; set in Vercel too.
 - `IBKR_GATEWAY_URL` — base URL of your local Interactive Brokers **Client Portal Gateway** (default `https://localhost:5000`). Only set if your gateway runs elsewhere. See **Connecting IBKR** below.
 
 ### Using Horizon as the book source
@@ -101,14 +98,14 @@ What a sync does (`POST /api/horizon/sync`, [src/lib/horizon/sync.ts](src/lib/ho
 
 - Rupee holdings land on the **India** desk in INR; everything held abroad lands on the **US** desk, converted to USD at Horizon's own rate. The same instrument held by several members or brokers is one row.
 - Mutual funds have no listing, so they are booked as `MF:<AMFI code>` with the scheme name in `label`; the desk loops skip `MF:` tickers when picking names to research.
-- Rows carry `horizon_source` (the brokers, e.g. `Kite · Groww`). Every sync replaces them — and removes any direct Kite / IBKR rows, since Horizon supersedes those links. The paper book is never touched.
-- While Horizon is configured, the Kite / IBKR panels are hidden and `/api/kite/sync` / `/api/ibkr/sync` delegate to the Horizon sync, so the running desk loops keep the book fresh (re-pulled at most every 15 minutes).
+- Rows carry `horizon_source` (the brokers, e.g. `Kite · Groww`). Every sync replaces them — and removes any direct IBKR rows (and rows left by the old direct Kite link), since Horizon supersedes those. The paper book is never touched.
+- The India loop calls `/api/horizon/sync?loop=1` each cycle. While Horizon is configured the IBKR panel is hidden and `/api/ibkr/sync` delegates to the Horizon sync too, so both desk loops keep the book fresh (re-pulled at most every 15 minutes).
 
 Schema: `positions` gains `horizon_source` (string 64) and `label` (string 128) — `node scripts/restore-schema.mjs` adds them.
 
 ### Connecting IBKR (US desk)
 
-The US desk pulls your real positions from Interactive Brokers the same way the India desk pulls from Zerodha — read-only, projected onto the `positions` + `fund_snapshots` book (`market="US"`). IBKR has no hosted OAuth redirect, so the brokerage session lives in a **local gateway** you run:
+Without Horizon, the US desk can pull your real positions straight from Interactive Brokers — read-only, projected onto the `positions` + `fund_snapshots` book (`market="US"`). IBKR has no hosted OAuth redirect, so the brokerage session lives in a **local gateway** you run:
 
 1. Download and start IBKR's **Client Portal Gateway** (Java). It listens on `https://localhost:5000` with a self-signed cert.
 2. Open `https://localhost:5000` in a browser and complete the IBKR SSO login (accept the self-signed cert warning).

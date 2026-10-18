@@ -5,7 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 /**
  * Interactive Brokers Client Portal Web API client. Server-only.
  *
- * Unlike Kite (hosted OAuth redirect), IBKR's Client Portal API runs behind a
+ * IBKR has no hosted OAuth redirect: its Client Portal API runs behind a
  * **local gateway** the operator launches and authenticates in a browser:
  *
  *   1. Download + run the Client Portal Gateway (Java) — it listens on
@@ -17,7 +17,7 @@ import { setTimeout as delay } from "node:timers/promises";
  * Because the session is brokerage-side, "connecting an account" here just means
  * recording which IBKR account id(s) the authenticated gateway exposes. The
  * session goes stale after inactivity → status flips to `needs_reauth` and the
- * operator re-logs into the gateway (mirrors Kite's daily token expiry).
+ * operator re-logs into the gateway.
  *
  * Docs: https://www.interactivebrokers.com/api/doc.html (Client Portal Web API)
  *   - Auth status: POST /iserver/auth/status

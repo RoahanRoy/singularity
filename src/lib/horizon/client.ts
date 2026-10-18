@@ -51,8 +51,8 @@ export function horizonConfig(): { url: string; token: string } | null {
 
 /**
  * When Horizon is configured it is the book of record for real holdings, and
- * the direct Kite / IBKR syncs stand down — the same holdings arriving by both
- * routes would be counted twice.
+ * the direct IBKR sync stands down — the same holdings arriving by both routes
+ * would be counted twice.
  */
 export function horizonConfigured(): boolean {
   return horizonConfig() !== null;

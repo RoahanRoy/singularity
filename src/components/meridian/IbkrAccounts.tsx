@@ -34,7 +34,7 @@ export function IbkrAccountsPanel() {
   // the operator knows whether they still need to log in there.
   const pollStatus = useCallback(async () => {
     try {
-      const res = await fetch("/api/ibkr/status", { cache: "no-store" });
+      const res = await operatorFetch("/api/ibkr/status", { cache: "no-store" });
       const j = (await res.json()) as { gateway?: string; authenticated?: boolean; error?: string };
       setGateway({
         url: j.gateway || "https://localhost:5000",

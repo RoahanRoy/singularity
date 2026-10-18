@@ -4,6 +4,7 @@ import { ReactNode, useEffect, useMemo, useState } from "react";
 import { tickerIN, yahooSymbols, type Tick } from "@/lib/meridian/data";
 import { useMarket } from "./MarketContext";
 import { listPositions } from "@/lib/appwrite/queries";
+import { operatorFetch } from "@/lib/auth/operator-fetch";
 
 export function Panel({
   title,
@@ -139,7 +140,7 @@ export function MarketTicker() {
   const [live, setLive] = useState(false);
 
   // US desk: the marquee tracks the *real* held book — live quotes by ticker,
-  // no hardcoded seed. IN desk keeps its indicative index seeds (Kite-driven).
+  // no hardcoded seed. IN desk keeps its indicative index seeds.
   useEffect(() => {
     if (market !== "US") {
       setBook([]);
@@ -183,7 +184,7 @@ export function MarketTicker() {
     let cancelled = false;
     const pull = async () => {
       try {
-        const res = await fetch(`/api/market?symbols=${encodeURIComponent(symbolParam)}`, {
+        const res = await operatorFetch(`/api/market?symbols=${encodeURIComponent(symbolParam)}`, {
           cache: "no-store",
         });
         if (!res.ok) return;

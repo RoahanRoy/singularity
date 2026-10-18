@@ -29,8 +29,8 @@
  * Equity = mandate cash (0 with no mandate) + paper book at live marks. Day P&L
  * marks shares held at the open from the prior close and shares bought today
  * from their fill price. Paper buys are cash-neutral to equity, so start-of-day
- * equity = equity − day P&L. Live brokerage rows (IBKR/Kite) are excluded — the
- * agents can't trade them.
+ * equity = equity − day P&L. Real-holdings rows (Horizon, IBKR, legacy Kite)
+ * are excluded — the agents can't trade them.
  *
  * Env:
  *   MERIDIAN_MAX_DAILY_LOSS_PCT   default 3   (% of start-of-day equity)
@@ -82,6 +82,7 @@ type PaperRow = {
   market_value?: number | null;
   ibkr_account_id?: string | null;
   kite_account_id?: string | null;
+  horizon_source?: string | null;
 };
 type TradeRow = {
   ticker: string;
@@ -124,7 +125,7 @@ export async function measureBook(market: Market, now: Date = new Date()): Promi
   ]);
 
   const book = (posRes.documents as unknown as PaperRow[]).filter(
-    (p) => !p.ibkr_account_id && !p.kite_account_id && p.qty > 0,
+    (p) => !p.ibkr_account_id && !p.kite_account_id && !p.horizon_source && p.qty > 0,
   );
 
   // Paper shares bought this session, per ticker — their day P&L runs from the
