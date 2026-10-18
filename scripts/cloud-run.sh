@@ -61,8 +61,11 @@ case "$step" in
     MERIDIAN_INGEST_ONCE=1 npx tsx scripts/agents/ingest-held.ts 2>&1 | grep -v "^\[dotenv" | tail -6
     ;;
   cycle)
-    label=$(npx tsx --eval "const s = require('./scripts/agents/market-hours.ts').marketState('$market'); console.log(s.label); process.exit(s.open ? 0 : 3);")
-    if [ $? -ne 0 ]; then echo "[cloud] $market market closed ($label): skipping"; exit 3; fi
+    # MERIDIAN_IGNORE_MARKET_HOURS=1 runs anyway (weekend check on the last close).
+    if [ "${MERIDIAN_IGNORE_MARKET_HOURS:-}" != 1 ]; then
+      label=$(npx tsx --eval "const s = require('./scripts/agents/market-hours.ts').marketState('$market'); console.log(s.label); process.exit(s.open ? 0 : 3);")
+      if [ $? -ne 0 ]; then echo "[cloud] $market market closed ($label): skipping"; exit 3; fi
+    fi
     log="$(mktemp)"
     env "${prefix}_ONCE=1" npx tsx "scripts/agents/${loop}.ts" >"$log" 2>&1
     rc=$?
