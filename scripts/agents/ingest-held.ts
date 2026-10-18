@@ -1,10 +1,11 @@
 /**
- * MERIDIAN — held-book filings keep-alive.
+ * MERIDIAN — filings keep-alive for every covered name.
  *
- * Walks the `positions` collection (both US and IN books) and tops up the
- * `filings` collection with the latest disclosure for each held ticker, so the
- * Research Engine's Ingest Queue always has rows for whatever's actually on
- * the book. No LLM, no analyst chain — pure HTTP fetch + Appwrite upsert.
+ * Tops up the `filings` collection with the latest disclosure for every name
+ * a desk covers: the held book (both US and IN `positions`) plus each desk's
+ * sector universe, held names first. The Research Engine's Ingest Queue and
+ * the analyst chain then start from a base of real filings for all of them.
+ * No LLM, no analyst chain — pure HTTP fetch + Appwrite upsert.
  *
  * Dedup: a filing is identified by (ticker, source_url). Re-runs are no-ops
  * unless a new filing has appeared on the exchange.
@@ -19,14 +20,17 @@
  *
  * Env knobs:
  *   MERIDIAN_INGEST_ONCE              run a single sweep and exit
+ *   MERIDIAN_INGEST_SCOPE=held        only the held book (default: held + universe)
  *   MERIDIAN_INGEST_INTERVAL_MS       sleep between sweeps (default 1_800_000)
  *   MERIDIAN_INGEST_ERROR_BACKOFF_MS  sleep after a failed sweep (default 60_000)
  */
 import { db, DB, Query, ID } from "./appwrite";
 import { fetchLatestFiling } from "./edgar";
 import { fetchLatestIndiaFiling } from "./india";
+import { heldTickers, coverageTickers, type Market } from "./coverage";
 
 const RUN_ONCE = process.env.MERIDIAN_INGEST_ONCE === "1";
+const HELD_ONLY = process.env.MERIDIAN_INGEST_SCOPE === "held";
 const INTERVAL_MS = Number(process.env.MERIDIAN_INGEST_INTERVAL_MS || 30 * 60_000);
 const ERROR_BACKOFF_MS = Number(process.env.MERIDIAN_INGEST_ERROR_BACKOFF_MS || 60_000);
 
@@ -47,26 +51,6 @@ function sleep(ms: number): Promise<void> {
     const t = setTimeout(done, ms);
     const iv = setInterval(() => { if (stopping) done(); }, 250);
   });
-}
-
-type Market = "US" | "IN";
-
-async function heldTickers(market: Market): Promise<string[]> {
-  const rows: string[] = [];
-  let cursor: string | undefined;
-  while (true) {
-    const queries = [Query.equal("market", market), Query.limit(100)];
-    if (cursor) queries.push(Query.cursorAfter(cursor));
-    const page = await db.listDocuments(DB, "positions", queries);
-    for (const d of page.documents) {
-      const t = String(d.ticker ?? "").trim().toUpperCase();
-      // "MF:" rows are mutual funds pulled from Horizon — they file nothing.
-      if (t && !t.startsWith("MF:")) rows.push(t);
-    }
-    if (page.documents.length < 100) break;
-    cursor = page.documents[page.documents.length - 1].$id;
-  }
-  return Array.from(new Set(rows));
 }
 
 /** Skip if a filings row with this (ticker, source_url) already exists. */
@@ -131,8 +115,9 @@ async function ingestIN(ticker: string): Promise<"new" | "dup" | "skip"> {
 }
 
 async function sweep(): Promise<void> {
-  const [us, india] = await Promise.all([heldTickers("US"), heldTickers("IN")]);
-  console.log(`[ingest] sweep — US held=${us.length} · IN held=${india.length}`);
+  const names = (m: Market) => (HELD_ONLY ? heldTickers(m) : coverageTickers(m).then((c) => c.all));
+  const [us, india] = await Promise.all([names("US"), names("IN")]);
+  console.log(`[ingest] sweep (${HELD_ONLY ? "held book" : "held + universe"}) — US=${us.length} · IN=${india.length}`);
 
   let added = 0, dup = 0, skipped = 0;
   for (const t of us) {
