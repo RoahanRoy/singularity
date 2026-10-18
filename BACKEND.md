@@ -55,6 +55,7 @@ This reads `appwrite.json` and creates the `meridian` database, 11 collections, 
 | `agent_events` | thoughts / tool calls / handoffs (firehose) | Swarm |
 | `filings` | SEC filings queued for parsing | Research |
 | `memos` | agent-authored investment theses | Research |
+| `quant_reports` | one scored report per quant agent per cycle (payload JSON holds the evidence and raw output) | Quant |
 | `positions` | current book | Portfolio |
 | `trades` | execution log | Portfolio |
 | `scenarios` | stress tests + their P&L deltas | Portfolio |
@@ -65,6 +66,8 @@ This reads `appwrite.json` and creates the `meridian` database, 11 collections, 
 | `model_routes` | inference-plane load / latency per model | Compute |
 | `pipelines` | data/agent pipeline status + throughput | Compute |
 | `compute_nodes` | GPU fabric zones (count / utilization / temp) | Compute |
+
+`quant_reports` was added after the initial push. Create it with `npx tsx --env-file=.env.local scripts/create-quant-reports-collection.ts`. The script is additive only: it creates what's missing and aborts if an existing attribute differs.
 
 `operator_messages` uses document-level security so each operator only reads their own messages. The other collections are shared across all signed-in users (collection-level `users` permission).
 

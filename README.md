@@ -33,7 +33,7 @@ Backend collapses into Appwrite Cloud's free tier (75K MAU, 5 GB storage, 3.5M f
 `npm run agents:tech` runs one orchestrator cycle through a bounded function chain (see [scripts/agents/AGENT_DESIGN.md](scripts/agents/AGENT_DESIGN.md)):
 
 ```
-edgarReader → summarize → indexFiling → analyst → critic → pm → risk → riskOverlay → compliance → broker
+edgarReader → summarize → indexFiling → quantDesk (38 agents) → analyst → critic → pm → risk → riskOverlay → compliance → broker
 ```
 
 Three principles enforced throughout:
@@ -41,6 +41,18 @@ Three principles enforced throughout:
 - **Trust tiers.** Filing ingestion is split so untrusted bytes never reach an agent with tools: `edgarReader` is HTTP-only (no LLM, no DB), `filing-summarizer` is LLM-only (no fetch, no DB), `indexFiling` is persistence-only (no LLM). A prompt-injection attempt in a filing can at worst produce nonsense JSON that fails schema check.
 - **Human-in-the-loop by default.** A trade auto-executes only if the critic passes, `conviction × score ≥ 0.4`, **and** `MERIDIAN_AUTO_APPROVE=1` is set for the session. Anything weaker writes the memo as `review` and stops.
 - **One job per agent.** Analysts don't size, PMs don't execute, risk doesn't re-size, compliance doesn't approve sizing. Each system prompt lives in `scripts/agents/prompts/<slug>.md` — never inlined in TypeScript.
+
+**The quant desk** runs before the analyst writes. It has 38 agents, one per method:
+- ratio and forensic screens
+- DCF, DDM, residual income and multiples
+- ARIMA, GARCH, Kalman, pairs and regimes
+- Monte Carlo, jump diffusion, OU and implied vol
+- CAPM, Fama-French/Carhart and APT factors
+- technicals and momentum
+- walk-forward ML
+- seven LLM analysts for the qualitative checks
+
+Each agent writes a scored report to `quant_reports`. An ensemble then weights those reports by their out-of-sample evidence. The roster lives in `src/lib/quant/roster.ts`, the math in `scripts/agents/quant-agents.ts` (tests: `npm run test:quant`), and the wiring in `scripts/agents/quant-nodes.ts`. The env knobs are listed in [AGENT_DESIGN.md](scripts/agents/AGENT_DESIGN.md#quant-desk-38-agents-live).
 
 ### Choosing models per agent
 
@@ -111,6 +123,7 @@ npm run agents:responder   # operator-console assistant (also auto-starts with t
 | --- | --- |
 | **Swarm Command** | `clusters`, `agents`, `agent_events` (realtime firehose) |
 | **Research Engine** | `filings`, `memos` (+ `entities_json` graph, `filing_id` linkage) |
+| **Quant** | `quant_reports` (one row per agent per cycle, realtime) |
 | **Portfolio OS** | `positions` (NAV + net factor exposures), `fund_snapshots` (P&L chart + derived KPIs), `scenarios` (stress tree), `trades` (pending votes) |
 | **Operator Console** | `operator_messages` (live chat + responder), `governance_events`, `budget_ledger`, `positions` |
 | **Compute Layer** | `compute_nodes` (GPU fabric), `model_routes`, `pipelines`, `budget_ledger`, memo entities (knowledge graph), `trades.venue` |

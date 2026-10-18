@@ -111,6 +111,26 @@ That keeps untrusted bytes out of any agent that has Appwrite or trade
 authority. The same pattern applies to every future ingestion source:
 transcripts, news, alt-data, GP packages.
 
+The quant desk (`quant-nodes.ts`) keeps the same split:
+
+- `market-data-reader` (`market-data.ts`) is HTTP only: prices, statements,
+  options, factors, rates, peers and headlines, cached per day. No LLM.
+- The 31 compute agents (`quant-agents.ts`) are plain TypeScript over that
+  bundle. No LLM, no fetch, no DB.
+- The 7 LLM agents get a computed facts sheet plus the vendor text (filing
+  excerpt, headlines, insider rows) fenced as `UNTRUSTED`, with any fence
+  markers inside it stripped. They run with no tools, and a reply that fails
+  to parse becomes a skipped report, not a guess.
+- `persistReport` writes each result to `quant_reports`, and `publish` emits
+  it to `agent_events`. Neither uses an LLM.
+
+The downstream desk agents (analyst, critic, valuation, CIO, PM) get the
+facts sheet: computed numbers plus each agent's one-line summary. They never
+see the vendor text itself. The LLM agents' summaries are model output
+written from that text, so they carry the same exposure as the filing
+summarizer's JSON. Each is capped at 240 characters and marked
+`[quant:<agent>]`.
+
 ## 6. Revise loops are bounded
 
 A critic verdict of `revise` triggers exactly **one** re-run of the analyst
@@ -168,6 +188,44 @@ in `universe.ts`. Each analyst is a distinct row in the `agents` collection.
 | `portfolio-manager` | sizing | ✅ live |
 | `risk-officer` | pre-trade VaR | ✅ live |
 | `compliance` | pre-trade rules | ✅ live |
+
+### Quant desk (38 agents, live)
+
+One agent per method, listed in `src/lib/quant/roster.ts` (shared with the
+website's Quant screen and how-it-works page). `quantDesk()` runs them in
+workflow order after the filing is parsed and before the analyst writes:
+
+| Stage | Agents |
+| --- | --- |
+| Market data | `market-data-reader` |
+| Screen | `fundamentals-screener`, `forensic-accountant`, `risk-metrics-analyst` |
+| Valuation | `dcf-modeler`, `ddm-modeler`, `residual-income-modeler`, `multiples-analyst` |
+| Qualitative (LLM) | `moat-analyst`, `management-analyst`, `governance-analyst`, `industry-analyst`, `regulatory-esg-analyst`, `macro-strategist`, `news-sentiment-analyst` |
+| Qualitative (code) | `sentiment-analyst`, `earnings-call-analyst` |
+| Time series | `arima-forecaster`, `garch-forecaster`, `smoothing-forecaster`, `kalman-trend-analyst`, `pairs-scout`, `regime-detector` |
+| Stochastic | `monte-carlo-simulator`, `jump-diffusion-modeler`, `mean-reversion-modeler`, `implied-vol-reader` |
+| Factors | `capm-analyst`, `style-factor-analyst`, `macro-factor-analyst` |
+| Timing | `technical-analyst`, `momentum-analyst` |
+| Machine learning | `linear-ml-modeler`, `tree-ensemble-modeler`, `sequence-modeler`, `rl-trader` |
+| Workflow | `backtest-auditor`, `ensemble-combiner` |
+
+Every agent returns a score (−100…100), a one-line summary and, where it can
+be tested, out-of-sample evidence. The `ensemble-combiner` weights each score
+by that evidence and blends the valuation models into one fair-value band.
+Downstream, the quant-researcher signal, the PM's share count and the risk
+officer's VaR are computed from these numbers in code. The LLM versions of
+those three steps remain as fallbacks for when the desk did not run.
+
+Env knobs:
+
+| Variable | Effect |
+| --- | --- |
+| `MERIDIAN_QUANT=0` | skip the quant desk; every downstream agent falls back to its LLM path. `cloud-run.sh` defaults to this until the cloud allowlist adds the desk's data hosts (listed in that script) |
+| `MERIDIAN_QUANT_LLM=0` | run only the 31 code agents and skip the 7 LLM analysts |
+| `MERIDIAN_QUANT_SCREEN_GATE=0` | a failed fundamentals screen no longer ends the cycle |
+
+Cost: about 4 minutes and 7 extra LLM calls per analysed cycle. The macro
+view is cached per market per day.
 
 ### Execution + post-trade
 
