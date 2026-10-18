@@ -54,13 +54,24 @@ export async function ask({ system, user, model = "sonnet", label }: AskOpts): P
   let usage: TokenUsage | null = null;
   let modelUsage: unknown = null;
 
+  // Prompts here carry untrusted text (filings, transcripts, news), so the
+  // session must have no way to act on an injected instruction. `allowedTools`
+  // only auto-approves — it never restricted anything, and with
+  // bypassPermissions every built-in tool plus the operator's claude.ai MCP
+  // connectors (Gmail, Drive, …) was live. Instead: no built-in tools, deny
+  // anything not pre-approved (covers connectors that load late), no
+  // filesystem settings/hooks/CLAUDE.md, no MCP servers, one turn.
   const iter = query({
     prompt: user,
     options: {
       model,
       systemPrompt: system,
-      permissionMode: "bypassPermissions",
-      allowedTools: [],
+      tools: [],
+      permissionMode: "dontAsk",
+      settingSources: [],
+      mcpServers: {},
+      strictMcpConfig: true,
+      maxTurns: 1,
     },
   });
   for await (const msg of iter) {
