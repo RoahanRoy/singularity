@@ -6,6 +6,7 @@ import { AuthGate } from "@/components/meridian/AuthGate";
 import { MarketProvider } from "@/components/meridian/MarketContext";
 import { SwarmScreen } from "@/components/meridian/screens/Swarm";
 import { ResearchScreen } from "@/components/meridian/screens/Research";
+import { QuantScreen } from "@/components/meridian/screens/Quant";
 import { PortfolioScreen } from "@/components/meridian/screens/Portfolio";
 import { ConsoleScreen } from "@/components/meridian/screens/Console";
 import { ComputeScreen } from "@/components/meridian/screens/Compute";
@@ -13,6 +14,7 @@ import { ComputeScreen } from "@/components/meridian/screens/Compute";
 const SCREENS = {
   swarm: SwarmScreen,
   research: ResearchScreen,
+  quant: QuantScreen,
   portfolio: PortfolioScreen,
   console: ConsoleScreen,
   compute: ComputeScreen,

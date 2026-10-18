@@ -350,6 +350,41 @@
 .meridian-root .research > .panel { border-radius: 0; border-top: 0; border-bottom: 0; }
 .meridian-root .research > .panel:first-child { border-left: 0; }
 .meridian-root .research > .panel:last-child { border-right: 0; }
+
+/* Quant desk screen (screens/Quant.tsx) */
+.meridian-root .quant { display: grid; grid-template-columns: 280px minmax(0, 1fr) 340px; width: 100%; height: 100%; }
+.meridian-root .quant > .panel { border-radius: 0; border-top: 0; border-bottom: 0; }
+.meridian-root .quant > .panel:first-child { border-left: 0; }
+.meridian-root .quant > .panel:last-child { border-right: 0; }
+@media (max-width: 1199px) {
+  .meridian-root .quant { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .meridian-root .quant > .panel:first-child .panel-body { max-height: 260px; }
+}
+.meridian-root .q-stage { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-1); margin: 4px 0 8px; }
+.meridian-root .q-stage-note { letter-spacing: 0.04em; text-transform: none; color: var(--ink-3); }
+.meridian-root .q-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.meridian-root .q-card { border: 1px solid var(--line); background: var(--bg-2); padding: 10px 12px; display: grid; gap: 6px; align-content: start; min-width: 0; border-radius: 10px; }
+.meridian-root .q-card.pending { opacity: 0.5; }
+.meridian-root .q-card-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.meridian-root .q-name { font-size: 12.5px; color: var(--ink-0); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meridian-root .q-kind { font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap; }
+.meridian-root .q-score { margin-left: auto; font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.meridian-root .q-summary { font-size: 11.5px; line-height: 1.45; color: var(--ink-1); overflow-wrap: anywhere; }
+.meridian-root .q-foot { font-family: var(--mono); font-size: 9.5px; color: var(--ink-3); overflow-wrap: anywhere; }
+.meridian-root .q-data summary { font-family: var(--mono); font-size: 9.5px; color: var(--ink-3); cursor: pointer; letter-spacing: 0.1em; text-transform: uppercase; }
+.meridian-root .q-data pre { margin: 6px 0 0; max-height: 260px; overflow: auto; font-family: var(--mono); font-size: 10px; line-height: 1.4; color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.meridian-root .q-bar { position: relative; height: 4px; background: var(--line-soft); border-radius: 2px; overflow: hidden; }
+.meridian-root .q-bar.small { height: 3px; }
+.meridian-root .q-bar i { position: absolute; top: 0; bottom: 0; }
+.meridian-root .q-bar-mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--ink-4); }
+.meridian-root .q-stats { display: grid; grid-template-columns: max-content 1fr; gap: 5px 14px; margin-top: 12px; font-size: 11.5px; }
+.meridian-root .q-stats > span { color: var(--ink-3); font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; }
+.meridian-root .q-stats > b { font-weight: 500; color: var(--ink-0); overflow-wrap: anywhere; }
+.meridian-root .q-contrib { display: grid; grid-template-columns: minmax(0, 1fr) 90px 44px; gap: 8px; align-items: center; padding: 3px 0; font-size: 11.5px; }
+.meridian-root .q-contrib-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-1); }
+.meridian-root .q-contrib-v { font-family: var(--mono); font-size: 10.5px; text-align: right; color: var(--ink-2); }
+.meridian-root .q-note { font-size: 11px; line-height: 1.5; color: var(--ink-3); margin-top: 8px; }
+.meridian-root .q-empty { padding: 16px; font-size: 12px; line-height: 1.55; color: var(--ink-3); }
 .meridian-root .doc { padding: 10px 12px; border-bottom: 1px solid var(--line-soft); display: grid; gap: 4px; cursor: pointer; position: relative; }
 .meridian-root .doc:hover { background: var(--bg-2); }
 .meridian-root .doc.sel { background: var(--bg-2); }
@@ -635,8 +670,8 @@
 /* Heads stay opaque: some screen grids overlap panels and rely on the head to cover it. */
 .meridian-root.mx-desk .panel-head { background: var(--group); border-bottom: 1px solid var(--line); box-shadow: none; padding: 0 16px; }
 .meridian-root.mx-desk .panel-head .title { font-family: var(--f-text); font-size: 14px; font-weight: 700; letter-spacing: -0.02em; text-transform: none; color: var(--ink); }
-.meridian-root.mx-desk :is(.swarm, .research, .portfolio, .console-grid, .compute) { gap: 10px; padding: 10px; }
-.meridian-root.mx-desk :is(.swarm, .research, .portfolio, .console-grid, .compute) > .panel { border: 0; border-radius: 14px; }
+.meridian-root.mx-desk :is(.swarm, .research, .quant, .portfolio, .console-grid, .compute) { gap: 10px; padding: 10px; }
+.meridian-root.mx-desk :is(.swarm, .research, .quant, .portfolio, .console-grid, .compute) > .panel { border: 0; border-radius: 14px; }
 .meridian-root.mx-desk .panel-head .meta { font-family: var(--f-text); font-size: 12px; letter-spacing: 0; }
 .meridian-root.mx-desk .action-card .btn.primary { background: var(--tint); border-color: var(--tint); color: #fff; box-shadow: none; }
 .meridian-root.mx-desk .tag.green { border-color: color-mix(in oklch, var(--up) 50%, transparent); }

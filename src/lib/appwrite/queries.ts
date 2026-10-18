@@ -2,7 +2,7 @@
 
 import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc, type KiteAccount, type IbkrAccount, type Market } from "./schema";
+import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc, type KiteAccount, type IbkrAccount, type QuantReport, type Market } from "./schema";
 
 /**
  * Market filter. When a desk is passed we constrain to that desk's rows.
@@ -319,6 +319,43 @@ export function subscribeIbkrAccounts(onChange: (row: IbkrAccount) => void) {
   return client.subscribe<IbkrAccount & Models.Document>(channel, (msg) => {
     if (msg.events.some((e) => e.endsWith(".create") || e.endsWith(".update") || e.endsWith(".delete"))) {
       onChange(msg.payload);
+    }
+  });
+}
+
+/** Agents whose rows mark a quant-desk cycle's progress: started, screened, finished. */
+export const QUANT_HEAD_AGENTS = ["market-data-reader", "fundamentals-screener", "ensemble-combiner"] as const;
+
+/**
+ * Recent quant-desk progress rows on a desk, newest first: each cycle's
+ * market-data, screener and (unless the screen stopped it) ensemble report.
+ * The Quant screen groups them into the newest cycle per ticker.
+ */
+export async function listQuantHeads(market?: Market, limit = 300): Promise<QuantReport[]> {
+  const res = await databases.listDocuments<QuantReport & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.quant_reports,
+    [Query.equal("agent", [...QUANT_HEAD_AGENTS]), ...marketFilter(market), Query.orderDesc("run_at"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
+/** Every agent report from one quant-desk cycle, in the order they ran. */
+export async function listQuantCycle(cycleId: string): Promise<QuantReport[]> {
+  const res = await databases.listDocuments<QuantReport & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.quant_reports,
+    [Query.equal("cycle_id", cycleId), Query.orderAsc("run_at"), Query.limit(100)],
+  );
+  return res.documents;
+}
+
+/** Realtime: each quant agent's report as it lands. */
+export function subscribeQuantReports(onCreate: (r: QuantReport) => void) {
+  const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.quant_reports}.documents`;
+  return client.subscribe<QuantReport & Models.Document>(channel, (msg) => {
+    if (msg.events.some((e) => e.endsWith(".create"))) {
+      onCreate(msg.payload);
     }
   });
 }

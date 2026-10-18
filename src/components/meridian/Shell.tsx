@@ -12,13 +12,14 @@ import type { Position } from "@/lib/appwrite/schema";
 import { fmtFullMoney, type Market } from "@/lib/meridian/format";
 import { useTheme } from "@/lib/meridian/theme";
 
-export type ScreenId = "swarm" | "research" | "portfolio" | "console" | "compute";
+export type ScreenId = "swarm" | "research" | "quant" | "portfolio" | "console" | "compute";
 
 // id, label, crumb, Material Symbols glyph
 const SCREENS: { id: ScreenId; label: string; crumb: string; icon: string }[] = [
   { id: "portfolio", label: "Portfolio", crumb: "Capital", icon: "pie_chart" },
   { id: "swarm", label: "Swarm", crumb: "Intelligence", icon: "hub" },
   { id: "research", label: "Research", crumb: "Intelligence", icon: "description" },
+  { id: "quant", label: "Quant", crumb: "Intelligence", icon: "functions" },
   { id: "console", label: "Console", crumb: "Operator", icon: "forum" },
   { id: "compute", label: "Compute", crumb: "System", icon: "memory" },
 ];
