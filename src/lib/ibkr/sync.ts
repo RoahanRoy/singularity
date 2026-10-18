@@ -3,6 +3,7 @@ import { ID, Query } from "node-appwrite";
 import { createAdminClient, DATABASE_ID } from "@/lib/appwrite/server";
 import { COLLECTIONS } from "@/lib/appwrite/schema";
 import { authStatus, getAccounts, getPositions, getCashBalance, IbkrAuthError } from "./client";
+import { horizonConfigured } from "@/lib/horizon/client";
 
 export type IbkrSyncResult = {
   accountId: string;
@@ -171,8 +172,9 @@ export async function connectFromGateway(): Promise<{ connected: string[]; statu
       });
       docId = created.$id;
     }
-    // First sync is best-effort — the account is connected either way.
-    await syncAccount(docId).catch(() => {});
+    // First sync is best-effort — the account is connected either way. Skipped
+    // while Horizon is the book source: it already carries these holdings.
+    if (!horizonConfigured()) await syncAccount(docId).catch(() => {});
     connected.push(acct.accountId);
   }
 

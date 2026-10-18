@@ -6,6 +6,7 @@ import { useMarket } from "../MarketContext";
 import { KiteAccountsPanel } from "../KiteAccounts";
 import { IbkrAccountsPanel } from "../IbkrAccounts";
 import { FundMandatePanel } from "../FundMandate";
+import { HorizonSourcePanel, useHorizonStatus } from "../HorizonSource";
 import { fmtMoney, fmtFullMoney } from "@/lib/meridian/format";
 import { operatorFetch } from "@/lib/auth/operator-fetch";
 import {
@@ -367,7 +368,18 @@ function PositionsList({ rows, loaded, market }: { rows: Position[]; loaded: boo
             alignItems: "center",
           }}
         >
-          <span style={{ color: "var(--ink-0)" }}>{p.ticker}</span>
+          <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }} title={p.label ?? undefined}>
+            <span style={{ color: "var(--ink-0)" }}>{p.ticker}</span>
+            {/* A fund's ticker is a scheme code; its name is what says what it is. */}
+            {p.label && (
+              <span
+                className="dim"
+                style={{ fontSize: 9.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              >
+                {p.label}
+              </span>
+            )}
+          </span>
           <span style={{ color: "var(--ink-2)" }}>{p.qty.toLocaleString()}</span>
           <span style={{ color: "var(--ink-1)", textAlign: "right" }}>{fmtMoney(p.market_value, market)}</span>
           <span
@@ -469,6 +481,9 @@ export function PortfolioScreen() {
   // attached brokerage book instead). Folded into NAV so a freshly-onboarded
   // fund shows its capital base, not "—", before it has deployed anything.
   const [mandateCash, setMandateCash] = useState<number | null>(null);
+  // Bumped after a Horizon sync so the book re-reads without a market switch.
+  const [reloadKey, setReloadKey] = useState(0);
+  const { status: horizon, refresh: refreshHorizon } = useHorizonStatus();
 
   useEffect(() => {
     let cancelled = false;
@@ -497,7 +512,7 @@ export function PortfolioScreen() {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [market]);
+  }, [market, reloadKey]);
 
   // NAV = deployed market value + undeployed mandate cash. For an attached
   // brokerage book (no mandate) mandateCash is null and NAV is just the book MV.
@@ -622,13 +637,27 @@ export function PortfolioScreen() {
         <FundMandatePanel market={market} />
       </Panel>
 
-      {market === "IN" && (
+      {/* Horizon, when configured, supersedes the direct brokerage links. */}
+      {horizon?.configured && (
+        <Panel title="Horizon · Real Book" meta="source of record · read-only" bodyClassName="tight">
+          <HorizonSourcePanel
+            market={market}
+            status={horizon}
+            onSynced={() => {
+              refreshHorizon();
+              setReloadKey((k) => k + 1);
+            }}
+          />
+        </Panel>
+      )}
+
+      {horizon && !horizon.configured && market === "IN" && (
         <Panel title="KITE Accounts · India" meta="Zerodha · real holdings" bodyClassName="tight">
           <KiteAccountsPanel />
         </Panel>
       )}
 
-      {market === "US" && (
+      {horizon && !horizon.configured && market === "US" && (
         <Panel title="IBKR Accounts · US" meta="Interactive Brokers · real holdings" bodyClassName="tight">
           <IbkrAccountsPanel />
         </Panel>
