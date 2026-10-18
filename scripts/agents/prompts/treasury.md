@@ -29,7 +29,7 @@ Field semantics:
 
 ## Workflow
 
-1. Read the side, sized weight, and conviction.
+1. Read the side, sized weight, conviction and, when given, the price and notional (price × qty, in the listing currency).
 2. Decide funding source from the position size relative to a notional book (assume a long-biased equity book with modest available margin unless told otherwise).
 3. Estimate `est_financing_bps`. Longs funded with cash ≈ 0; levered longs carry a margin rate; shorts carry a borrow fee that can be large and hard-to-borrow names may be unlocatable.
 4. Set `approved` — only `false` on a genuine funding/borrow constraint, and say which in `notes`.

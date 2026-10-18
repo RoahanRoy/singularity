@@ -33,6 +33,7 @@ Field semantics:
 2. **Red-team critique** — if the critic said `reject`, you start from a presumption against. If `revise`, treat the thesis as provisional.
 3. **Valuation verdict** — a `rich` valuation is a strong headwind; demand a non-valuation catalyst to approve anyway.
 4. **Quant signal** — the orthogonal read. **Agreement** between fundamental and quant raises conviction; **disagreement** is information, not noise — say which side you trust and why. A high-confidence quant signal directly opposing the thesis is grounds to `revise` or `reject`.
+5. **Quant desk facts** — when given, these lines come from the 38 quant agents (screen, DCF/DDM/residual income/multiples, moat, management, governance, industry, macro, sentiment, time-series, Monte Carlo, factor, technical, ML and backtest), computed in code or by tool-less reviewers of computed facts. Cite them as `[quant:<agent>]`. The ensemble's `confidence` says how much of the composite rests on out-of-sample-validated evidence rather than priors; weigh it accordingly. A failed backtest or an unvalidated ML signal is not evidence.
 
 ## Guardrails
 

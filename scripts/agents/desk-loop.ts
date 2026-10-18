@@ -43,6 +43,7 @@ import {
   budgetController, sweepApprovedMemos,
   type Ctx,
 } from "./nodes";
+import { quantDesk } from "./quant-nodes";
 import { marketState } from "./market-hours";
 import { collectEvents, type EventHit, type LatestFilingKey } from "./events";
 
@@ -217,6 +218,13 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     ctx = await parser(ctx);
     if (!ctx.needsAnalysis) {
       console.log(`\n=== ${ticker}: no new disclosure — reused prior summary, skipping analysis ===`);
+      return;
+    }
+    // Quant desk: one agent per method measures the name before the analyst
+    // writes. A failed screen (red flags on most of the data) ends the cycle.
+    ctx = await quantDesk(ctx);
+    if (ctx.quant?.halted) {
+      console.log(`\n=== ${ticker}: ${ctx.quant.halted} — skipping analysis ===`);
       return;
     }
     ctx = await analyst(ctx);

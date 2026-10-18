@@ -27,9 +27,10 @@ Verdict semantics — the orchestrator routes on these:
 ## Workflow
 
 1. Read the memo and the filing summary it cites.
-2. List the strongest attacks: hallucinated figures, undefended catalysts, missing competitive context, mis-stated risk.
-3. Score 0–1 based on how many attacks the thesis survives.
-4. Choose a verdict. Default to `revise` over `pass` if any concern is unaddressed.
+2. If quant desk facts are given, check every figure in the memo against them: margins, growth, leverage, valuation band, volatility, momentum. A memo figure the computed facts contradict is a concern; a material one (wrong sign, off by more than a quarter) is grounds for `reject`. Cite the line as `[quant:<agent>]`.
+3. List the strongest attacks: hallucinated figures, undefended catalysts, missing competitive context, mis-stated risk.
+4. Score 0–1 based on how many attacks the thesis survives.
+5. Choose a verdict. Default to `revise` over `pass` if any concern is unaddressed.
 
 ## Guardrails
 

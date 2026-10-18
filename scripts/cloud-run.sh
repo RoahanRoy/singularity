@@ -16,6 +16,8 @@
 #   network access  Custom, keep the default list, and add www.sec.gov data.sec.gov
 #                   www.nseindia.com news.google.com query1.finance.yahoo.com
 #                   fra.cloud.appwrite.io singularity-gules-ten.vercel.app
+#                   (quant desk, only with MERIDIAN_QUANT=1: also query2.finance.yahoo.com
+#                   fc.yahoo.com fred.stlouisfed.org mba.tuck.dartmouth.edu cdn-api.cboe.com)
 #   network secret  host fra.cloud.appwrite.io, header X-Appwrite-Key, value = the
 #                   APPWRITE_API_KEY from .env.local (the key never enters the session)
 #
@@ -40,6 +42,10 @@ export MERIDIAN_APPWRITE_KEY_VIA_PROXY=1
 export NEXT_PUBLIC_APPWRITE_ENDPOINT="${NEXT_PUBLIC_APPWRITE_ENDPOINT:-https://fra.cloud.appwrite.io/v1}"
 export NEXT_PUBLIC_APPWRITE_DATABASE_ID="${NEXT_PUBLIC_APPWRITE_DATABASE_ID:-meridian}"
 export MERIDIAN_SYNC_BASE="${MERIDIAN_SYNC_BASE:-https://singularity-gules-ten.vercel.app}"
+# The quant desk's 38 agents need the extra hosts listed above and add about
+# 4 minutes and 7 LLM calls to an analysed cycle, so it stays off in the cloud
+# until those hosts are allowlisted. Set MERIDIAN_QUANT=1 to turn it on.
+export MERIDIAN_QUANT="${MERIDIAN_QUANT:-0}"
 [ -d node_modules ] || npm ci --no-audit --no-fund --loglevel=error || exit 1
 export NEXT_PUBLIC_APPWRITE_PROJECT_ID="${NEXT_PUBLIC_APPWRITE_PROJECT_ID:-$(node -p "require('./appwrite.json').projectId")}"
 

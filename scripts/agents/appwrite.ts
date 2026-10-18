@@ -53,6 +53,8 @@ export async function ensureAgent(
   name: string,
   role: "research" | "execution" | "risk" | "ops",
   cluster: ClusterRef = DEFAULT_CLUSTER,
+  /** What the agent runs on: a model tier or id, or "code" for a deterministic agent. Default claude-sonnet-4-6. */
+  model?: string,
 ) {
   const market: Market = cluster.market ?? "US";
   const clusterId = await ensureCluster(cluster.name, cluster.theme, market);
@@ -62,6 +64,7 @@ export async function ensureAgent(
     const patch: Record<string, unknown> = {};
     if (row.cluster_id !== clusterId) patch.cluster_id = clusterId;
     if (row.market !== market) patch.market = market;
+    if (model && row.model !== model) patch.model = model;
     if (Object.keys(patch).length) await db.updateDocument(DB, "agents", row.$id, patch);
     return row.$id;
   }
@@ -70,7 +73,7 @@ export async function ensureAgent(
     role,
     cluster_id: clusterId,
     status: "idle",
-    model: "claude-sonnet-4-6",
+    model: model ?? "claude-sonnet-4-6",
     conviction: 0,
     last_action_at: null,
     market,
