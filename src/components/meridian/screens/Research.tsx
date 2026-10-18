@@ -149,6 +149,9 @@ function DocList({
   );
 }
 
+/** Enough rows to show a filing for every name on the book (largest desk holds ~55). */
+const QUEUE_SIZE = 80;
+
 const STATUS_TONE: Record<Filing["status"], string> = {
   queued: "var(--ink-3)",
   parsing: "var(--md-accent)",
@@ -563,7 +566,7 @@ export function ResearchScreen() {
     setFilings([]);
     setHeldTickers(new Set());
     setSel(null);
-    listFilings(12, market)
+    listFilings(QUEUE_SIZE, market)
       .then((rows) => {
         if (cancelled) return;
         setFilings(rows);
@@ -577,7 +580,7 @@ export function ResearchScreen() {
       .catch(() => {});
     const unsub = subscribeFilings((f) => {
       if (cancelled) return;
-      setFilings((prev) => [f, ...prev.filter((p) => p.$id !== f.$id)].slice(0, 12));
+      setFilings((prev) => [f, ...prev.filter((p) => p.$id !== f.$id)].slice(0, QUEUE_SIZE));
     }, market);
     return () => {
       cancelled = true;
