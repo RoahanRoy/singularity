@@ -21,6 +21,7 @@ import { fetchTranscript } from "./transcript";
 import { getQuote, stubPrice } from "./quotes";
 import { indexDoc, recallPrior, formatRecall } from "./recall";
 import { getMandate, deployableThisCycle, debitCash } from "../../src/lib/fund/mandate";
+import { checkCircuitBreaker } from "./circuit-breaker";
 import { sectorOf, indiaSectorOf, sectorFromIndustry, type Sector } from "./universe";
 
 const AUTO_APPROVE = process.env.MERIDIAN_AUTO_APPROVE === "1";
@@ -951,11 +952,24 @@ async function bookPaperBuy(ticker: string, qty: number, price: number, market: 
  * out of deployable cash — no trade is booked and the caller should hold the
  * order for a later cycle. With no mandate, the full qty fills and nothing is
  * debited (attached-brokerage / legacy behaviour is unchanged).
+ *
+ * The circuit breaker runs first, ahead of any quote or write: a non-null
+ * `halted` means the desk's loss/drawdown limits (or an unmarkable book) have
+ * stopped new fills — nothing is booked and the caller must not retry blindly.
  */
 async function fillPaperTrade(
   input: { ticker: string; qty: number; market: "US" | "IN"; venue?: string | null; agentId: string },
-): Promise<{ id: string | null; fill_price: number; quoted: boolean; filled_qty: number; capped: boolean }> {
+): Promise<{ id: string | null; fill_price: number; quoted: boolean; filled_qty: number; capped: boolean; halted: string | null }> {
   const { ticker, market } = input;
+
+  const breaker = await checkCircuitBreaker(market, input.agentId);
+  if (breaker.halted) {
+    const reason = breaker.reason ?? "circuit breaker halted";
+    await writeAudit("circuit-breaker", "fill_blocked", ticker.toUpperCase(), "block",
+      `BUY ${input.qty} ${ticker.toUpperCase()} not filled: ${reason}`);
+    return { id: null, fill_price: 0, quoted: false, filled_qty: 0, capped: false, halted: reason };
+  }
+
   const quoted = await getQuote(ticker, market);
   const price = Number((quoted ?? stubPrice(ticker)).toFixed(2));
   const venue = input.venue ? `paper-${input.venue}` : "paper-IBKR";
@@ -970,7 +984,7 @@ async function fillPaperTrade(
     const affordable = Math.max(0, Math.floor(budget / price));
     if (affordable < qty) { qty = affordable; capped = true; }
     if (qty <= 0) {
-      return { id: null, fill_price: price, quoted: quoted != null, filled_qty: 0, capped: true };
+      return { id: null, fill_price: price, quoted: quoted != null, filled_qty: 0, capped: true, halted: null };
     }
   }
 
@@ -1004,7 +1018,7 @@ async function fillPaperTrade(
     }
   }
 
-  return { id: trade.$id, fill_price: price, quoted: quoted != null, filled_qty: qty, capped };
+  return { id: trade.$id, fill_price: price, quoted: quoted != null, filled_qty: qty, capped, halted: null };
 }
 
 export async function broker(ctx: Ctx): Promise<Ctx> {
@@ -1043,8 +1057,9 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
   await setStatus(id, "executing");
   const f = await fillPaperTrade({ ticker: ctx.ticker, qty, market, venue: ctx.route?.venue, agentId: id });
 
-  // Mandate ran the desk out of deployable cash this cycle: hold the order for
-  // review so a later cycle (replenished pacing budget) can fill it. No trade.
+  // No fill — either the circuit breaker halted the desk or the mandate ran out
+  // of deployable cash this cycle. Hold the order for review so a human (or a
+  // later cycle's replenished pacing budget) can fill it. No trade.
   if (!f.id || f.filled_qty === 0) {
     if (ctx.memoId) {
       await db.updateDocument(DB, "memos", ctx.memoId, {
@@ -1052,7 +1067,11 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
         pending_exec_json: JSON.stringify({ qty, weight_pct: ctx.size?.weight_pct ?? null, venue: ctx.route?.venue ?? null, algo: ctx.route?.algo ?? null, conviction: ctx.memo?.conviction ?? null }).slice(0, 2048),
       });
     }
-    await emit(id, "handoff", `HOLD BUY ${qty} ${ctx.ticker} — fund out of deployable cash this cycle`, { memo_id: ctx.memoId });
+    await emit(id, "handoff",
+      f.halted
+        ? `HOLD BUY ${qty} ${ctx.ticker} — circuit breaker: ${f.halted}`
+        : `HOLD BUY ${qty} ${ctx.ticker} — fund out of deployable cash this cycle`,
+      { memo_id: ctx.memoId, halted: f.halted });
     await setStatus(id, "idle");
     return ctx;
   }
@@ -1060,6 +1079,8 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
   if (ctx.memoId) {
     await db.updateDocument(DB, "memos", ctx.memoId, { status: "executed", pending_exec_json: null });
   }
+  await writeAudit("broker", "auto_execution", ctx.ticker, "allow",
+    `Auto-approved fill: BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price}${f.quoted ? "" : " (stub)"}${f.capped ? ` (capped from ${qty})` : ""}`);
   await emit(id, "trade",
     `FILL BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price.toFixed(2)}${f.quoted ? "" : " (stub)"}${f.capped ? ` (capped from ${qty} by mandate pacing)` : ""} via ${ctx.route?.algo ?? "default"}`,
     { trade_id: f.id, route: ctx.route, quoted: f.quoted, filled_qty: f.filled_qty, requested_qty: qty });
@@ -1097,6 +1118,17 @@ async function executeApproved(memo: ApprovableMemo, agentIds: Record<string, st
   const id = agentIds.broker;
   await setStatus(id, "executing");
   const f = await fillPaperTrade({ ticker: memo.ticker, qty, market, venue: pending.venue, agentId: id });
+
+  // Circuit breaker halted the desk: the operator approved under conditions
+  // that no longer hold, so send the memo back to review (pending intact) for
+  // a fresh decision once the halt clears — don't auto-fill it later.
+  if (f.halted) {
+    await db.updateDocument(DB, "memos", memo.$id, { status: "review" });
+    await emit(id, "handoff", `HOLD approved BUY ${qty} ${memo.ticker} — circuit breaker: ${f.halted}. Returned to review.`,
+      { memo_id: memo.$id, halted: f.halted });
+    await setStatus(id, "idle");
+    return false;
+  }
 
   // Out of deployable cash: leave the memo "approved" (pending intact) so the
   // next sweep retries once the pacing budget replenishes. Nothing booked.

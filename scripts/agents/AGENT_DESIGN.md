@@ -72,6 +72,14 @@ Anything weaker writes the memo with `status: review` and stops. This matches
 Anthropic's "stop and surface for review" pattern. Treat the env var as the
 operator's standing approval for the session; never make it the default.
 
+Separately, `circuit-breaker.ts` gates **every** fill — auto-executed or
+operator-approved — inside `fillPaperTrade`. It halts new buys when the paper
+book's day loss breaches `MERIDIAN_MAX_DAILY_LOSS_PCT` (default 3%), when a
+mandate desk's equity is `MERIDIAN_MAX_DRAWDOWN_PCT` (default 10%) below its
+capital base, or when the book can't be marked (fails closed). No LLM in that
+path. A trip latches for the session and writes an audit row, a governance
+block and a live-feed alert; held and approved trades return to `review`.
+
 ## 5. Trust tiers (implemented for the filing pipeline)
 
 The filing ingestion path is split into three stages with strictly decreasing

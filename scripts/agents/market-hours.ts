@@ -92,3 +92,8 @@ export function marketState(market: Market, at: Date = new Date()): MarketState 
 export function isMarketOpen(market: Market, at: Date = new Date()): boolean {
   return marketState(market, at).open;
 }
+
+/** The exchange-local calendar date (YYYY-MM-DD) for the desk at `at`. */
+export function exchangeDate(market: Market, at: Date = new Date()): string {
+  return partsIn(SESSIONS[market].tz, at).ymd;
+}

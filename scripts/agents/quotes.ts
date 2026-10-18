@@ -8,7 +8,8 @@
  * because a quote provider hiccuped.
  *
  * Trust tier: pure HTTP. No LLM, no DB. Cannot be influenced beyond the number
- * it returns, which the broker sanity-bounds before use.
+ * it returns. NOTE: nothing downstream sanity-bounds that number yet — the
+ * broker fills at whatever comes back (or the stub on failure).
  */
 const YF = "https://query1.finance.yahoo.com/v8/finance/chart/";
 const TIMEOUT_MS = 6000;
@@ -20,10 +21,13 @@ export function yahooSymbol(ticker: string, market: "US" | "IN" = "US"): string 
 }
 
 /**
- * Latest regular-market price for a ticker, or null if unavailable.
- * Deterministic fallback is the caller's responsibility.
+ * Latest regular-market price plus the previous session's close (for day P&L),
+ * or null if unavailable. `prevClose` is null when Yahoo omits it.
  */
-export async function getQuote(ticker: string, market: "US" | "IN" = "US"): Promise<number | null> {
+export async function getQuoteDetail(
+  ticker: string,
+  market: "US" | "IN" = "US",
+): Promise<{ price: number; prevClose: number | null } | null> {
   const symbol = yahooSymbol(ticker, market);
   try {
     const ctrl = new AbortController();
@@ -36,11 +40,22 @@ export async function getQuote(ticker: string, market: "US" | "IN" = "US"): Prom
     clearTimeout(t);
     if (!res.ok) return null;
     const json = await res.json();
-    const price = json?.chart?.result?.[0]?.meta?.regularMarketPrice;
-    return typeof price === "number" && price > 0 ? price : null;
+    const meta = json?.chart?.result?.[0]?.meta;
+    const price = meta?.regularMarketPrice;
+    if (typeof price !== "number" || !(price > 0)) return null;
+    const prev = meta?.chartPreviousClose ?? meta?.previousClose;
+    return { price, prevClose: typeof prev === "number" && prev > 0 ? prev : null };
   } catch {
     return null;
   }
+}
+
+/**
+ * Latest regular-market price for a ticker, or null if unavailable.
+ * Deterministic fallback is the caller's responsibility.
+ */
+export async function getQuote(ticker: string, market: "US" | "IN" = "US"): Promise<number | null> {
+  return (await getQuoteDetail(ticker, market))?.price ?? null;
 }
 
 /**
