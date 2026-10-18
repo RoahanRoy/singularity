@@ -311,13 +311,26 @@ export const QUANT_HEAD_AGENTS = ["market-data-reader", "fundamentals-screener",
  * market-data, screener and (unless the screen stopped it) ensemble report.
  * The Quant screen groups them into the newest cycle per ticker.
  */
-export async function listQuantHeads(market?: Market, limit = 300): Promise<QuantReport[]> {
-  const res = await databases.listDocuments<QuantReport & Models.Document>(
-    DATABASE_ID,
-    COLLECTIONS.quant_reports,
-    [Query.equal("agent", [...QUANT_HEAD_AGENTS]), ...marketFilter(market), Query.orderDesc("run_at"), Query.limit(limit)],
-  );
-  return res.documents;
+export async function listQuantHeads(market?: Market, limit = 1500): Promise<QuantReport[]> {
+  // Three head rows per cycle; the daily sweep (scripts/agents/quant-sweep.ts)
+  // writes ~170 cycles a day, so page until two sweeps' worth are loaded.
+  const out: QuantReport[] = [];
+  let cursor: string | undefined;
+  while (out.length < limit) {
+    const page = Math.min(500, limit - out.length);
+    const res = await databases.listDocuments<QuantReport & Models.Document>(
+      DATABASE_ID,
+      COLLECTIONS.quant_reports,
+      [
+        Query.equal("agent", [...QUANT_HEAD_AGENTS]), ...marketFilter(market), Query.orderDesc("run_at"), Query.limit(page),
+        ...(cursor ? [Query.cursorAfter(cursor)] : []),
+      ],
+    );
+    out.push(...res.documents);
+    if (res.documents.length < page) break;
+    cursor = res.documents[res.documents.length - 1].$id;
+  }
+  return out;
 }
 
 /** Every agent report from one quant-desk cycle, in the order they ran. */

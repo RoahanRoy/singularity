@@ -20,10 +20,13 @@
  *   MERIDIAN_QUANT=0              skip the stage (and don't create its agents)
  *   MERIDIAN_QUANT_LLM=0          skip the seven LLM agents (compute only)
  *   MERIDIAN_QUANT_SCREEN_GATE=0  report a failed screen but keep the cycle going
+ *   MERIDIAN_QUANT_LLM_MAX_AGE_H  reuse an LLM agent's last report for the name
+ *                                 when it is younger than this (default 0: always
+ *                                 ask; the daily sweep sets a week)
  */
 import { ask, extractJson } from "./llm";
 import { loadPrompt } from "./prompts";
-import { db, DB, ID, emit, setStatus, ensureAgent, type ClusterRef } from "./appwrite";
+import { db, DB, ID, Query, emit, setStatus, ensureAgent, type ClusterRef } from "./appwrite";
 import { sectorOf, indiaSectorOf, SECTOR_UNIVERSE, INDIA_SECTOR_UNIVERSE } from "./universe";
 import {
   QUANT_AGENTS, loadBundle, newState, runCompute, recordResult, skip, qualitativeFacts, normalizeTilts, llmScore,
@@ -219,6 +222,42 @@ async function askAgent(st: QuantState, spec: AgentSpec): Promise<AgentResult> {
   return { agent: spec.slug, score, summary: (summary || `score ${score}`).slice(0, 240), data: out, method: `LLM (${prompt.meta.model})` };
 }
 
+/** Set once the subscription refuses a call; the rest of the run skips its LLM agents. */
+let usageLimitHit = false;
+export const quantUsageLimitHit = () => usageLimitHit;
+const USAGE_LIMIT = /usage limit|limit reached/i;
+
+/**
+ * The newest real (not skipped) report this LLM agent wrote for the name,
+ * when it is younger than MERIDIAN_QUANT_LLM_MAX_AGE_H. Read lazily so the
+ * sweep can set the knob before the first cycle.
+ */
+async function priorLlmReport(b: QuantState["bundle"], slug: string): Promise<AgentResult | null> {
+  const maxAgeH = Number(process.env.MERIDIAN_QUANT_LLM_MAX_AGE_H || 0);
+  if (!(maxAgeH > 0) || reportsOff) return null;
+  try {
+    const since = new Date(Date.now() - maxAgeH * 3_600_000).toISOString();
+    const res = await db.listDocuments(DB, "quant_reports", [
+      Query.equal("agent", slug), Query.equal("market", b.market),
+      ...(slug === "macro-strategist" ? [] : [Query.equal("ticker", b.ticker)]),
+      Query.greaterThan("run_at", since), Query.orderDesc("run_at"), Query.limit(5),
+    ]);
+    for (const d of res.documents) {
+      let p: { method?: string | null; skipped?: string | null; data?: unknown } = {};
+      try { p = JSON.parse(String(d.payload_json ?? "{}")); } catch { continue; }
+      if (p.skipped) continue;
+      const when = String(d.run_at).slice(0, 10);
+      return {
+        agent: slug, score: typeof d.score === "number" ? d.score : null, summary: String(d.summary ?? ""),
+        data: p.data ?? null, method: `${p.method ?? "LLM"}, reused from ${when}`,
+      };
+    }
+  } catch (e) {
+    console.warn(`[quant] prior ${slug} lookup failed: ${errText(e)}`);
+  }
+  return null;
+}
+
 /** The macro view is market-wide: one strategist call per market and data date per process. */
 const macroCache = new Map<string, AgentResult>();
 
@@ -229,16 +268,20 @@ async function runLlmAgent(ctx: Ctx, st: QuantState, spec: AgentSpec, cycleId: s
   let r: AgentResult;
   const cacheKey = `${b.market}:${b.asOf ?? "?"}`;
   const cached = spec.slug === "macro-strategist" ? macroCache.get(cacheKey) : undefined;
+  const prior = LLM_ENABLED && !cached ? await priorLlmReport(b, spec.slug) : null;
   if (!LLM_ENABLED) r = skip(spec.slug, "LLM agents off (MERIDIAN_QUANT_LLM=0)");
   else if (cached) r = { ...cached, method: `${cached.method ?? "LLM"}, reused for ${b.asOf ?? "today"}` };
+  else if (prior) r = prior;
+  else if (usageLimitHit) r = skip(spec.slug, "subscription usage limit reached earlier in this run");
   else {
     try {
       r = await askAgent(st, spec);
     } catch (e) {
+      if (USAGE_LIMIT.test(errText(e))) usageLimitHit = true;
       r = skip(spec.slug, `error: ${errText(e)}`);
     }
-    if (spec.slug === "macro-strategist" && !r.skipped) macroCache.set(cacheKey, r);
   }
+  if (spec.slug === "macro-strategist" && !r.skipped) macroCache.set(cacheKey, r);
   if (spec.slug === "macro-strategist" && !r.skipped) {
     const raw = r.data && typeof r.data === "object" ? (r.data as Record<string, unknown>).tilts : null;
     st.macroTilts = normalizeTilts(raw, b.macro.map((m) => m.name));

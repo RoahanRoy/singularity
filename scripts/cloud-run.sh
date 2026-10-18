@@ -7,9 +7,12 @@
 #
 #   bash scripts/cloud-run.sh us prep      deps, Appwrite check, news + held-filings sweep
 #   bash scripts/cloud-run.sh us cycle     one analyst-chain cycle on the US desk
-#   bash scripts/cloud-run.sh india prep|cycle
+#   bash scripts/cloud-run.sh us quant     ~8 min of the daily quant sweep (needs MERIDIAN_QUANT=1)
+#   bash scripts/cloud-run.sh india prep|cycle|quant
 #
 # `cycle` exit codes: 0 ran · 3 market closed (stop for today) ·
+#                     4 subscription usage limit hit (stop for today) · other = failed
+# `quant` exit codes: 0 every name fresh · 5 names left (run it again) ·
 #                     4 subscription usage limit hit (stop for today) · other = failed
 #
 # One-time setup of the cloud environment (claude.ai → Code → environment settings):
@@ -28,7 +31,7 @@ desk="${1:-}"; step="${2:-}"
 case "$desk" in
   us)    market=US; loop=tech-loop;  prefix=MERIDIAN_TECH ;;
   india) market=IN; loop=india-loop; prefix=MERIDIAN_INDIA ;;
-  *) echo "usage: $0 us|india prep|cycle" >&2; exit 64 ;;
+  *) echo "usage: $0 us|india prep|cycle|quant" >&2; exit 64 ;;
 esac
 
 # The sandbox egresses through its HTTPS proxy, which Node's fetch ignores
@@ -83,5 +86,13 @@ case "$step" in
     fi
     exit $rc
     ;;
-  *) echo "usage: $0 us|india prep|cycle" >&2; exit 64 ;;
+  quant)
+    # Refresh the quant desk for every covered name on this desk, oldest first.
+    # Resumable, so the routine repeats this step while it exits 5.
+    MERIDIAN_QUANT_SWEEP_MARKETS="$market" \
+    MERIDIAN_QUANT_SWEEP_BUDGET_MS="${MERIDIAN_QUANT_SWEEP_BUDGET_MS:-480000}" \
+      npx tsx scripts/agents/quant-sweep.ts 2>&1 | grep -E "^\[sweep\]|^=== |[Ee]rror|failed" | tail -30
+    exit "${PIPESTATUS[0]}"
+    ;;
+  *) echo "usage: $0 us|india prep|cycle|quant" >&2; exit 64 ;;
 esac
