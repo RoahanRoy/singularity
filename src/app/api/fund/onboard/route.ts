@@ -1,4 +1,4 @@
-import { createAdminClient, DATABASE_ID } from "@/lib/appwrite/server";
+import { createAdminClient, DATABASE_ID, requireOperator } from "@/lib/appwrite/server";
 import type { Market } from "@/lib/appwrite/schema";
 import { getMandate, upsertMandate, isRiskPosture, POSTURE_CAPS } from "@/lib/fund/mandate";
 
@@ -24,7 +24,9 @@ function isMarket(v: unknown): v is Market {
   return v === "US" || v === "IN";
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const denied = await requireOperator(req);
+  if (denied) return denied;
   const { databases } = createAdminClient();
   const [us, inn] = await Promise.all([
     getMandate(databases, DATABASE_ID, "US"),
@@ -34,6 +36,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const denied = await requireOperator(req);
+  if (denied) return denied;
   let body: Body;
   try {
     body = (await req.json()) as Body;

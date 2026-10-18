@@ -2,6 +2,7 @@
 
 import { ID } from "appwrite";
 import { account } from "@/lib/appwrite/client";
+import { clearOperatorJwt } from "@/lib/auth/operator-fetch";
 
 export type OperatorUser = {
   $id: string;
@@ -49,6 +50,7 @@ export async function signInOperator(email: string, password: string): Promise<O
 }
 
 export async function signOutOperator(): Promise<void> {
+  clearOperatorJwt();
   try {
     await account.deleteSession("current");
   } catch {

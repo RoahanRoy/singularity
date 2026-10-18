@@ -1,4 +1,5 @@
 import { connectFromGateway } from "@/lib/ibkr/sync";
+import { requireOperator } from "@/lib/appwrite/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,7 +9,9 @@ export const dynamic = "force-dynamic";
  * holdings sync. Called by the "Connect IBKR account" button after the operator
  * has logged into the Client Portal Gateway in their browser.
  */
-export async function POST() {
+export async function POST(req: Request) {
+  const denied = await requireOperator(req);
+  if (denied) return denied;
   try {
     const result = await connectFromGateway();
     if (result.status === "needs_reauth") {

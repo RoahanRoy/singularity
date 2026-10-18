@@ -7,6 +7,7 @@ import { KiteAccountsPanel } from "../KiteAccounts";
 import { IbkrAccountsPanel } from "../IbkrAccounts";
 import { FundMandatePanel } from "../FundMandate";
 import { fmtMoney, fmtFullMoney } from "@/lib/meridian/format";
+import { operatorFetch } from "@/lib/auth/operator-fetch";
 import {
   listPositions,
   listPendingTrades,
@@ -489,7 +490,7 @@ export function PortfolioScreen() {
     listScenarios(12, market)
       .then((s) => { if (!cancelled) setScenarios(s); })
       .catch(() => {});
-    fetch("/api/fund/onboard", { cache: "no-store" })
+    operatorFetch("/api/fund/onboard", { cache: "no-store" })
       .then((r) => r.json())
       .then((j: { mandates?: Record<string, { cash?: number } | null> }) => {
         if (!cancelled) setMandateCash(j.mandates?.[market]?.cash ?? null);

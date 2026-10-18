@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listIbkrAccounts, subscribeIbkrAccounts } from "@/lib/appwrite/queries";
 import type { IbkrAccount } from "@/lib/appwrite/schema";
+import { operatorFetch } from "@/lib/auth/operator-fetch";
 
 const STATUS_COLOR: Record<IbkrAccount["status"], string> = {
   connected: "var(--green)",
@@ -76,7 +77,7 @@ export function IbkrAccountsPanel() {
     setConnecting(true);
     setBanner(null);
     try {
-      const res = await fetch("/api/ibkr/connect", { method: "POST" });
+      const res = await operatorFetch("/api/ibkr/connect", { method: "POST" });
       const j = (await res.json()) as { connected?: string[]; error?: string };
       if (!res.ok) {
         setBanner({ kind: "err", text: j.error || "Connect failed." });
@@ -95,7 +96,7 @@ export function IbkrAccountsPanel() {
   async function syncNow(docId: string) {
     setSyncing(docId);
     try {
-      await fetch("/api/ibkr/sync", {
+      await operatorFetch("/api/ibkr/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accountId: docId }),

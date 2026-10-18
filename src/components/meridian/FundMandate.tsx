@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { fmtMoney } from "@/lib/meridian/format";
 import type { FundMandate, Market, RiskPosture } from "@/lib/appwrite/schema";
+import { operatorFetch } from "@/lib/auth/operator-fetch";
 
 const POSTURES: RiskPosture[] = ["conservative", "balanced", "aggressive"];
 
@@ -52,7 +53,7 @@ export function FundMandatePanel({ market }: { market: Market }) {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/fund/onboard", { cache: "no-store" });
+      const res = await operatorFetch("/api/fund/onboard", { cache: "no-store" });
       const j = (await res.json()) as { mandates?: Record<Market, FundMandate | null> };
       const m = j.mandates?.[market] ?? null;
       setMandate(m);
@@ -100,7 +101,7 @@ export function FundMandatePanel({ market }: { market: Market }) {
     setBusy(true);
     setBanner(null);
     try {
-      const res = await fetch("/api/fund/onboard", {
+      const res = await operatorFetch("/api/fund/onboard", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ market, capital_base: cap, risk_posture: posture, ...(cashOverride !== undefined ? { cash: cashOverride } : {}) }),
