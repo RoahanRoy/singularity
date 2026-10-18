@@ -44,7 +44,7 @@ function fmtCount(n: number): string {
 /** Agents that are doing work right now. */
 const ACTIVE: Agent["status"][] = ["thinking", "executing"];
 
-/** Friendly label for a raw model id (claude-opus-4-7 → OPUS-4.7). */
+/** Friendly label for a raw model id (claude-opus-5-5 → OPUS-5.5). */
 function modelLabel(model: string): string {
   const m = model.trim();
   const known = m.match(/^claude-(opus|sonnet|haiku)-([\d-]+)$/i);

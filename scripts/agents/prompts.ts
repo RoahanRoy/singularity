@@ -27,6 +27,23 @@ const DIR = path.resolve(process.cwd(), "scripts/agents/prompts");
 
 const TIERS = ["haiku", "sonnet", "opus"] as const;
 
+/**
+ * Tier aliases pinned to the latest model of each family. The SDK resolves a
+ * bare alias to whatever its bundled default is, which lags new releases, so
+ * every alias is turned into an explicit id here. Bump these when a newer
+ * model ships; frontmatter and env overrides keep using the tier names.
+ */
+export const MODEL_IDS: Record<(typeof TIERS)[number], string> = {
+  haiku: "claude-haiku-5-5",
+  sonnet: "claude-sonnet-5-5",
+  opus: "claude-opus-5-5",
+};
+
+/** Turn a tier alias into its pinned id; explicit "claude-…" ids pass through. */
+export function pinModel(v: string): string {
+  return (MODEL_IDS as Record<string, string>)[v] ?? v;
+}
+
 /** Accept a tier alias or any explicit "claude-…" model id; reject the rest. */
 function isValidModel(v: string): boolean {
   return (TIERS as readonly string[]).includes(v) || v.startsWith("claude-");
@@ -49,6 +66,8 @@ const _loggedOverrides = new Set<string>();
  *                               e.g. MERIDIAN_MODEL_SONNET=opus
  *   3. MERIDIAN_MODEL           every agent (blunt global override).
  *   4. the frontmatter model    the default.
+ *
+ * The result is always an explicit id: tier aliases go through {@link pinModel}.
  *
  * A value must be a tier alias (haiku|sonnet|opus) or a full "claude-…" id;
  * anything else is warned about and ignored (so a typo fails safe to the
@@ -76,9 +95,9 @@ export function resolveModel(slug: string, declared: string): ModelName {
         console.warn(`[model] ${slug}: ${declared} → ${val} (via ${via})`);
       }
     }
-    return val;
+    return pinModel(val);
   }
-  return declared;
+  return pinModel(declared);
 }
 
 export function loadPrompt(slug: string): LoadedPrompt {

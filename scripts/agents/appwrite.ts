@@ -53,7 +53,7 @@ export async function ensureAgent(
   name: string,
   role: "research" | "execution" | "risk" | "ops",
   cluster: ClusterRef = DEFAULT_CLUSTER,
-  /** What the agent runs on: a model tier or id, or "code" for a deterministic agent. Default claude-sonnet-4-6. */
+  /** What the agent runs on: a model tier or id, or "code" for a deterministic agent. Default claude-sonnet-5-5. */
   model?: string,
 ) {
   const market: Market = cluster.market ?? "US";
@@ -73,7 +73,7 @@ export async function ensureAgent(
     role,
     cluster_id: clusterId,
     status: "idle",
-    model: model ?? "claude-sonnet-4-6",
+    model: model ?? "claude-sonnet-5-5",
     conviction: 0,
     last_action_at: null,
     market,

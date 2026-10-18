@@ -14,6 +14,7 @@
  */
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { recordSpend } from "./appwrite";
+import { pinModel } from "./prompts";
 
 /** Token counts reported by the SDK `result` message. */
 type TokenUsage = {
@@ -48,7 +49,8 @@ type AskOpts = {
   label?: string;
 };
 
-export async function ask({ system, user, model = "sonnet", label }: AskOpts): Promise<string> {
+export async function ask({ system, user, model: requested = "sonnet", label }: AskOpts): Promise<string> {
+  const model = pinModel(requested);
   const out: string[] = [];
   let costUsd = 0;
   let usage: TokenUsage | null = null;

@@ -36,7 +36,7 @@ const CLUSTERS = [
 
 const ROLES = ["research", "execution", "risk", "ops"] as const;
 const STATUSES = ["idle", "thinking", "executing", "blocked"] as const;
-const MODELS = ["claude-opus-4-7", "claude-sonnet-4-6", "gpt-5", "haiku-4-5"];
+const MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
 
 async function upsertClusters() {
   const out: Record<string, string> = {};

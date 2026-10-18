@@ -1530,28 +1530,30 @@ const C_IN: Record<string, ClusterRef> = {
 
 async function bootstrapFor(c: Record<string, ClusterRef>, suffix = ""): Promise<Ctx["agentIds"]> {
   const s = suffix ? ` ${suffix}` : "";
+  // Record the model each agent actually runs on, so the Compute screen is truthful.
+  const m = (slug: string) => loadPrompt(slug).meta.model;
   const ids = {
-    parser:              await ensureAgent(`Filing Parser${s}`,        "research",  c.research),
-    earningsReviewer:    await ensureAgent(`Earnings Reviewer${s}`,    "research",  c.research),
-    analyst_tech:        await ensureAgent(`Tech Analyst${s}`,         "research",  c.tech),
-    analyst_healthcare:  await ensureAgent(`Healthcare Analyst${s}`,   "research",  c.healthcare),
-    analyst_energy:      await ensureAgent(`Energy Analyst${s}`,       "research",  c.energy),
-    analyst_financials:  await ensureAgent(`Financials Analyst${s}`,   "research",  c.financials),
-    analyst_consumer:    await ensureAgent(`Consumer Analyst${s}`,     "research",  c.consumer),
-    analyst_industrials: await ensureAgent(`Industrials Analyst${s}`,  "research",  c.industrials),
-    quant:               await ensureAgent(`Quant Researcher${s}`,     "research",  c.quant),
-    critic:              await ensureAgent(`Red Team Critic${s}`,      "research",  c.research),
-    valuationReviewer:   await ensureAgent(`Valuation Reviewer${s}`,   "research",  c.research),
-    cio:                 await ensureAgent(`CIO / Committee${s}`,      "ops",       c.committee),
-    pm:                  await ensureAgent(`PM${s}`,                   "ops",       c.ops),
-    treasury:            await ensureAgent(`Treasury${s}`,             "ops",       c.treasury),
-    risk:                await ensureAgent(`Risk Officer${s}`,         "risk",      c.risk),
-    compliance:          await ensureAgent(`Compliance${s}`,           "ops",       c.ops),
-    smartRouter:         await ensureAgent(`Smart Router${s}`,         "execution", c.execution),
-    broker:              await ensureAgent(`Paper Broker${s}`,         "execution", c.execution),
-    tca:                 await ensureAgent(`TCA${s}`,                  "ops",       c.execution),
-    attribution:         await ensureAgent(`Attribution & Recon${s}`,  "ops",       c.ops),
-    budgetController:    await ensureAgent(`Budget Controller${s}`,    "ops",       c.governance),
+    parser:              await ensureAgent(`Filing Parser${s}`,        "research",  c.research, m("filing-summarizer")),
+    earningsReviewer:    await ensureAgent(`Earnings Reviewer${s}`,    "research",  c.research, m("earnings-reviewer")),
+    analyst_tech:        await ensureAgent(`Tech Analyst${s}`,         "research",  c.tech, m("tech-analyst")),
+    analyst_healthcare:  await ensureAgent(`Healthcare Analyst${s}`,   "research",  c.healthcare, m("healthcare-analyst")),
+    analyst_energy:      await ensureAgent(`Energy Analyst${s}`,       "research",  c.energy, m("energy-analyst")),
+    analyst_financials:  await ensureAgent(`Financials Analyst${s}`,   "research",  c.financials, m("financials-analyst")),
+    analyst_consumer:    await ensureAgent(`Consumer Analyst${s}`,     "research",  c.consumer, m("consumer-analyst")),
+    analyst_industrials: await ensureAgent(`Industrials Analyst${s}`,  "research",  c.industrials, m("industrials-analyst")),
+    quant:               await ensureAgent(`Quant Researcher${s}`,     "research",  c.quant, m("quant-researcher")),
+    critic:              await ensureAgent(`Red Team Critic${s}`,      "research",  c.research, m("red-team-critic")),
+    valuationReviewer:   await ensureAgent(`Valuation Reviewer${s}`,   "research",  c.research, m("valuation-reviewer")),
+    cio:                 await ensureAgent(`CIO / Committee${s}`,      "ops",       c.committee, m("cio")),
+    pm:                  await ensureAgent(`PM${s}`,                   "ops",       c.ops, m("portfolio-manager")),
+    treasury:            await ensureAgent(`Treasury${s}`,             "ops",       c.treasury, m("treasury")),
+    risk:                await ensureAgent(`Risk Officer${s}`,         "risk",      c.risk, m("risk-officer")),
+    compliance:          await ensureAgent(`Compliance${s}`,           "ops",       c.ops, m("compliance")),
+    smartRouter:         await ensureAgent(`Smart Router${s}`,         "execution", c.execution, m("smart-router")),
+    broker:              await ensureAgent(`Paper Broker${s}`,         "execution", c.execution, "code"),
+    tca:                 await ensureAgent(`TCA${s}`,                  "ops",       c.execution, m("tca-agent")),
+    attribution:         await ensureAgent(`Attribution & Recon${s}`,  "ops",       c.ops, m("attribution")),
+    budgetController:    await ensureAgent(`Budget Controller${s}`,    "ops",       c.governance, m("budget-controller")),
   };
   // One agent per quant method, in five "Quant ·" clusters (quant-nodes.ts).
   const quantIds = await bootstrapQuant(c.research.market ?? "US", suffix);
