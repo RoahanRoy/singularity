@@ -52,3 +52,6 @@ next-env.d.ts
 /Client Portal/
 .dispatcher.out.log
 .dispatcher.err.log
+
+# Quant market-data cache (scripts/agents/market-data.ts)
+.quant-cache/

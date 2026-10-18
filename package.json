@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:quant": "tsx --test src/lib/quant/*.test.ts scripts/agents/*.test.ts",
     "agents:tech": "tsx scripts/agents/tech-loop.ts",
     "agents:india": "tsx scripts/agents/india-loop.ts",
     "agents:news": "tsx scripts/agents/news.ts",

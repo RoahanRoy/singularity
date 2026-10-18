@@ -91,6 +91,25 @@ async function fetchAnnouncements(symbol: string): Promise<NseAnnouncement[]> {
   return arr;
 }
 
+/**
+ * GET any other NSE JSON API path (e.g. "/api/corporates-pit?...") through the
+ * same cookie handshake. Used by market-data.ts for insider (PIT) disclosures.
+ * Throws on failure, like fetchAnnouncements.
+ */
+export async function nseJson<T>(apiPath: string, refererPath: string): Promise<T> {
+  const cookie = await nseCookie();
+  const res = await fetch(`${NSE_HOME}${apiPath}`, {
+    headers: { ...BROWSER_HEADERS, Accept: "application/json", Referer: `${NSE_HOME}${refererPath}`, Cookie: cookie },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (res.status === 401 || res.status === 403) {
+    cookieJar = null;
+    throw new Error(`NSE ${apiPath} → ${res.status} (bot wall)`);
+  }
+  if (!res.ok) throw new Error(`NSE ${apiPath} → ${res.status}`);
+  return (await res.json()) as T;
+}
+
 const cleanText = (s: string): string =>
   s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 
