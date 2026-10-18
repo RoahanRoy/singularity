@@ -63,6 +63,29 @@ const W = 1000;
 const H = 700;
 
 /** Deterministic ring layout per cluster. Returns absolute canvas px. */
+// The hand-placed slots cover the first eleven clusters. Past that, each extra
+// slot is the grid point farthest from every slot already taken, so a desk
+// with any number of clusters still draws all of them, in a stable layout.
+function anchorSlots(n: number): { x: number; y: number }[] {
+  const slots = ANCHOR_SLOTS.slice(0, n);
+  if (slots.length >= n) return slots;
+  const grid: { x: number; y: number }[] = [];
+  for (let gx = 8; gx <= 92; gx += 4) {
+    for (let gy = 12; gy <= 88; gy += 4) grid.push({ x: gx / 100, y: gy / 100 });
+  }
+  while (slots.length < n) {
+    let best = grid[0];
+    let bestD = -1;
+    for (const g of grid) {
+      let d = Infinity;
+      for (const t of slots) d = Math.min(d, Math.hypot((g.x - t.x) * W, (g.y - t.y) * H));
+      if (d > bestD) { bestD = d; best = g; }
+    }
+    slots.push(best);
+  }
+  return slots;
+}
+
 function layoutAgents(
   agents: DbAgent[],
   anchorByClusterId: Map<string, ClusterAnchor>,
@@ -527,13 +550,14 @@ export function SwarmScreen() {
 
   // Build cluster anchors: largest clusters claim the first slots.
   const clusterAnchors: ClusterAnchor[] = useMemo(() => {
-    const ranked = list.slice().sort((a, b) => b.agents - a.agents).slice(0, ANCHOR_SLOTS.length);
+    const ranked = list.slice().sort((a, b) => b.agents - a.agents);
+    const slots = anchorSlots(ranked.length);
     return ranked.map((c, i) => ({
       id: c.id,
       themeId: c.themeId,
       name: c.name,
-      x: ANCHOR_SLOTS[i].x * W,
-      y: ANCHOR_SLOTS[i].y * H,
+      x: slots[i].x * W,
+      y: slots[i].y * H,
       count: c.agents,
     }));
   }, [list]);
