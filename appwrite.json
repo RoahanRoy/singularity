@@ -2161,6 +2161,135 @@
                 }
             ],
             "indexes": []
+        },
+        {
+            "$id": "quant_reports",
+            "databaseId": "meridian",
+            "name": "quant_reports",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")"
+            ],
+            "attributes": [
+                {
+                    "key": "ticker",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "agent",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "stage",
+                    "type": "string",
+                    "size": 32,
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "kind",
+                    "type": "string",
+                    "size": 16,
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "score",
+                    "type": "double",
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "summary",
+                    "type": "string",
+                    "size": 1024,
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "payload_json",
+                    "type": "string",
+                    "size": 16384,
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "run_at",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "cycle_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_ticker_time",
+                    "type": "key",
+                    "attributes": [
+                        "ticker",
+                        "run_at"
+                    ],
+                    "orders": [
+                        "ASC",
+                        "DESC"
+                    ]
+                },
+                {
+                    "key": "by_agent_time",
+                    "type": "key",
+                    "attributes": [
+                        "agent",
+                        "run_at"
+                    ],
+                    "orders": [
+                        "ASC",
+                        "DESC"
+                    ]
+                },
+                {
+                    "key": "by_market_time",
+                    "type": "key",
+                    "attributes": [
+                        "market",
+                        "run_at"
+                    ],
+                    "orders": [
+                        "ASC",
+                        "DESC"
+                    ]
+                },
+                {
+                    "key": "by_cycle",
+                    "type": "key",
+                    "attributes": [
+                        "cycle_id"
+                    ],
+                    "orders": [
+                        "ASC"
+                    ]
+                }
+            ]
         }
     ]
 }

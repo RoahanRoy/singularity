@@ -27,6 +27,7 @@ export const COLLECTIONS = {
   kite_accounts: "kite_accounts",
   ibkr_accounts: "ibkr_accounts",
   news: "news",
+  quant_reports: "quant_reports",
 } as const;
 
 type Base = { $id: string; $createdAt: string; $updatedAt: string };
@@ -308,6 +309,35 @@ export type NewsItem = Base & {
   published_at: string;
   fetched_at: string;
   url_hash: string;
+};
+
+/**
+ * One quant agent's report on one ticker in one quant-desk cycle
+ * (scripts/agents/quant-nodes.ts). `agent` is the agent's slug; `score` is
+ * its −100…100 vote (null when it has no view); `payload_json` holds
+ * {method, evidence, skipped, ms, asOf, data}.
+ */
+export type QuantReport = Base & {
+  ticker: string;
+  market: Market | null;
+  agent: string;
+  stage: string | null;
+  kind: "compute" | "llm" | string | null;
+  score: number | null;
+  summary: string;
+  payload_json: string | null;
+  run_at: string;
+  cycle_id: string;
+};
+
+/** Parsed `QuantReport.payload_json`. */
+export type QuantReportPayload = {
+  method?: string;
+  evidence?: { test: string; t: number; passed: boolean } | null;
+  skipped?: boolean;
+  ms?: number;
+  asOf?: string;
+  data?: unknown;
 };
 
 /** A single factor exposure entry stored on a position's factor_exposures_json. */
