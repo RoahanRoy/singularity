@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "How Meridian works",
     description:
-      "The honest map of the agent swarm: the 16-stage decision pipeline, the long-running loops, the model tiers, the guardrails, and the operator runbook.",
+      "The honest map of the agent swarm: the 17-stage decision pipeline, the long-running loops, the model tiers, the guardrails, and the operator runbook.",
     type: "article",
   },
 };

@@ -4,6 +4,7 @@ import { CSSProperties, ReactNode, useState } from "react";
 import Link from "next/link";
 import { useTheme } from "@/lib/meridian/theme";
 import { BrandMark } from "@/components/desk-demo/DeskDemo";
+import { QUANT_AGENTS, STAGES } from "@/lib/quant/roster";
 
 /* ----------------------------------------------------------------
    Content model — every row here maps to something that actually
@@ -19,13 +20,14 @@ const CHAPTERS: [string, string][] = [
   ["operator", "Runbook"],
 ];
 
-// The five desk screens and the collections each one reads.
+// The six desk screens and the collections each one reads.
 const SCREENS: [string, string, string, string][] = [
   ["01", "Swarm", "Air-traffic control for the agent fleet. Clusters, roster, and a live feed of everything they do.", "clusters · agents · agent_events"],
   ["02", "Research", "The ingest queue and the memos it produces, with the entity graph behind each one.", "filings · memos · entities"],
-  ["03", "Portfolio", "The live book: NAV, exposures, P&L, stress scenarios and trades waiting on your vote.", "positions · fund_snapshots · trades"],
-  ["04", "Console", "Talk to the system. A chat answered by the responder agent, plus governance and spend.", "operator_messages · budget_ledger"],
-  ["05", "Compute", "GPU fabric, model routing per agent, running pipelines and the knowledge graph.", "compute_nodes · model_routes · pipelines"],
+  ["03", "Quant", `The quant desk on one name: a card per agent (${QUANT_AGENTS.length} in all), each with its score, evidence and raw output, plus the ensemble's verdict.`, "quant_reports"],
+  ["04", "Portfolio", "The live book: NAV, exposures, P&L, stress scenarios and trades waiting on your vote.", "positions · fund_snapshots · trades"],
+  ["05", "Console", "Talk to the system. A chat answered by the responder agent, plus governance and spend.", "operator_messages · budget_ledger"],
+  ["06", "Compute", "GPU fabric, model routing per agent, running pipelines and the knowledge graph.", "compute_nodes · model_routes · pipelines"],
 ];
 
 type Role = "research" | "decision" | "gate" | "execution" | "post";
@@ -50,21 +52,22 @@ const TIER: Record<Tier, [string, string]> = {
 const PIPE: [string, string, Tier, Role, string][] = [
   ["00", "Budget Controller", "haiku", "gate", "Runs before every cycle. Checks the 24h token ledger and returns allow, throttle or kill. Over budget, everything stops."],
   ["01", "Filing Parser", "haiku", "research", "US: an HTTP-only EDGAR reader pulls the latest 10-K/Q/8-K, then a tool-less summariser turns it into structured JSON. India: a company brief from knowledge."],
-  ["02", "Earnings Reviewer", "sonnet", "research", "Reads the earnings-call transcript and scores tone and deflection. A supplemental signal — it doesn't write the thesis."],
-  ["03", "Sector Analyst", "opus", "research", "One of six sector specialists drafts the memo: explicit catalyst, quantified risk, conviction score. No sizing."],
-  ["04", "Quant Researcher", "opus", "research", "An independent, factor-based read on the same name: a composite score and the exposures behind it."],
-  ["05", "Red-Team Critic", "opus", "gate", "Stress-tests the memo and returns a robustness score. A 'revise' triggers exactly one re-run, then it goes to review."],
-  ["06", "Valuation Reviewer", "opus", "research", "A quick DCF and peer-multiple check on the implied entry, so nobody sizes into an obviously rich print."],
-  ["07", "CIO / Committee", "opus", "gate", "Combines memo, critique, valuation and quant signal into one go / no-go. The PM must respect it."],
-  ["08", "Portfolio Manager", "opus", "decision", "Sizes the position within NAV and per-name limits. It's a proposal — risk and compliance still gate it."],
-  ["09", "Treasury", "sonnet", "decision", "Decides funding: cash vs margin, borrow for shorts, and the financing cost in basis points."],
-  ["10", "Risk Officer", "haiku", "gate", "Estimates 1-day 95% VaR on the proposed position and approves only if it's inside policy."],
-  ["11", "Risk Overlay", "code", "gate", "Deterministic book-level check: gross leverage, name count, position weight and VaR caps. Vetoes any breach."],
-  ["12", "Compliance", "haiku", "gate", "Restricted list, position limits, wash sale, Reg SHO. It can block, but never approves sizing."],
-  ["13", "Smart Router", "haiku", "execution", "Picks venue and algorithm (TWAP / VWAP / IS). No say over size — only how it reaches the market."],
-  ["14", "Paper Broker", "code", "execution", "Simulated fills, no LLM. Writes the trade so the book and P&L move."],
-  ["15", "TCA", "haiku", "post", "Post-trade cost analysis: slippage vs benchmark, fees and market impact."],
-  ["16", "Attribution & Recon", "haiku", "post", "Reconciles intended vs executed and attributes expected return to its factor sources. Closes the loop."],
+  ["02", "Quant Desk", "code", "research", `${QUANT_AGENTS.length} agents, one method each, measure the name before anyone writes: ratios and forensic scores, DCF, DDM, residual income and multiples, GARCH and ARIMA, Monte Carlo and jumps, factor regressions, technicals, walk-forward ML, and seven LLM analysts for moat, management, governance and the rest. An ensemble blends what passed its out-of-sample test. A failed screen ends the cycle here.`],
+  ["03", "Earnings Reviewer", "sonnet", "research", "Reads the earnings-call transcript and scores tone and deflection. A supplemental signal — it doesn't write the thesis."],
+  ["04", "Sector Analyst", "opus", "research", "One of six sector specialists drafts the memo, with the quant desk's numbers in hand as cited facts: explicit catalyst, quantified risk, conviction score. No sizing."],
+  ["05", "Quant Researcher", "code", "research", "Turns the quant desk's ensemble into the factor signal in code: the composite, the inputs that moved it, and how much of the weight passed validation. An LLM read runs only if the desk didn't."],
+  ["06", "Red-Team Critic", "opus", "gate", "Stress-tests the memo against the quant facts and returns a robustness score. A 'revise' triggers exactly one re-run, then it goes to review."],
+  ["07", "Valuation Reviewer", "opus", "research", "Reviews the fair-value band the valuation agents computed and judges how well those models fit this business. A poor fit downgrades 'cheap' to 'fair'. It estimates a band itself only when none was computed."],
+  ["08", "CIO / Committee", "opus", "gate", "Combines memo, critique, valuation and quant signal into one go / no-go. The PM must respect it."],
+  ["09", "Portfolio Manager", "opus", "decision", "Picks a weight within the mandate's per-name cap; code turns it into shares at the live price and fund NAV. It's a proposal — risk and compliance still gate it."],
+  ["10", "Treasury", "sonnet", "decision", "Decides funding: cash vs margin, borrow for shorts, and the financing cost in basis points."],
+  ["11", "Risk Officer", "code", "gate", "1-day 95% VaR on the proposed position, measured from the stock's own GARCH and historical VaR. Approves only inside 1.5% of NAV. A conservative haiku estimate is the fallback when nothing was measured."],
+  ["12", "Risk Overlay", "code", "gate", "Deterministic book-level check: gross leverage, name count, position weight and VaR caps. Vetoes any breach."],
+  ["13", "Compliance", "haiku", "gate", "Restricted list, position limits, wash sale, Reg SHO. It can block, but never approves sizing."],
+  ["14", "Smart Router", "haiku", "execution", "Picks venue and algorithm (TWAP / VWAP / IS). No say over size — only how it reaches the market."],
+  ["15", "Paper Broker", "code", "execution", "Simulated fills, no LLM. Writes the trade so the book and P&L move."],
+  ["16", "TCA", "haiku", "post", "Post-trade cost analysis: slippage vs benchmark, fees and market impact."],
+  ["17", "Attribution & Recon", "haiku", "post", "Reconciles intended vs executed and attributes expected return to its factor sources. Closes the loop."],
 ];
 
 const TIERS: [Tier, string][] = [
@@ -179,7 +182,7 @@ export default function HowItWorksClient() {
           <h2 style={{ ...H2, margin: "6px 0 20px" }}>Two doors into one brain.</h2>
           <div style={{ ...grid("min(100%,320px)", 24), color: "var(--ink-2)", fontSize: 19, maxWidth: 960 }}>
             <p style={{ margin: 0, textWrap: "pretty" }}>
-              The <b style={{ color: "var(--ink)" }}>desk</b> is the operator cockpit: five screens, behind a sign-in. The <b style={{ color: "var(--ink)" }}>guided tour</b> explains the same system one idea at a time, with a plain-English glossary on every term.
+              The <b style={{ color: "var(--ink)" }}>desk</b> is the operator cockpit: six screens, behind a sign-in. The <b style={{ color: "var(--ink)" }}>guided tour</b> explains the same system one idea at a time, with a plain-English glossary on every term.
             </p>
             <p style={{ margin: 0, textWrap: "pretty" }}>
               There&apos;s no separate backend. Auth, storage, realtime and the spend ledger all live in Appwrite. Agents run as workers next to the app and write every decision back to a collection a screen is already watching. Change the data and the screen moves.
@@ -199,7 +202,7 @@ export default function HowItWorksClient() {
 
         <section id="pipeline" style={SECTION}>
           <div style={EYEBROW}>02 · The pipeline</div>
-          <h2 style={{ ...H2, margin: "6px 0 16px" }}>One ticker, sixteen hand-offs.</h2>
+          <h2 style={{ ...H2, margin: "6px 0 16px" }}>One ticker, seventeen hand-offs.</h2>
           <p style={LEDE}>
             Each cycle takes one name down a bounded chain. Research first, then a decision, then a wall of gates, then execution and accounting. No stage can do another&apos;s job, and nothing reaches the broker unless every gate clears.
           </p>
@@ -267,6 +270,26 @@ export default function HowItWorksClient() {
                 <span key={s} style={{ padding: "10px 18px", borderRadius: 980, background: "var(--surface)", fontWeight: 500 }}>{s}</span>
               ))}
             </div>
+          </div>
+
+          <h3 style={{ margin: "56px 0 8px", fontSize: 24, letterSpacing: "-0.03em" }}>The quant desk: {QUANT_AGENTS.length} agents, one method each</h3>
+          <p style={{ margin: "0 0 20px", color: "var(--ink-2)", maxWidth: 760, textWrap: "pretty" }}>
+            Short-term prices are close to random, so no single model gets a vote on its own. Each agent below runs one method and reports a score with its evidence. Most are plain code; the ones marked LLM read text, with no tools. An ensemble weights each score by how well that method held up out of sample.
+          </p>
+          <div style={grid("min(100%,300px)")}>
+            {STAGES.map((stage) => (
+              <article key={stage} style={{ ...CARD, padding: 22 }}>
+                <h4 style={{ margin: "0 0 10px", fontSize: 17 }}>{stage}</h4>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {QUANT_AGENTS.filter((a) => a.stage === stage).map((a) => (
+                    <span key={a.slug} title={a.does} style={{ fontSize: 13, padding: "4px 10px", borderRadius: 980, background: "var(--fill)", color: "var(--ink-2)" }}>
+                      {a.name}
+                      {a.kind === "llm" && <b style={{ marginLeft: 6, fontSize: 11, color: TIER.sonnet[1] }}>LLM</b>}
+                    </span>
+                  ))}
+                </div>
+              </article>
+            ))}
           </div>
 
           <h3 style={{ margin: "56px 0 8px", fontSize: 24, letterSpacing: "-0.03em" }}>The rules every agent runs under</h3>
