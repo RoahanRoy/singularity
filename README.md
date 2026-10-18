@@ -74,7 +74,25 @@ Required environment (`.env.local`):
 - `KITE_API_KEY_2` / `KITE_API_SECRET_2` (+ optional `KITE_APP_LABEL_2`), up to `_5` — **additional Kite apps**. Zerodha Personal apps are single-user (locked to the Zerodha id that created them), so to aggregate a *second* account in the India book that account holder creates their **own** Personal app and you add its key/secret here. The India desk shows one Connect button per configured app and sums every connected account's holdings into one book. Each app's Redirect URL must point at the same `<KITE_REDIRECT_BASE>/api/kite/callback`.
 - `KITE_REDIRECT_BASE` — base URL Kite redirects back to after login (e.g. `http://localhost:3000` locally, your `https://…vercel.app` in production; no trailing slash). The Kite app's Redirect URL in the [developer console](https://developers.kite.trade/apps) must be set to `<KITE_REDIRECT_BASE>/api/kite/callback` and match the environment, or the login round-trip fails. Kite access tokens expire daily, so a re-login is expected each trading morning.
 - `CRON_SECRET` — bearer token guarding the weekly India-enrichment cron (`/api/cron/enrich-india`). Set the same value in the Vercel project's env vars; Vercel attaches it to scheduled requests. Generate one with `openssl rand -hex 32`.
+- `HORIZON_URL` / `HORIZON_EXPORT_TOKEN` — make **Horizon** (the operator's finance app) the source of the real book. See **Using Horizon as the book source** below. Server-only; set in Vercel too.
 - `IBKR_GATEWAY_URL` — base URL of your local Interactive Brokers **Client Portal Gateway** (default `https://localhost:5000`). Only set if your gateway runs elsewhere. See **Connecting IBKR** below.
+
+### Using Horizon as the book source
+
+[Horizon](https://github.com/RoahanRoy/finance-manager) already maintains every real investment — Kite, Zerodha Coin, Groww, IBKR, Trading 212, Revolut, across family members — and serves that book read-only at `/api/export/holdings`. With it configured, Meridian pulls the whole book from there instead of linking each brokerage:
+
+1. In Horizon's Vercel env set `HOLDINGS_EXPORT_TOKEN` (`openssl rand -hex 32`) and `HOLDINGS_EXPORT_EMAIL` (your Horizon login email), then redeploy.
+2. In Meridian's env (`.env.local` and Vercel) set `HORIZON_URL=https://<horizon-domain>` and `HORIZON_EXPORT_TOKEN=<same token>`, then redeploy.
+3. Open **Portfolio OS** and hit **sync now** on the **Horizon · Real Book** panel.
+
+What a sync does (`POST /api/horizon/sync`, [src/lib/horizon/sync.ts](src/lib/horizon/sync.ts)):
+
+- Rupee holdings land on the **India** desk in INR; everything held abroad lands on the **US** desk, converted to USD at Horizon's own rate. The same instrument held by several members or brokers is one row.
+- Mutual funds have no listing, so they are booked as `MF:<AMFI code>` with the scheme name in `label`; the desk loops skip `MF:` tickers when picking names to research.
+- Rows carry `horizon_source` (the brokers, e.g. `Kite · Groww`). Every sync replaces them — and removes any direct Kite / IBKR rows, since Horizon supersedes those links. The paper book is never touched.
+- While Horizon is configured, the Kite / IBKR panels are hidden and `/api/kite/sync` / `/api/ibkr/sync` delegate to the Horizon sync, so the running desk loops keep the book fresh (re-pulled at most every 15 minutes).
+
+Schema: `positions` gains `horizon_source` (string 64) and `label` (string 128) — `node scripts/restore-schema.mjs` adds them.
 
 ### Connecting IBKR (US desk)
 

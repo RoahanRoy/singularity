@@ -867,9 +867,9 @@ export async function smartRouter(ctx: Ctx): Promise<Ctx> {
 //
 // Fills a compliance-cleared BUY at a real quote (falling back to a
 // deterministic stub if the provider is down) and books it into the PAPER
-// positions book — rows with no brokerage account id, so a live IBKR/Kite sync
-// (which only deletes rows scoped to its own account) never clobbers them and
-// the two coexist as one combined book.
+// positions book — rows with no brokerage account id and no horizon_source, so
+// a live IBKR/Kite/Horizon sync (which only replaces real-holdings rows) never
+// clobbers them and the two coexist as one combined book.
 
 type PaperPosition = {
   $id: string;
@@ -879,16 +879,17 @@ type PaperPosition = {
   market_value: number;
   ibkr_account_id?: string | null;
   kite_account_id?: string | null;
+  horizon_source?: string | null;
 };
 
-/** Paper rows for a market: positions with neither brokerage account id set. */
+/** Paper rows for a market: positions with no brokerage account id and not from Horizon. */
 async function paperPositions(market: "US" | "IN"): Promise<PaperPosition[]> {
   const res = await db.listDocuments(DB, "positions", [
     Query.equal("market", market),
     Query.limit(200),
   ]);
   return (res.documents as unknown as PaperPosition[]).filter(
-    (p) => !p.ibkr_account_id && !p.kite_account_id,
+    (p) => !p.ibkr_account_id && !p.kite_account_id && !p.horizon_source,
   );
 }
 

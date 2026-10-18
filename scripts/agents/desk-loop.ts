@@ -131,9 +131,11 @@ export async function runDesk(config: DeskConfig): Promise<void> {
         Query.equal("market", market),
         Query.limit(200),
       ]);
+      // "MF:" rows are mutual funds pulled from Horizon: no listing, no
+      // filings, nothing for the research chain to read.
       return res.documents
         .map((d) => String(d.ticker ?? "").toUpperCase())
-        .filter(Boolean);
+        .filter((t) => t && !t.startsWith("MF:"));
     } catch (err) {
       console.warn(`[${key}] could not read held book (${(err as Error).message})`);
       return [];

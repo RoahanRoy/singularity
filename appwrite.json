@@ -635,6 +635,22 @@
                     "required": false,
                     "array": false,
                     "encrypt": false
+                },
+                {
+                    "key": "horizon_source",
+                    "type": "string",
+                    "size": 64,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "label",
+                    "type": "string",
+                    "size": 128,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
                 }
             ],
             "indexes": [
