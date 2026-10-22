@@ -15,6 +15,7 @@
     "agents:dispatch": "tsx scripts/agents/dispatcher.ts",
     "agents:ingest": "tsx scripts/agents/ingest-held.ts",
     "agents:quant": "tsx scripts/agents/quant-sweep.ts",
+    "agents:retention": "tsx scripts/agents/retention.ts",
     "agents:all": "concurrently -k -n tech,india,ingest,news,responder -c yellow,magenta,cyan,green,blue \"npm:agents:tech\" \"npm:agents:india\" \"npm:agents:ingest\" \"npm:agents:news\" \"npm:agents:responder\"",
     "agents:remote": "concurrently -k -n dispatch,ingest,news -c yellow,cyan,green \"npm:agents:dispatch\" \"npm:agents:ingest\" \"npm:agents:news\"",
     "daemon:install": "bash scripts/install-dispatcher-daemon.sh install",
