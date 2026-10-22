@@ -7,19 +7,20 @@
 #
 #   bash scripts/cloud-run.sh us prep      deps, Appwrite check, news + filings sweep, retention
 #   bash scripts/cloud-run.sh us cycle     one analyst-chain cycle on the US desk
-#   bash scripts/cloud-run.sh us quant     ~8 min of the daily quant sweep (needs MERIDIAN_QUANT=1)
+#   bash scripts/cloud-run.sh us quant     ~8 min of the daily quant sweep
 #   bash scripts/cloud-run.sh india prep|cycle|quant
 #
 # `cycle` exit codes: 0 ran · 3 market closed (stop for today) ·
 #                     4 subscription usage limit hit (stop for today) · other = failed
 # `quant` exit codes: 0 every name fresh · 5 names left (run it again) ·
-#                     4 subscription usage limit hit (stop for today) · other = failed
+#                     4 subscription usage limit hit (stop for today) ·
+#                     6 quant data hosts not allowlisted · other = failed
 #
 # One-time setup of the cloud environment (claude.ai → Code → environment settings):
 #   network access  Custom, keep the default list, and add www.sec.gov data.sec.gov
 #                   www.nseindia.com news.google.com query1.finance.yahoo.com
 #                   fra.cloud.appwrite.io singularity-gules-ten.vercel.app
-#                   (quant desk, only with MERIDIAN_QUANT=1: also query2.finance.yahoo.com
+#                   (quant desk: also query2.finance.yahoo.com
 #                   fc.yahoo.com fred.stlouisfed.org mba.tuck.dartmouth.edu cdn-api.cboe.com)
 #   network secret  host fra.cloud.appwrite.io, header X-Appwrite-Key, value = the
 #                   APPWRITE_API_KEY from .env.local (the key never enters the session)
@@ -90,10 +91,20 @@ case "$step" in
     ;;
   quant)
     # Refresh the quant desk for every covered name on this desk, oldest first.
-    # Resumable, so the routine repeats this step while it exits 5.
-    MERIDIAN_QUANT_SWEEP_MARKETS="$market" \
+    # Resumable, so the routine repeats this step while it exits 5. Runs the
+    # quant desk regardless of MERIDIAN_QUANT, which only gates desk cycles.
+    # Check the quant data hosts first: a blocked host fails every name slowly.
+    blocked=""
+    for h in query2.finance.yahoo.com fc.yahoo.com fred.stlouisfed.org mba.tuck.dartmouth.edu cdn-api.cboe.com; do
+      [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://$h/")" = 000 ] && blocked="$blocked $h"
+    done
+    if [ -n "$blocked" ]; then
+      echo "[cloud] quant hosts unreachable:$blocked (add them to the environment's network allowlist)" >&2
+      exit 6
+    fi
+    MERIDIAN_QUANT=1 MERIDIAN_QUANT_SWEEP_MARKETS="$market" \
     MERIDIAN_QUANT_SWEEP_BUDGET_MS="${MERIDIAN_QUANT_SWEEP_BUDGET_MS:-480000}" \
-      npx tsx scripts/agents/quant-sweep.ts 2>&1 | grep -E "^\[sweep\]|^=== |[Ee]rror|failed" | tail -30
+      npx tsx scripts/agents/quant-sweep.ts 2>&1 | grep -E "^\[sweep\]|^=== |[Ee]rror" | tail -30
     exit "${PIPESTATUS[0]}"
     ;;
   *) echo "usage: $0 us|india prep|cycle|quant" >&2; exit 64 ;;
