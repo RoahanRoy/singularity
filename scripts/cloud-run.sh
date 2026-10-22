@@ -5,7 +5,7 @@
 # Every step is a separate short command so none outlives the sandbox's
 # per-command timeout:
 #
-#   bash scripts/cloud-run.sh us prep      deps, Appwrite check, news + held-filings sweep
+#   bash scripts/cloud-run.sh us prep      deps, Appwrite check, news + filings sweep, retention
 #   bash scripts/cloud-run.sh us cycle     one analyst-chain cycle on the US desk
 #   bash scripts/cloud-run.sh us quant     ~8 min of the daily quant sweep (needs MERIDIAN_QUANT=1)
 #   bash scripts/cloud-run.sh india prep|cycle|quant
@@ -68,6 +68,8 @@ case "$step" in
     echo "[cloud] appwrite ok"
     MERIDIAN_NEWS_ONCE=1 MERIDIAN_NEWS_MARKETS="$market" npx tsx scripts/agents/news.ts 2>&1 | grep -v "^\[dotenv" | tail -4
     MERIDIAN_INGEST_ONCE=1 npx tsx scripts/agents/ingest-held.ts 2>&1 | grep -v "^\[dotenv" | tail -6
+    # Trim old quant_reports so the Free plan's 2 GB storage never fills.
+    npx tsx scripts/agents/retention.ts --apply 2>&1 | grep "^\[retention\]"
     ;;
   cycle)
     # MERIDIAN_IGNORE_MARKET_HOURS=1 runs anyway (weekend check on the last close).
