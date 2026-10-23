@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Panel, UTCClock } from "../primitives";
 import { useMarket } from "../MarketContext";
 import {
@@ -131,20 +131,84 @@ function statusVisual(status: DbAgent["status"]): { opacity: number; halo: boole
   }
 }
 
-type Pulse = { key: number; x: number; y: number; color: string; ttl: number };
+// Events don't name a recipient, but a desk cycle is a relay: each stage
+// speaks within a second or two of the previous one handing over, while
+// separate tickers are 30s+ apart. So a different agent speaking inside the
+// window is read as that agent having messaged this one.
+const LINK_WINDOW_MS = 20_000;
+const TRAVEL_MS = 650; // spark down the synapse — matches .syn-spark
+const FIRE_MS = 1400; // halo decay — matches .syn-halo
+const HISTORY = 200; // recent events the synapses are learned from
+const REPLAY_STEP_MS = 420;
+const REPLAY_MAX = 80;
+const RUN_GAP_MS = 10 * 60_000; // a quiet gap this long separates two runs
+
+type Synapse = { from: string; to: string; weight: number };
+
+/** One firing: `to` lights up; with a known sender, a spark runs to it first. */
+type Fire = { key: number; from: string | null; to: string; color: string };
+
+function senderOf(prev: AgentEvent | undefined, ev: AgentEvent): string | null {
+  if (!prev || prev.agent_id === ev.agent_id) return null;
+  const gap = Date.parse(ev.occurred_at) - Date.parse(prev.occurred_at);
+  return gap >= 0 && gap <= LINK_WINDOW_MS ? prev.agent_id : null;
+}
+
+/** Every inferred hand-off in the history, weighted by how often it happened. */
+function inferSynapses(oldestFirst: AgentEvent[]): Synapse[] {
+  const byPair = new Map<string, Synapse>();
+  for (let i = 1; i < oldestFirst.length; i++) {
+    const from = senderOf(oldestFirst[i - 1], oldestFirst[i]);
+    if (!from) continue;
+    const to = oldestFirst[i].agent_id;
+    const s = byPair.get(from + ">" + to);
+    if (s) s.weight++;
+    else byPair.set(from + ">" + to, { from, to, weight: 1 });
+  }
+  return [...byPair.values()];
+}
+
+/** The newest burst of events (no gap over RUN_GAP_MS), oldest first. */
+function lastRun(newestFirst: AgentEvent[]): AgentEvent[] {
+  const run: AgentEvent[] = [];
+  for (const e of newestFirst) {
+    const later = run[run.length - 1];
+    if (later && Date.parse(later.occurred_at) - Date.parse(e.occurred_at) > RUN_GAP_MS) break;
+    run.push(e);
+    if (run.length >= REPLAY_MAX) break;
+  }
+  return run.reverse();
+}
+
+/** A curved axon from a to b. A→B and B→A bow to opposite sides, so both stay visible. */
+function synapsePath(a: { x: number; y: number }, b: { x: number; y: number }): string {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const bend = Math.min(90, len * 0.22);
+  const cx = (a.x + b.x) / 2 - (dy / len) * bend;
+  const cy = (a.y + b.y) / 2 + (dx / len) * bend;
+  return `M${a.x.toFixed(1)},${a.y.toFixed(1)} Q${cx.toFixed(1)},${cy.toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}`;
+}
 
 function SwarmCanvas({
   clusters,
   agents,
   selectedCluster,
-  pulses,
-  handoffEdgeIds,
+  synapses,
+  fires,
+  replay,
+  canReplay,
+  onReplay,
 }: {
   clusters: ClusterAnchor[];
   agents: DbAgent[];
   selectedCluster: string;
-  pulses: Pulse[];
-  handoffEdgeIds: Set<string>;
+  synapses: Synapse[];
+  fires: Fire[];
+  replay: { at: number; n: number } | null;
+  canReplay: boolean;
+  onReplay: () => void;
 }) {
   const anchorByClusterId = useMemo(() => {
     const m = new Map<string, ClusterAnchor>();
@@ -157,20 +221,17 @@ function SwarmCanvas({
     [agents, anchorByClusterId],
   );
 
-  // Ring edges across the ranked cluster list. The IDs match what nodes.ts
-  // would address ("cluster:A→cluster:B"), so handoff events can light them up.
-  const edges = useMemo(() => {
-    if (clusters.length < 2) return [];
-    return clusters.map((A, i) => {
-      const B = clusters[(i + 1) % clusters.length];
-      return {
-        id: `${A.id}-${B.id}`,
-        srcCluster: A.id,
-        x1: A.x, y1: A.y,
-        x2: B.x, y2: B.y,
-      };
+  const posById = useMemo(() => new Map(placed.map((p) => [p.agent.$id, p])), [placed]);
+
+  // Synapses between placed agents; the most-used hand-offs draw strongest.
+  const wires = useMemo(() => {
+    const max = Math.max(1, ...synapses.map((s) => s.weight));
+    return synapses.flatMap((s) => {
+      const a = posById.get(s.from);
+      const b = posById.get(s.to);
+      return a && b ? [{ id: s.from + ">" + s.to, d: synapsePath(a, b), k: s.weight / max }] : [];
     });
-  }, [clusters]);
+  }, [synapses, posById]);
 
   const clusterNameById = useMemo(() => {
     const m = new Map<string, string>();
@@ -209,21 +270,37 @@ function SwarmCanvas({
   return (
     <div className="swarm-canvas" ref={containerRef}>
       <div className="hud-tl">
-        SWARM TOPOLOGY · v2.41
+        SWARM TOPOLOGY
         <br />
-        AGENTS {placed.length.toLocaleString()} · EDGES {edges.length}
+        AGENTS {placed.length.toLocaleString()} · SYNAPSES {wires.length}
       </div>
       <div className="hud-tr">
-        {runState.active > 0
-          ? `LIVE · ${runState.active} ACTIVE`
-          : runState.last
-            ? `IDLE · LAST RUN ${fmtUtcStamp(runState.last)}`
-            : "IDLE · NO RUNS YET"}
+        {replay
+          ? `REPLAY · ${replay.at}/${replay.n}`
+          : runState.active > 0
+            ? `LIVE · ${runState.active} ACTIVE`
+            : runState.last
+              ? `IDLE · LAST RUN ${fmtUtcStamp(runState.last)}`
+              : "IDLE · NO RUNS YET"}
         <br />
         <UTCClock />
+        {canReplay && (
+          <>
+            <br />
+            <button className="hud-btn" onClick={onReplay} title="Replays the last run's hand-offs on the canvas">
+              {replay ? "■ Stop replay" : "▶ Replay last run"}
+            </button>
+          </>
+        )}
       </div>
 
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <filter id="syn-bloom" x="-1" y="-1" width="3" height="3">
+            <feGaussianBlur stdDeviation="2.5" />
+          </filter>
+        </defs>
+
         <g opacity="0.06" stroke="var(--ink-2)" strokeWidth="0.5">
           {Array.from({ length: 20 }).map((_, i) => (
             <line key={"v" + i} x1={i * 50} y1="0" x2={i * 50} y2={H} />
@@ -233,27 +310,9 @@ function SwarmCanvas({
           ))}
         </g>
 
-        {edges.map((e) => {
-          const hot = handoffEdgeIds.has(e.id);
-          return (
-            <g key={e.id}>
-              <line
-                x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
-                stroke="var(--cyan)"
-                strokeOpacity={hot ? 0.6 : 0.12}
-                strokeWidth={hot ? 1.1 : 0.6}
-                strokeDasharray="2 4"
-              />
-              {hot && (
-                <circle r="2.4" fill="var(--cyan)">
-                  <animateMotion dur="1.6s" repeatCount="1"
-                    path={`M${e.x1},${e.y1} L${e.x2},${e.y2}`} />
-                  <animate attributeName="opacity" values="0;1;0" dur="1.6s" repeatCount="1" />
-                </circle>
-              )}
-            </g>
-          );
-        })}
+        {wires.map((w) => (
+          <path key={w.id} d={w.d} className="syn" strokeOpacity={0.1 + 0.25 * w.k} strokeWidth={0.5 + 0.8 * w.k} />
+        ))}
 
         {clusters.map((c) => {
           const sel = selectedCluster === c.themeId;
@@ -279,6 +338,20 @@ function SwarmCanvas({
               >
                 {c.name.toUpperCase()}
               </text>
+            </g>
+          );
+        })}
+
+        {/* The signal travelling down the synapse, under the dots. */}
+        {fires.map((f) => {
+          const a = f.from ? posById.get(f.from) : undefined;
+          const b = posById.get(f.to);
+          if (!a || !b) return null;
+          const d = synapsePath(a, b);
+          return (
+            <g key={"s" + f.key} style={{ "--syn": f.color } as CSSProperties}>
+              <path d={d} pathLength={100} className="syn-trace" />
+              <path d={d} pathLength={100} className="syn-spark" />
             </g>
           );
         })}
@@ -315,15 +388,18 @@ function SwarmCanvas({
           );
         })}
 
-        {pulses.map((p) => (
-          <g key={p.key}>
-            <circle cx={p.x} cy={p.y} r="4" fill={p.color}>
-              <animate attributeName="r" from="3" to="22" dur="1.2s" fill="freeze" />
-              <animate attributeName="opacity" from="0.85" to="0" dur="1.2s" fill="freeze" />
-            </circle>
-            <circle cx={p.x} cy={p.y} r="2.4" fill={p.color} opacity="0.95" />
-          </g>
-        ))}
+        {/* The receiving agent fires once the spark arrives. */}
+        {fires.map((f) => {
+          const b = posById.get(f.to);
+          if (!b) return null;
+          const delay = { animationDelay: (f.from && posById.has(f.from) ? TRAVEL_MS : 0) + "ms" };
+          return (
+            <g key={"f" + f.key} style={{ "--syn": f.color } as CSSProperties} pointerEvents="none">
+              <circle cx={b.x} cy={b.y} r={7} className="syn-halo" filter="url(#syn-bloom)" style={delay} />
+              <circle cx={b.x} cy={b.y} r={3} className="syn-core" style={delay} />
+            </g>
+          );
+        })}
       </svg>
 
       <div className="legend">
@@ -458,10 +534,12 @@ export function SwarmScreen() {
   const [agents, setAgents] = useState<DbAgent[]>([]);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [live, setLive] = useState(false);
-  const [pulses, setPulses] = useState<Pulse[]>([]);
-  const [hotEdges, setHotEdges] = useState<Set<string>>(new Set());
-  const agentPosRef = useRef<Map<string, { x: number; y: number; color: string }>>(new Map());
-  const clusterAnchorsRef = useRef<ClusterAnchor[]>([]);
+  const [fires, setFires] = useState<Fire[]>([]);
+  const [replay, setReplay] = useState<{ at: number; n: number } | null>(null);
+  const agentByIdRef = useRef<Map<string, DbAgent>>(new Map());
+  const lastDeskEventRef = useRef<AgentEvent | undefined>(undefined);
+  const fireSeq = useRef(0);
+  const replayTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   // Load clusters for the active desk. Order by size, map onto anchor slots.
   // Re-runs when the market toggles; resets to that desk's fallback first.
@@ -511,10 +589,52 @@ export function SwarmScreen() {
     return () => { cancelled = true; unsub(); };
   }, [market]);
 
-  // Load + subscribe events; drive pulses + hot edges from real events.
+  const agentById = useMemo(
+    () => new Map(agents.map((a) => [a.$id, a])),
+    [agents],
+  );
+
+  // The event stream is shared by both desks; keep this desk's, newest first.
+  const deskEvents = useMemo(
+    () => events.filter((e) => agentById.has(e.agent_id)),
+    [events, agentById],
+  );
+  const synapses = useMemo(() => inferSynapses(deskEvents.slice().reverse()), [deskEvents]);
+  const run = useMemo(() => lastRun(deskEvents), [deskEvents]);
+
+  // The realtime handler is subscribed once, so it reads the desk through refs.
+  useEffect(() => {
+    agentByIdRef.current = agentById;
+    lastDeskEventRef.current = deskEvents[0];
+  }, [agentById, deskEvents]);
+
+  const fire = useCallback((from: string | null, ev: AgentEvent) => {
+    const agent = agentByIdRef.current.get(ev.agent_id);
+    if (!agent) return;
+    const color = ev.kind === "alert" ? KIND_META.alert.color : (ROLE_COLOR[agent.role] ?? ROLE_COLOR.research);
+    const key = ++fireSeq.current;
+    setFires((prev) => [...prev, { key, from, to: ev.agent_id, color }].slice(-24));
+    setTimeout(() => {
+      setFires((prev) => prev.filter((f) => f.key !== key));
+    }, TRAVEL_MS + FIRE_MS + 100);
+  }, []);
+
+  const stopReplay = useCallback(() => {
+    replayTimers.current.forEach(clearTimeout);
+    replayTimers.current = [];
+    setReplay(null);
+  }, []);
+
+  // A replay and its sparks belong to one desk; switching desks ends them.
+  useEffect(() => () => {
+    stopReplay();
+    setFires([]);
+  }, [market, stopReplay]);
+
+  // Load + subscribe events; each new one from this desk fires its agent.
   useEffect(() => {
     let cancelled = false;
-    listRecentEvents(8).then((rows) => {
+    listRecentEvents(HISTORY).then((rows) => {
       if (cancelled || rows.length === 0) return;
       setLive(true);
       setEvents(rows);
@@ -522,54 +642,41 @@ export function SwarmScreen() {
 
     const unsub = subscribeAgentEvents((ev) => {
       if (cancelled) return;
+      setEvents((prev) => [ev, ...prev].slice(0, HISTORY));
+      if (!agentByIdRef.current.has(ev.agent_id)) return;
       setLive(true);
-      setEvents((prev) => [ev, ...prev].slice(0, 8));
-
-      // Pulse at the originating agent's last-known dot position.
-      const pos = agentPosRef.current.get(ev.agent_id);
-      if (pos) {
-        const key = Date.now() + Math.random();
-        setPulses((prev) => [...prev, { key, x: pos.x, y: pos.y, color: pos.color, ttl: 0 }].slice(-12));
-        setTimeout(() => {
-          setPulses((prev) => prev.filter((p) => p.key !== key));
-        }, 1300);
-      }
-
-      // Light up an edge for handoff-kind events out of the originating cluster.
-      if (ev.kind === "handoff" && ev.cluster_id) {
-        const edges = clusterAnchorsRef.current;
-        if (edges.length > 1) {
-          const idx = edges.findIndex((c) => c.id === ev.cluster_id);
-          if (idx >= 0) {
-            const next = edges[(idx + 1) % edges.length];
-            const edgeId = `${edges[idx].id}-${next.id}`;
-            setHotEdges((prev) => {
-              const s = new Set(prev);
-              s.add(edgeId);
-              return s;
-            });
-            setTimeout(() => {
-              setHotEdges((prev) => {
-                const s = new Set(prev);
-                s.delete(edgeId);
-                return s;
-              });
-            }, 1700);
-          }
-        }
-      }
+      // Live activity takes the canvas over from a replay.
+      if (replayTimers.current.length) stopReplay();
+      fire(senderOf(lastDeskEventRef.current, ev), ev);
+      lastDeskEventRef.current = ev;
     });
     return () => { cancelled = true; unsub(); };
-  }, []);
+  }, [fire, stopReplay]);
+
+  // Plays the last run's real events back at a fixed pace.
+  function toggleReplay() {
+    if (replayTimers.current.length) {
+      stopReplay();
+      return;
+    }
+    const steps = run;
+    steps.forEach((ev, i) => {
+      replayTimers.current.push(setTimeout(() => {
+        fire(senderOf(steps[i - 1], ev), ev);
+        if (i < steps.length - 1) {
+          setReplay({ at: i + 1, n: steps.length });
+        } else {
+          replayTimers.current = [];
+          setReplay(null);
+        }
+      }, i * REPLAY_STEP_MS));
+    });
+    setReplay({ at: 0, n: steps.length });
+  }
 
   const clusterById = useMemo(
     () => new Map(list.map((c) => [c.id, c.name])),
     [list],
-  );
-
-  const agentById = useMemo(
-    () => new Map(agents.map((a) => [a.$id, a])),
-    [agents],
   );
 
   // Build cluster anchors: largest clusters claim the first slots.
@@ -586,20 +693,10 @@ export function SwarmScreen() {
     }));
   }, [list]);
 
-  // Track latest anchors + agent positions in refs so the event handler can
-  // resolve pulse coordinates without re-subscribing.
-  useEffect(() => {
-    clusterAnchorsRef.current = clusterAnchors;
-    const anchorMap = new Map(clusterAnchors.map((c) => [c.id, c]));
-    const placed = layoutAgents(agents, anchorMap);
-    const m = new Map<string, { x: number; y: number; color: string }>();
-    for (const p of placed) m.set(p.agent.$id, { x: p.x, y: p.y, color: p.color });
-    agentPosRef.current = m;
-  }, [clusterAnchors, agents]);
-
+  const feed = deskEvents.slice(0, 8);
   const totalAgents = agents.length || list.reduce((s, c) => s + c.agents, 0);
   const activeThreads = agents.filter((a) => a.status !== "idle" && a.status !== "killed").length;
-  const anomalies = events.filter((e) => e.kind === "alert").length;
+  const anomalies = feed.filter((e) => e.kind === "alert").length;
 
   return (
     <div className="swarm">
@@ -638,14 +735,17 @@ export function SwarmScreen() {
             clusters={clusterAnchors}
             agents={agents}
             selectedCluster={sel}
-            pulses={pulses}
-            handoffEdgeIds={hotEdges}
+            synapses={synapses}
+            fires={fires}
+            replay={replay}
+            canReplay={run.length > 1}
+            onReplay={toggleReplay}
           />
         </div>
       </div>
 
       <Panel title="Activity Stream" meta={live ? "↓ live" : "↓ idle"} bodyClassName="tight">
-        <SwarmFeed events={events} live={live} clusterById={clusterById} agentById={agentById} />
+        <SwarmFeed events={feed} live={live} clusterById={clusterById} agentById={agentById} />
       </Panel>
     </div>
   );

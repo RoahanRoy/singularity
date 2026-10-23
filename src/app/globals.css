@@ -324,7 +324,23 @@
 .meridian-root .swarm-canvas .legend { position: absolute; left: 12px; bottom: 12px; display: flex; gap: 14px; font-family: var(--mono); font-size: 10px; color: var(--ink-2); letter-spacing: 0.08em; }
 .meridian-root .swarm-canvas .legend .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: -1px; }
 .meridian-root .swarm-canvas .hud-tl { position: absolute; left: 14px; top: 14px; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.12em; text-transform: uppercase; }
-.meridian-root .swarm-canvas .hud-tr { position: absolute; right: 14px; top: 14px; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.12em; text-transform: uppercase; }
+.meridian-root .swarm-canvas .hud-tr { position: absolute; z-index: 2; right: 14px; top: 14px; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.12em; text-transform: uppercase; }
+.meridian-root .swarm-canvas .hud-btn { margin-top: 6px; font: inherit; letter-spacing: inherit; text-transform: inherit; color: var(--ink-1); border: 1px solid var(--line-strong); border-radius: 980px; padding: 3px 9px; }
+.meridian-root .swarm-canvas .hud-btn:hover { color: var(--ink-0); }
+/* Neuron firing: a spark runs down the synapse, then the receiving agent flashes and decays. */
+.meridian-root .swarm-canvas .syn { fill: none; stroke: var(--ink-2); }
+.meridian-root .swarm-canvas .syn-trace { fill: none; stroke: var(--syn); stroke-width: 1.2; opacity: 0; animation: syn-trace 1.2s ease-out both; }
+.meridian-root .swarm-canvas .syn-spark { fill: none; stroke: var(--syn); stroke-width: 2.4; stroke-linecap: round; stroke-dasharray: 7 200; stroke-dashoffset: 7; animation: syn-spark .65s cubic-bezier(.4, 0, .2, 1) both; }
+.meridian-root .swarm-canvas .syn-halo { fill: var(--syn); opacity: 0; transform-box: fill-box; transform-origin: center; animation: syn-halo 1.4s ease-out forwards; }
+.meridian-root .swarm-canvas .syn-core { fill: color-mix(in oklch, var(--syn) 45%, white); opacity: 0; animation: syn-core 1.1s ease-out forwards; }
+@keyframes syn-trace { 0% { opacity: 0 } 25% { opacity: .75 } 100% { opacity: 0 } }
+@keyframes syn-spark { from { stroke-dashoffset: 7 } to { stroke-dashoffset: -100 } }
+@keyframes syn-halo { 0% { opacity: .9; transform: scale(.4) } 100% { opacity: 0; transform: scale(2.6) } }
+@keyframes syn-core { 0% { opacity: 1 } 100% { opacity: 0 } }
+@media (prefers-reduced-motion: reduce) {
+  .meridian-root .swarm-canvas .syn-spark { display: none; }
+  .meridian-root .swarm-canvas .syn-halo { animation-name: syn-core; }
+}
 /* Hover card for individual agent dots. Positioned in container px, follows the cursor. */
 .meridian-root .swarm-tooltip { position: absolute; z-index: 6; pointer-events: none; min-width: 170px; max-width: 240px; background: var(--bg-1); border: 1px solid var(--line-strong); padding: 8px 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
 .meridian-root .swarm-tooltip .tt-name { font-size: 12.5px; color: var(--ink-0); margin-bottom: 4px; }
