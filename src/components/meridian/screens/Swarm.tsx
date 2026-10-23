@@ -178,6 +178,18 @@ function SwarmCanvas({
     return m;
   }, [clusters]);
 
+  // The desks run in scheduled bursts, not around the clock, so the HUD shows
+  // whether any agent is mid-step right now and, if not, when one last acted.
+  const runState = useMemo(() => {
+    let active = 0;
+    let last: string | null = null;
+    for (const a of agents) {
+      if (a.status !== "idle" && a.status !== "killed") active++;
+      if (a.last_action_at && (!last || Date.parse(a.last_action_at) > Date.parse(last))) last = a.last_action_at;
+    }
+    return { active, last };
+  }, [agents]);
+
   // Custom hover tooltip. The dots are 2–3px in a 1000×700 viewBox, so each
   // gets a larger transparent hit circle; position is tracked in container px
   // (not SVG coords) so the HTML card sits exactly under the cursor.
@@ -202,7 +214,11 @@ function SwarmCanvas({
         AGENTS {placed.length.toLocaleString()} · EDGES {edges.length}
       </div>
       <div className="hud-tr">
-        LIVE · 24/7
+        {runState.active > 0
+          ? `LIVE · ${runState.active} ACTIVE`
+          : runState.last
+            ? `IDLE · LAST RUN ${fmtUtcStamp(runState.last)}`
+            : "IDLE · NO RUNS YET"}
         <br />
         <UTCClock />
       </div>
@@ -353,6 +369,14 @@ function fmtAgo(iso: string): string {
   if (s < 3600) return Math.floor(s / 60) + "m";
   if (s < 86400) return Math.floor(s / 3600) + "h";
   return Math.floor(s / 86400) + "d";
+}
+
+function fmtUtcStamp(iso: string): string {
+  const d = new Date(iso);
+  const mon = d.toLocaleString("en-US", { month: "short", timeZone: "UTC" }).toUpperCase();
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${d.getUTCDate()} ${mon} ${hh}:${mm} UTC`;
 }
 
 // Every event carries a `kind`; cluster_id is often null, so the kind badge is
