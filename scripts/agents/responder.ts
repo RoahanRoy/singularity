@@ -8,7 +8,9 @@
  * Run with: npm run agents:responder
  *
  * Behavior:
- *   - Polls every POLL_MS for new messages with role=operator.
+ *   - Polls every POLL_MS for new messages with role=operator while a
+ *     conversation is going, then backs off (doubling) to IDLE_MS when the
+ *     console is quiet: every poll is an Appwrite read, even an empty one.
  *   - For each operator message, checks the thread tail. If the last message
  *     in that thread is still that operator turn (no assistant has replied),
  *     gathers a state snapshot, asks Claude, and writes back role=assistant.
@@ -20,6 +22,9 @@ import { ask } from "./llm";
 import { loadPrompt } from "./prompts";
 
 const POLL_MS = Number(process.env.MERIDIAN_RESPONDER_POLL_MS || 3000);
+// Slowest poll once nobody has written for ACTIVE_MS (a reply then takes up to this long).
+const IDLE_MS = Number(process.env.MERIDIAN_RESPONDER_IDLE_MS || 60_000);
+const ACTIVE_MS = 2 * 60_000;
 const MAX_THREAD_HISTORY = 12;
 // How far back to look for unanswered operator messages at boot. Defaults to
 // 10 minutes so a message sent just before the responder started still gets
@@ -274,13 +279,14 @@ async function respond(msg: OperatorMessage): Promise<void> {
   console.log(`[responder] thread=${msg.thread_id} replied in ${dur}ms (${reply.length} chars)`);
 }
 
-async function tick(watermark: { iso: string }): Promise<void> {
+/** One poll. True when there were new operator messages. */
+async function tick(watermark: { iso: string }): Promise<boolean> {
   let messages: OperatorMessage[];
   try {
     messages = await recentOperatorMessages(watermark.iso);
   } catch (err) {
     console.warn(`[responder] poll failed: ${(err as Error).message}`);
-    return;
+    return false;
   }
 
   for (const m of messages) {
@@ -298,11 +304,12 @@ async function tick(watermark: { iso: string }): Promise<void> {
       console.error(`[responder] failed on ${m.$id}: ${(err as Error).message}`);
     }
   }
+  return messages.length > 0;
 }
 
 async function main() {
   console.log(
-    `[responder] booted, watermark=${BOOT_AT} (lookback ${LOOKBACK_MIN}m), polling every ${POLL_MS}ms`,
+    `[responder] booted, watermark=${BOOT_AT} (lookback ${LOOKBACK_MIN}m), polling every ${POLL_MS}ms, ${IDLE_MS}ms when idle`,
   );
   const watermark = { iso: BOOT_AT };
   // Trim processed set periodically so it doesn't grow unbounded.
@@ -310,9 +317,12 @@ async function main() {
     if (processed.size > 5000) processed.clear();
   }, 60_000);
 
+  let lastActive = Date.now();
+  let delay = POLL_MS;
   while (true) {
-    await tick(watermark);
-    await new Promise((r) => setTimeout(r, POLL_MS));
+    if (await tick(watermark)) lastActive = Date.now();
+    delay = Date.now() - lastActive < ACTIVE_MS ? POLL_MS : Math.min(IDLE_MS, delay * 2);
+    await new Promise((r) => setTimeout(r, delay));
   }
 }
 

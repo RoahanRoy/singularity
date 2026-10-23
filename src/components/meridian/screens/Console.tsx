@@ -391,9 +391,10 @@ const AGENT_LABEL: Record<WorkerName, string> = {
 };
 const AGENT_ORDER: WorkerName[] = ["responder", "tech", "india"];
 
-// The dispatcher republishes status every ~2s; if the freshest row is older
+// The dispatcher writes a status row when an agent changes and a heartbeat row
+// every 5 minutes (dispatcher.ts HEARTBEAT_MS); if the freshest row is older
 // than this, treat it as offline (nobody is home to run the agents).
-const DISPATCHER_STALE_MS = 15_000;
+const DISPATCHER_STALE_MS = 12 * 60_000;
 
 /**
  * Drives the laptop dispatcher through Appwrite. Clicking a button enqueues a

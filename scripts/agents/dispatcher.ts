@@ -18,8 +18,15 @@
  * key needed. The dispatcher itself talks to Appwrite with the server API key
  * from .env.local.
  *
+ * Every poll and status write is an Appwrite read or write against the Free
+ * plan, so it polls fast only for a while after a command and then backs off,
+ * and writes a status row only when the process behind it changes (its last
+ * log line at most every LOG_EVERY_MS), plus one heartbeat row every
+ * HEARTBEAT_MS so the console can tell the dispatcher is alive.
+ *
  * Env knobs:
- *   MERIDIAN_DISPATCH_POLL_MS   how often to drain commands / publish (default 2000)
+ *   MERIDIAN_DISPATCH_POLL_MS   command poll after a command (default 2000)
+ *   MERIDIAN_DISPATCH_IDLE_MS   slowest poll once idle (default 60000)
  *   MERIDIAN_AUTOSTART=0        don't auto-start the responder on boot
  */
 import {
@@ -33,6 +40,11 @@ import {
 import { db, DB, ID, Query } from "./appwrite";
 
 const POLL_MS = Number(process.env.MERIDIAN_DISPATCH_POLL_MS || 2000);
+const IDLE_MS = Number(process.env.MERIDIAN_DISPATCH_IDLE_MS || 60_000);
+const ACTIVE_MS = 2 * 60_000;
+const LOG_EVERY_MS = 5 * 60_000;
+// Console.tsx DISPATCHER_STALE_MS must stay comfortably above this.
+const HEARTBEAT_MS = 5 * 60_000;
 const AUTOSTART_RESPONDER = process.env.MERIDIAN_AUTOSTART !== "0";
 const CMD = "agent_commands";
 const STATUS = "agent_status";
@@ -48,8 +60,8 @@ function isAgentName(s: string): s is AgentName {
   return (AGENT_NAMES as string[]).includes(s);
 }
 
-/** Drain any pending commands, act on them, and mark them done/error. */
-async function consumePending(): Promise<void> {
+/** Drain any pending commands, act on them, and mark them done/error. True if there were any. */
+async function consumePending(): Promise<boolean> {
   const res = await db.listDocuments(DB, CMD, [
     Query.equal("status", "pending"),
     Query.orderAsc("occurred_at"),
@@ -90,15 +102,28 @@ async function consumePending(): Promise<void> {
       console.warn(`[dispatch] could not mark command ${cmd.$id}: ${(err as Error).message}`);
     }
   }
+  return res.documents.length > 0;
 }
 
 // Remember each worker's status doc id so we update one row instead of piling up.
 const statusDocId = new Map<AgentName, string>();
+// What each row last said, and when it was written.
+const published = new Map<AgentName, { state: string; log: string; at: number }>();
 
-/** Push current child-process status to Appwrite so the UI can render it live. */
+/** Push changed child-process status to Appwrite so the UI can render it live. */
 async function publishStatus(): Promise<void> {
   for (const name of AGENT_NAMES) {
     const s = getStatus(name);
+    const state = JSON.stringify([s.running, s.pid, s.startedAt, s.exitCode]);
+    const log = s.lastLogs[s.lastLogs.length - 1] ?? "";
+    const prev = published.get(name);
+    const age = prev ? Date.now() - prev.at : Infinity;
+    const due =
+      !prev ||
+      prev.state !== state ||
+      (prev.log !== log && age >= LOG_EVERY_MS) ||
+      (name === AGENT_NAMES[0] && age >= HEARTBEAT_MS);
+    if (!due) continue;
     const fields = {
       name,
       running: s.running,
@@ -121,6 +146,7 @@ async function publishStatus(): Promise<void> {
         id = created.$id;
       }
       statusDocId.set(name, id);
+      published.set(name, { state, log, at: Date.now() });
     } catch (err) {
       console.warn(`[dispatch] status publish for ${name} failed: ${(err as Error).message}`);
     }
@@ -141,20 +167,23 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
 async function main() {
-  console.log(`[dispatch] booted — draining ${CMD} every ${POLL_MS}ms (Ctrl-C to stop)`);
+  console.log(`[dispatch] booted — draining ${CMD} every ${POLL_MS}ms, ${IDLE_MS}ms when idle (Ctrl-C to stop)`);
   if (AUTOSTART_RESPONDER) {
     startAgent("responder");
     console.log(`[dispatch] auto-started responder`);
   }
 
+  let lastActive = Date.now();
+  let delay = POLL_MS;
   while (!stopping) {
     try {
-      await consumePending();
+      if (await consumePending()) lastActive = Date.now();
       await publishStatus();
     } catch (err) {
       console.warn(`[dispatch] tick error: ${(err as Error).message}`);
     }
-    await new Promise((r) => setTimeout(r, POLL_MS));
+    delay = Date.now() - lastActive < ACTIVE_MS ? POLL_MS : Math.min(IDLE_MS, delay * 2);
+    await new Promise((r) => setTimeout(r, delay));
   }
 }
 
