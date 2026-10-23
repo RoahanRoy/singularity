@@ -14,7 +14,7 @@
  */
 import { nextIndiaTicker, indiaSectorOf, INDIA_UNIVERSE } from "./universe";
 import { bootstrapAgentsIndia } from "./nodes";
-import { fetchLatestIndiaKey } from "./india";
+import { fetchLatestIndiaKey, hasNseAnnouncements } from "./india";
 import { runDesk } from "./desk-loop";
 
 runDesk({
@@ -24,7 +24,17 @@ runDesk({
   market: "IN",
   syncPath: "/api/horizon/sync?loop=1",
   bootstrap: bootstrapAgentsIndia,
-  nextTicker: nextIndiaTicker,
+  // Held ETFs, gold bonds and SME listings post no NSE announcements for the
+  // chain to read, so the round-robin walks past them. Only the pick is
+  // checked (NSE rate-limits hard), moving on until one has announcements.
+  nextTicker: async (held) => {
+    let pick = await nextIndiaTicker(held);
+    for (let i = 1; i < held.length && !(await hasNseAnnouncements(pick)); i++) {
+      console.log(`[india] ${pick}: no NSE announcements, skipping`);
+      pick = await nextIndiaTicker(held);
+    }
+    return pick;
+  },
   sectorOf: indiaSectorOf,
   universe: INDIA_UNIVERSE,
   latestFilingKey: fetchLatestIndiaKey,

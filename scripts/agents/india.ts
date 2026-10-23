@@ -198,6 +198,19 @@ export async function fetchLatestIndiaKey(
   }
 }
 
+/**
+ * Does the symbol post NSE announcements? False only for a confirmed empty
+ * list (ETFs, gold bonds, SME listings); a failed fetch counts as yes, so an
+ * NSE outage doesn't empty the round-robin.
+ */
+export async function hasNseAnnouncements(ticker: string): Promise<boolean> {
+  try {
+    return (await fetchAnnouncements(ticker.toUpperCase())).length > 0;
+  } catch {
+    return true;
+  }
+}
+
 export async function fetchLatestIndiaFiling(ticker: string, excerptChars = 12000): Promise<EdgarFiling> {
   const symbol = ticker.toUpperCase();
   const annc = await fetchAnnouncements(symbol);
