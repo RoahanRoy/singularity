@@ -10,8 +10,8 @@ import { fmtMoney, fmtFullMoney } from "@/lib/meridian/format";
 import { operatorFetch } from "@/lib/auth/operator-fetch";
 import {
   listPositions,
-  listPendingTrades,
-  subscribeTrades,
+  listHeldMemos,
+  subscribeMemos,
   listFundSnapshots,
   listScenarios,
   listEnsembleVerdicts,
@@ -19,7 +19,7 @@ import {
 import { planRebalance, verdictOf, type RebalanceAction, type Verdict } from "@/lib/fund/rebalance";
 import type {
   Position,
-  Trade,
+  Memo,
   FundSnapshot,
   Scenario,
   FactorExposure,
@@ -232,93 +232,128 @@ function ScenarioTree({ scenarios }: { scenarios: Scenario[] }) {
   );
 }
 
-// ── Agent vote list (driven by pending trades) ───────────────────────────────
+// ── Held orders (sized and cleared by the desk, waiting on the operator) ─────
 
-type Vote = { id: string; ticker: string; side: string; wt: string; a: number; n: number; c: number };
+type Held = { qty?: number; weight_pct?: number | null; venue?: string | null; algo?: string | null };
 
-function tradeToVote(t: Trade, navUsd: number): Vote {
-  const nav = navUsd || 1_000_000_000;
-  const notional = Math.abs(t.qty) * t.price;
-  const wtPct = (t.side === "buy" ? 1 : -1) * (notional / nav) * 100;
-  const sideLabel = t.side === "buy" ? "ADD" : notional > nav * 0.003 ? "EXIT" : "TRIM";
-  const seed = t.$id.charCodeAt(0) + t.$id.charCodeAt(1);
-  return {
-    id: t.$id,
-    ticker: t.ticker,
-    side: sideLabel,
-    wt: (wtPct >= 0 ? "+" : "−") + Math.abs(wtPct).toFixed(2) + "%",
-    a: 3 + (seed % 5),
-    n: seed % 3,
-    c: 0.45 + ((seed * 7) % 40) / 100,
-  };
+function parseHeld(raw: string | null | undefined): Held | null {
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw);
+    return p && typeof p === "object" ? (p as Held) : null;
+  } catch {
+    return null;
+  }
 }
 
-function VoteList({ navUsd, market }: { navUsd: number; market: Market }) {
-  const [items, setItems] = useState<Vote[]>([]);
+function HeldOrders({ market }: { market: Market }) {
+  const [items, setItems] = useState<Memo[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setLoaded(false);
     const load = () =>
-      listPendingTrades(8, market)
+      listHeldMemos(8, market)
         .then((rows) => {
           if (cancelled) return;
-          setItems(rows.map((t) => tradeToVote(t, navUsd)));
+          setItems(rows);
           setLoaded(true);
         })
         .catch(() => {
           if (!cancelled) setLoaded(true);
         });
     load();
-    const unsub = subscribeTrades(() => {
+    const unsub = subscribeMemos(() => {
       if (!cancelled) load();
     });
     return () => {
       cancelled = true;
       unsub();
     };
-  }, [navUsd, market]);
+  }, [market]);
+
+  async function act(memoId: string, action: "approve" | "reject") {
+    setBusyId(memoId);
+    try {
+      const res = await operatorFetch("/api/memos/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memoId, action }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { status?: string; error?: string };
+      if (res.ok) {
+        const next = (j.status ?? (action === "approve" ? "approved" : "rejected")) as Memo["status"];
+        setItems((prev) => prev.flatMap((m) => (m.$id !== memoId ? [m] : next === "rejected" ? [] : [{ ...m, status: next }])));
+      } else {
+        console.warn("memo action failed:", j.error);
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   if (loaded && items.length === 0) {
     return (
       <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11, padding: "12px 16px" }}>
-        No pending reallocation motions.
+        No orders held for approval.
       </div>
     );
   }
 
+  const button = (color: string, filled: boolean, busy: boolean) => ({
+    fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase" as const,
+    padding: "3px 8px", cursor: busy ? "wait" : "pointer",
+    color: filled ? "var(--bg-0)" : color, background: filled ? color : "transparent", border: `1px solid ${color}`,
+    opacity: busy ? 0.6 : 1,
+  });
+
   return (
     <div>
-      {items.map((it) => (
-        <div
-          key={it.id}
-          style={{
-            display: "grid",
-            gridTemplateColumns: "70px 80px 1fr 60px 50px",
-            gap: 10,
-            padding: "8px 12px",
-            borderBottom: "1px solid var(--line-soft)",
-            fontFamily: "var(--mono)",
-            fontSize: 11,
-            alignItems: "center",
-          }}
-        >
-          <span style={{ color: "var(--ink-0)" }}>{it.ticker}</span>
-          <span
+      {items.map((m) => {
+        const h = parseHeld(m.pending_exec_json);
+        const busy = busyId === m.$id;
+        return (
+          <div
+            key={m.$id}
+            title={m.title}
             style={{
-              color:
-                it.side === "ADD" ? "var(--green)" : it.side === "EXIT" ? "var(--red)" : "var(--md-accent)",
-              letterSpacing: "0.12em",
+              display: "grid",
+              gridTemplateColumns: "80px 1fr 60px auto",
+              gap: 10,
+              padding: "8px 12px",
+              borderBottom: "1px solid var(--line-soft)",
+              fontFamily: "var(--mono)",
+              fontSize: 11,
+              alignItems: "center",
             }}
           >
-            {it.side}
-          </span>
-          <span style={{ color: "var(--ink-2)" }}>{it.wt}</span>
-          <span style={{ color: "var(--ink-2)" }}>{it.a} / {it.a + it.n}</span>
-          <span style={{ color: "var(--ink-1)", textAlign: "right" }}>{it.c.toFixed(2)}</span>
-        </div>
-      ))}
+            <span style={{ color: "var(--ink-0)" }}>{m.ticker ?? "—"}</span>
+            <span style={{ color: "var(--ink-2)" }}>
+              <span style={{ color: "var(--green)", letterSpacing: "0.12em" }}>BUY</span> {h?.qty ?? "?"}
+              {h?.weight_pct != null ? ` · ${Number(h.weight_pct).toFixed(2)}%` : ""}
+              {h?.venue ? ` · ${h.venue}` : ""}
+            </span>
+            <span style={{ color: "var(--ink-1)", textAlign: "right" }} title="analyst conviction">
+              {m.conviction.toFixed(2)}
+            </span>
+            {m.status === "approved" ? (
+              <span className="dim" style={{ fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+                approved · next cycle fills
+              </span>
+            ) : (
+              <span style={{ display: "flex", gap: 6 }}>
+                <button onClick={() => act(m.$id, "approve")} disabled={busy} style={button("var(--md-accent)", true, busy)}>
+                  {busy ? "…" : "Approve"}
+                </button>
+                <button onClick={() => act(m.$id, "reject")} disabled={busy} style={button("var(--red)", false, busy)}>
+                  Reject
+                </button>
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -753,8 +788,8 @@ export function PortfolioScreen() {
         <ScenarioTree scenarios={scenarios} />
       </Panel>
 
-      <Panel title="Agent Vote · Pending Reallocation" meta="motions · quorum 0.55" bodyClassName="tight">
-        <VoteList navUsd={navForDisplay} market={market} />
+      <Panel title="Held Orders · Awaiting Approval" meta="broker · operator gate" bodyClassName="tight">
+        <HeldOrders market={market} />
       </Panel>
 
       <Panel title="Positions · Live" meta="ranked by MV" bodyClassName="tight">

@@ -117,6 +117,26 @@ export async function listRecentTrades(limit = 50): Promise<Trade[]> {
   return res.documents;
 }
 
+/** Orders the broker sized and cleared but holds for the operator: memos in
+ *  review (or approved, waiting for the loop's sweep) that carry pending_exec_json. */
+export async function listHeldMemos(limit = 10, market?: Market): Promise<Memo[]> {
+  const res = await databases.listDocuments<Memo & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.memos,
+    [...marketFilter(market), Query.equal("status", ["review", "approved"]), Query.orderDesc("$createdAt"), Query.limit(limit)],
+  );
+  return res.documents.filter((m) => m.pending_exec_json);
+}
+
+export function subscribeMemos(onChange: (m: Memo) => void) {
+  const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.memos}.documents`;
+  return client.subscribe<Memo & Models.Document>(channel, (msg) => {
+    if (msg.events.some((e) => e.endsWith(".create") || e.endsWith(".update"))) {
+      onChange(msg.payload);
+    }
+  });
+}
+
 export async function listMemosByFiling(filingId: string, limit = 6): Promise<Memo[]> {
   const res = await databases.listDocuments<Memo & Models.Document>(
     DATABASE_ID,
