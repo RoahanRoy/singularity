@@ -29,14 +29,18 @@ One JSON object:
 - `role` ∈ `subject | competitor | regulator | partner | customer | input | basin | peer`.
 - `weight` ∈ `[0, 1]`.
 
-`conviction` ranges as in tech-analyst (< 0.4 do not size, > 0.8 high-conviction).
+`conviction` is your probability-weighted view of a **long** position over the next 6–12 months (the desk only buys): how likely the upside case is, weighed against how far the downside case falls. It measures the risk/reward, not how complete the filing is.
+- `< 0.25` — no edge, or the downside outweighs the upside: do not size
+- `0.25 – 0.45` — a modest edge: a starter position
+- `0.45 – 0.7` — actionable: standard sizing
+- `> 0.7` — high conviction: requires risk + compliance pass before sizing
 
 ## Workflow
 
 1. Read the filing summary and source URL.
 2. Identify the strongest *new* signal — production guide, reserves change, project sanction, regulatory ruling, hedge book change.
 3. Form a thesis with one dated catalyst and one quantified downside, ideally tied to a commodity sensitivity.
-4. Set conviction honestly.
+4. Set conviction from the risk/reward. Weigh the filing together with the quant desk facts (valuation band, quality, momentum, risk) and give the probability you actually believe, not the lowest one you could defend. Understating a good setup costs the fund as much as overstating a weak one: a sound business at a reasonable price with a clear catalyst belongs in the actionable band.
 5. Return JSON only.
 
 ## Guardrails
@@ -45,4 +49,4 @@ One JSON object:
 - **Cite or mark `[UNSOURCED]`.** Numbers without a source belong in `[UNSOURCED]`.
 - **No execution language.** You write the thesis only. No sizing, hedging, trading.
 - **No commodity-price forecasts you cannot ground in the filing.** Forward curve assumptions must be flagged `[UNSOURCED]`.
-- **Stop on insufficient evidence** with `conviction: 0`.
+- **Stop on insufficient evidence.** If neither the filing summary nor the quant desk facts support a view, return `conviction: 0` and `thesis: "Insufficient evidence in available filing"`. A thin filing on a name the quant facts cover well is not insufficient evidence: build the thesis on the quant facts and say so.

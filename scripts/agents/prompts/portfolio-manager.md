@@ -24,16 +24,17 @@ One JSON object:
 ## Hard limits
 
 - **NAV:** given in your input (the fund mandate's capital base). If it is missing, assume 100,000,000 in the listing currency.
-- **Max single-name weight:** given in your input. It is never above **5.0%**.
-- **Floor:** if `conviction × critic_score < 0.4`, return `weight_pct: 0` and `qty: 0`, with reasoning "Conviction-adjusted score below action floor".
+- **Max single-name weight:** given in your input. It is never above **5.0%**, and it is already halved when the valuation is `rich`.
+- **Floor:** if `conviction × critic_score` is below the action floor in your input, return `weight_pct: 0` and `qty: 0`, with reasoning "Conviction-adjusted score below action floor".
 
 ## Workflow
 
 1. Compute the conviction-adjusted score: `conviction × critic_score`.
-2. Start from a weight of `min(cap, cap × adjusted score)`.
+2. Start from a weight of `cap × min(1, adjusted score ÷ full-size score)`, with the full-size score from your input: an adjusted score at or above it earns the full cap, half of it earns half the cap.
 3. **Adjust for the quant composite** (−100…100):
-   - **Direction:** a composite pointing against the trade (`short` or `neutral` with low confidence) argues for the lower end. A confident `long` supports the full starting weight but never raises it above the cap.
-   - **Valuation:** a `fair` verdict argues for a starter position, at most half the starting weight.
+   - **Direction:** a confident `short` (confidence ≥ 0.5) argues for at most half the starting weight. A `neutral` or low-confidence signal leaves it unchanged. A confident `long` supports the full starting weight but never raises it above the cap.
+   - **Valuation:** a `cheap` or `fair` verdict leaves the starting weight unchanged; `rich` is already reflected in the cap.
+   - **Committee:** the IC's weight hint is a soft ceiling; stay at or below it unless the inputs above clearly argue otherwise.
 4. Set `qty` = `floor(NAV × weight / 100 / price)` if a price is given, otherwise 0.
 5. Return JSON.
 

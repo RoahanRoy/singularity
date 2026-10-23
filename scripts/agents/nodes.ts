@@ -611,9 +611,25 @@ ${ctx.quant.facts}` : ""}`,
     const revised = await analyst({ ...ctx, reviseCount: 1 }, critique.concerns);
     return critic({ ...revised, reviseCount: 1 });
   }
+  // The revision was the analyst's one chance to answer; what is still open
+  // is priced into the score, which scales the size. Only a reject stops it.
+  if (critique.verdict === "revise") {
+    await emit(id, "thought", `${ctx.ticker}: concerns remain after revision; proceeding on score ${critique.score?.toFixed(2)}`);
+    return { ...ctx, critique: { ...critique, verdict: "pass" } };
+  }
 
   return { ...ctx, critique };
 }
+
+/**
+ * Conviction × critic score below this stages the memo for the operator
+ * instead of sizing it. The analyst's conviction is a probability-weighted
+ * risk/reward, so 0.5 conviction on a 0.5-score memo (0.25) is a small edge
+ * worth a starter position, not nothing.
+ */
+export const ACTION_FLOOR = 0.25;
+/** Conviction × critic score at which the PM sizes to the full name cap. */
+export const FULL_SIZE_AT = 0.6;
 
 // Review gate: kills a critic-rejected thesis and stages a low-conviction one,
 // but a thesis that clears the bar now PROCEEDS through full sizing/analysis.
@@ -633,8 +649,8 @@ async function reviewGate(ctx: Ctx): Promise<boolean> {
   }
 
   const adjusted = conv * score;
-  if (adjusted < 0.4) {
-    await emit(id, "alert", `STAGED ${ctx.ticker} for operator review (adjusted score ${adjusted.toFixed(2)} < 0.4)`);
+  if (adjusted < ACTION_FLOOR) {
+    await emit(id, "alert", `STAGED ${ctx.ticker} for operator review (adjusted score ${adjusted.toFixed(2)} < ${ACTION_FLOOR})`);
     if (ctx.memoId) await db.updateDocument(DB, "memos", ctx.memoId, { status: "review" });
     return false;
   }
@@ -645,8 +661,8 @@ async function reviewGate(ctx: Ctx): Promise<boolean> {
 // 3b. Valuation reviewer ----------------------------------------------------
 //
 // Runs between critic and PM. Produces a fair-value band and a verdict
-// (rich/fair/cheap) that the PM uses to throttle sizing. A `rich` verdict
-// stages the memo for operator review regardless of conviction.
+// (rich/fair/cheap) that the PM uses to throttle sizing: a `rich` verdict
+// halves the name cap for the trade.
 export async function valuation(ctx: Ctx): Promise<Ctx> {
   // Only price-check theses that passed the critic.
   if (ctx.critique?.verdict === "reject" || !ctx.memo) return ctx;
@@ -779,12 +795,6 @@ export async function pm(ctx: Ctx): Promise<Ctx> {
     if (ctx.memoId) await db.updateDocument(DB, "memos", ctx.memoId, { status: ctx.ic.decision === "reject" ? "rejected" : "review" });
     return ctx;
   }
-  // Valuation gate: a `rich` verdict overrides conviction and stages for review.
-  if (ctx.valuation?.verdict === "rich") {
-    await emit(id, "alert", `STAGED ${ctx.ticker} — valuation rich (${ctx.valuation.implied_upside_pct?.toFixed(1)}% upside)`);
-    if (ctx.memoId) await db.updateDocument(DB, "memos", ctx.memoId, { status: "review" });
-    return ctx;
-  }
   if (!(await reviewGate(ctx))) return ctx;
 
   const prompt = loadPrompt("portfolio-manager");
@@ -792,7 +802,10 @@ export async function pm(ctx: Ctx): Promise<Ctx> {
   const market = ctx.market ?? "US";
   const mandate = await getMandate(db, DB, market).catch(() => null);
   const nav = mandate && mandate.capital_base > 0 ? mandate.capital_base : 100_000_000;
-  const cap = Math.min(5, mandate?.max_name_weight_pct ?? 5);
+  // A rich valuation the committee still approved trades at half size: the
+  // catalyst carried the vote, the price limits how much the fund risks on it.
+  const rich = ctx.valuation?.verdict === "rich";
+  const cap = Math.min(5, mandate?.max_name_weight_pct ?? 5) / (rich ? 2 : 1);
   const price = ctx.quant?.price ?? (await getQuote(ctx.ticker, market).catch(() => null));
   const raw = await ask({
     model: prompt.meta.model,
@@ -803,7 +816,8 @@ Quant signal: ${ctx.signal ? `${ctx.signal.direction} ${ctx.signal.score} (conf 
 Valuation: ${ctx.valuation ? `${ctx.valuation.verdict}, ${ctx.valuation.implied_upside_pct?.toFixed(1)}% upside` : "n/a"}
 IC decision: approve (conviction ${ctx.ic?.conviction ?? "n/a"}, soft weight ceiling ${ctx.ic?.target_weight_hint_pct ?? "n/a"}%)
 NAV: ${nav}${mandate ? " (fund mandate capital base)" : " (no mandate: default)"}
-Name weight cap: ${cap}%
+Name weight cap: ${cap}%${rich ? " (half the usual cap: valuation rich)" : ""}
+Action floor: ${ACTION_FLOOR} · full size at: ${FULL_SIZE_AT}
 Price: ${price ?? "n/a"}${ctx.quant?.priceSource ? ` (${ctx.quant.priceSource})` : ""}`,
     label: `pm:${ctx.ticker}`,
   });

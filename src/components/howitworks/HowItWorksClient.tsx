@@ -79,7 +79,7 @@ const TIERS: [Tier, string][] = [
 
 const RULES: [string, ReactNode][] = [
   ["Trust tiers", "Untrusted filing text never reaches an agent with tools. Reader, summariser and indexer are split, so a prompt injection can at worst produce JSON that fails validation."],
-  ["Human-in-the-loop", <>A trade auto-executes only if the critic passes, conviction × score ≥ 0.4, and <code>MERIDIAN_AUTO_APPROVE=1</code> is set for the session. Otherwise it waits for you.</>],
+  ["Human-in-the-loop", <>A trade auto-executes only if the critic and the investment committee pass it, conviction × score ≥ 0.25, and <code>MERIDIAN_AUTO_APPROVE=1</code> is set for the session. Otherwise it waits for you.</>],
   ["One job per agent", "Analysts don't size. PMs don't execute. Risk doesn't re-size. Compliance doesn't approve sizing. Each prompt lives in its own file."],
   ["Bounded revision", "A critic “revise” triggers exactly one re-run. If it still doesn't clear, it goes to an operator. Bounded retries beat endless negotiation."],
   ["Budget kill switch", "Before every cycle, the budget controller checks 24h token use. Over the cap, it throttles or stops the loop."],
