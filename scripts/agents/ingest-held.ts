@@ -24,7 +24,7 @@
  *   MERIDIAN_INGEST_INTERVAL_MS       sleep between sweeps (default 1_800_000)
  *   MERIDIAN_INGEST_ERROR_BACKOFF_MS  sleep after a failed sweep (default 60_000)
  */
-import { db, DB, Query, ID } from "./appwrite";
+import { db, DB, Query, ID, quotaCheck } from "./appwrite";
 import { fetchLatestFiling } from "./edgar";
 import { fetchLatestIndiaFiling } from "./india";
 import { heldTickers, coverageTickers, type Market } from "./coverage";
@@ -120,8 +120,13 @@ async function sweep(): Promise<void> {
   console.log(`[ingest] sweep (${HELD_ONLY ? "held book" : "held + universe"}) — US=${us.length} · IN=${india.length}`);
 
   let added = 0, dup = 0, skipped = 0;
+  const overQuota = async () => {
+    const quota = await quotaCheck();
+    if (!quota.ok) console.log(`[quota] Appwrite usage limit reached (${quota.reason}): ending the sweep`);
+    return !quota.ok;
+  };
   for (const t of us) {
-    if (stopping) return;
+    if (stopping || (await overQuota())) return;
     const r = await ingestUS(t);
     if (r === "new") added++;
     else if (r === "dup") dup++;
@@ -129,7 +134,7 @@ async function sweep(): Promise<void> {
     await sleep(250); // be polite to SEC (~4 req/s ceiling, well under their 10/s)
   }
   for (const t of india) {
-    if (stopping) return;
+    if (stopping || (await overQuota())) return;
     const r = await ingestIN(t);
     if (r === "new") added++;
     else if (r === "dup") dup++;

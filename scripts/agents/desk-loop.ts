@@ -37,7 +37,7 @@
  *                              of dotfiles (for throwaway checkouts, e.g. cloud)
  */
 import type { Sector } from "./universe";
-import { db, DB, Query, emit } from "./appwrite";
+import { db, DB, Query, emit, quotaCheck, flushQuota } from "./appwrite";
 import {
   parser, analyst, quant, critic, valuation, cio,
   pm, treasury, risk, riskOverlay, compliance, smartRouter, broker, tca, attribution,
@@ -254,10 +254,21 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     console.log(`\n=== Done. Trade: ${ctx.trade?.status ?? "no fill"} ===`);
   }
 
+  // Appwrite Free plan guard (quota.ts): a single run skips, a loop waits.
+  const QUOTA_POLL_MS = 30 * 60_000;
+  if (RUN_ONCE) {
+    const quota = await quotaCheck();
+    if (!quota.ok) {
+      console.log(`[quota] Appwrite usage limit reached (${quota.reason}): skipping this cycle`);
+      return;
+    }
+  }
+
   const agentIds = await config.bootstrap();
 
   if (RUN_ONCE) {
     await runCycle(agentIds);
+    await flushQuota();
     return;
   }
 
@@ -280,6 +291,13 @@ export async function runDesk(config: DeskConfig): Promise<void> {
         console.log(`[${key}] market open — resuming trading`);
         wasClosed = false;
       }
+    }
+
+    const quota = await quotaCheck();
+    if (!quota.ok) {
+      console.log(`[quota] Appwrite usage limit reached (${quota.reason}): re-checking in ${QUOTA_POLL_MS / 60_000}m`);
+      await sleep(QUOTA_POLL_MS);
+      continue;
     }
 
     // Budget gate — runs every cycle, can throttle or kill the loop.

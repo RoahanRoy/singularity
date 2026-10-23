@@ -11,10 +11,14 @@
 #   bash scripts/cloud-run.sh india prep|cycle|quant
 #
 # `cycle` exit codes: 0 ran · 3 market closed (stop for today) ·
-#                     4 subscription usage limit hit (stop for today) · other = failed
+#                     4 subscription usage limit or Appwrite quota guard hit (stop for today) ·
+#                     other = failed
 # `quant` exit codes: 0 every name fresh · 5 names left (run it again) ·
-#                     4 subscription usage limit hit (stop for today) ·
+#                     4 subscription usage limit or Appwrite quota guard hit (stop for today) ·
 #                     6 quant data hosts not allowlisted · other = failed
+#
+# The Appwrite quota guard (src/lib/appwrite/quota.ts) keeps the project under
+# the Free plan's monthly database reads/writes; it prints a "[quota]" line.
 #
 # One-time setup of the cloud environment (claude.ai → Code → environment settings):
 #   network access  Custom, keep the default list, and add www.sec.gov data.sec.gov
@@ -93,8 +97,11 @@ case "$step" in
     env "${prefix}_ONCE=1" npx tsx "scripts/agents/${loop}.ts" >"$log" 2>&1
     rc=$?
     # Keep the routine transcript short: the ticker header, decisions, problems.
-    grep -E "^=== |^\[(trade|memo|alert|handoff)\]|[Ee]rror|failed" "$log" | head -40
+    grep -E "^=== |^\[(trade|memo|alert|handoff|quota)\]|[Ee]rror|failed" "$log" | head -40
     echo "--- last lines ---"; tail -5 "$log"
+    if grep -q "^\[quota\]" "$log"; then
+      echo "[cloud] Appwrite quota guard: stop for today"; exit 4
+    fi
     if grep -qiE "usage limit|limit reached" "$log"; then
       echo "[cloud] subscription usage limit reached: stop for today"; exit 4
     fi
@@ -115,7 +122,7 @@ case "$step" in
     fi
     MERIDIAN_QUANT=1 MERIDIAN_QUANT_SWEEP_MARKETS="$market" \
     MERIDIAN_QUANT_SWEEP_BUDGET_MS="${MERIDIAN_QUANT_SWEEP_BUDGET_MS:-480000}" \
-      npx tsx scripts/agents/quant-sweep.ts 2>&1 | grep -E "^\[sweep\]|^=== |[Ee]rror" | tail -30
+      npx tsx scripts/agents/quant-sweep.ts 2>&1 | grep -E "^\[(sweep|quota)\]|^=== |[Ee]rror" | tail -30
     exit "${PIPESTATUS[0]}"
     ;;
   *) echo "usage: $0 us|india prep|cycle|quant" >&2; exit 64 ;;

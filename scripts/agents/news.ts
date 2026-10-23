@@ -17,7 +17,7 @@
  *   MERIDIAN_NEWS_PER_TICKER     max items kept per ticker per pass (default 5)
  */
 import { createHash } from "node:crypto";
-import { db, DB, ID } from "./appwrite";
+import { db, DB, ID, quotaCheck } from "./appwrite";
 import { FULL_UNIVERSE, INDIA_UNIVERSE } from "./universe";
 
 const ONCE = process.env.MERIDIAN_NEWS_ONCE === "1";
@@ -161,6 +161,11 @@ async function pass(): Promise<void> {
     let refused: string[] = [];
     while (tickers.length) {
       if (stopping) return;
+      const quota = await quotaCheck();
+      if (!quota.ok) {
+        console.log(`[quota] Appwrite usage limit reached (${quota.reason}): ending the pass`);
+        return;
+      }
       const ticker = tickers.shift()!;
       try {
         const items = useYahoo ? await fetchYahooNews(ticker) : await fetchTickerNews(ticker, market);

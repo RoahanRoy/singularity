@@ -15,7 +15,8 @@
  *
  * Run: npm run agents:quant
  *
- * Exit codes: 0 every name fresh · 4 subscription usage limit hit ·
+ * Exit codes: 0 every name fresh · 4 subscription usage limit or the Appwrite
+ *             quota guard (quota.ts) hit ·
  *             5 time budget used up with names still stale (run again)
  *
  * Env knobs:
@@ -25,7 +26,7 @@
  *   MERIDIAN_QUANT_SWEEP_LIMIT       at most this many names per run
  *   MERIDIAN_QUANT_LLM_MAX_AGE_H     LLM report reuse window (default here 168)
  */
-import { db, DB, Query, recountClusters } from "./appwrite";
+import { db, DB, Query, recountClusters, quotaCheck, flushQuota } from "./appwrite";
 import { coverageTickers, type Market } from "./coverage";
 import { bootstrapQuant, quantDesk, quantUsageLimitHit } from "./quant-nodes";
 import { sectorOf, indiaSectorOf } from "./universe";
@@ -99,6 +100,11 @@ async function main(): Promise<number> {
     return 0;
   }
   const t0 = Date.now();
+  let quota = await quotaCheck();
+  if (!quota.ok) {
+    console.log(`[quota] Appwrite usage limit reached (${quota.reason}): stop for today`);
+    return 4;
+  }
   const { jobs, fresh } = await plan();
   console.log(`[sweep] ${MARKETS.join("+")}: ${jobs.length} stale · ${fresh} fresh (< ${MAX_AGE_MS / 3_600_000}h)`);
   if (!jobs.length) return 0;
@@ -114,6 +120,7 @@ async function main(): Promise<number> {
     const avg = durations.length ? durations.reduce((s, x) => s + x, 0) / durations.length : 0;
     if (BUDGET_MS && Date.now() - t0 + avg > BUDGET_MS) break;
     if (quantUsageLimitHit()) break;
+    if (!(quota = await quotaCheck()).ok) break;
 
     const s = Date.now();
     const sector = job.market === "IN" ? indiaSectorOf(job.ticker) : sectorOf(job.ticker);
@@ -132,10 +139,17 @@ async function main(): Promise<number> {
     console.log("[sweep] subscription usage limit reached: stop for today");
     return 4;
   }
+  if (!quota.ok) {
+    console.log(`[quota] Appwrite usage limit reached (${quota.reason}): stop for today`);
+    return 4;
+  }
   return left > 0 ? 5 : 0;
 }
 
-main().then((code) => process.exit(code), (e) => {
+main().then(async (code) => {
+  await flushQuota();
+  process.exit(code);
+}, (e) => {
   console.error(e);
   process.exit(1);
 });

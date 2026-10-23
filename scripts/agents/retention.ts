@@ -13,7 +13,7 @@
  *
  * Run: npm run agents:retention [-- --apply]
  */
-import { db, DB, Query } from "./appwrite";
+import { db, DB, Query, flushQuota } from "./appwrite";
 
 const APPLY = process.argv.includes("--apply");
 const DETAIL_D = Number(process.env.MERIDIAN_RETAIN_QUANT_DETAIL_D || 14);
@@ -41,7 +41,10 @@ async function main() {
   if (!APPLY && detail + head) console.log("[retention] dry run: pass --apply to delete");
 }
 
-main().then(() => process.exit(0), (e) => {
+main().then(async () => {
+  await flushQuota();
+  process.exit(0);
+}, (e) => {
   console.error(e);
   process.exit(1);
 });
