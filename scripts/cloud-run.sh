@@ -18,7 +18,8 @@
 #
 # One-time setup of the cloud environment (claude.ai → Code → environment settings):
 #   network access  Custom, keep the default list, and add www.sec.gov data.sec.gov
-#                   www.nseindia.com news.google.com query1.finance.yahoo.com
+#                   www.nseindia.com nsearchives.nseindia.com (results PDFs)
+#                   news.google.com query1.finance.yahoo.com
 #                   fra.cloud.appwrite.io singularity-gules-ten.vercel.app
 #                   (quant desk: also query2.finance.yahoo.com
 #                   fc.yahoo.com fred.stlouisfed.org mba.tuck.dartmouth.edu cdn-api.cboe.com)

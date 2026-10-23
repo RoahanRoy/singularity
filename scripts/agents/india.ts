@@ -20,6 +20,7 @@
  * (edgarReader, ingest) treat a throw as "no live data" and fall back to the
  * LLM-only brief, so the desk degrades gracefully instead of collapsing.
  */
+import { extractText, getDocumentProxy } from "unpdf";
 import { EdgarFiling } from "./edgar";
 
 const NSE_HOME = "https://www.nseindia.com";
@@ -152,6 +153,47 @@ function materiality(desc: string): number {
   return 30;
 }
 
+/** Figures as results statements print them: 1,54,034 · 30,622.84 · 18% */
+const FIGURE = /\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+\.\d{2}\b|\d+(?:\.\d+)?\s?%/g;
+/** A results PDF with fewer figures than this is scanned images or a cover letter. */
+const MIN_FIGURES = 40;
+/** Results older than this are no longer a read on the business. */
+const RESULTS_MAX_AGE_DAYS = 200;
+
+/** Filers post results as "Financial Results" or inside an "Outcome of Board Meeting". */
+const mayHoldResults = (a: NseAnnouncement): boolean =>
+  /financial result|outcome of board/i.test(a.desc ?? "") || /financial results for the/i.test(a.attchmntText ?? "");
+
+/**
+ * The figures in a results announcement's PDF: the slice of its text densest
+ * in numbers, starting just above a statement line so the period headings come
+ * along. Null when the PDF is gone, scanned (no text layer) or unreadable.
+ */
+async function resultsExcerpt(url: string, chars: number): Promise<string | null> {
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": NSE_UA }, signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) return null;
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (new TextDecoder().decode(buf.slice(0, 4)) !== "%PDF") return null;
+    const { text } = await extractText(await getDocumentProxy(buf), { mergePages: true });
+    // Some filers' PDFs space out digit groups ("5 , 75 , 612").
+    const flat = text.replace(/\s+/g, " ").replace(/(\d) , (?=\d)/g, "$1,");
+    const starts = [0];
+    for (const m of flat.matchAll(/revenue from operations|total income|interest earned/gi)) {
+      starts.push(Math.max(0, m.index - 400));
+    }
+    let best = 0;
+    let bestCount = 0;
+    for (const s of starts) {
+      const count = flat.slice(s, s + chars).match(FIGURE)?.length ?? 0;
+      if (count > bestCount) [best, bestCount] = [s, count];
+    }
+    return bestCount >= MIN_FIGURES ? flat.slice(best, best + chars) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Fetch recent corporate announcements for an NSE-listed symbol and return a
  * DIGEST in the same shape edgarReader produces, so the downstream
@@ -238,11 +280,25 @@ export async function fetchLatestIndiaFiling(ticker: string, excerptChars = 1200
     })
     .join("\n");
 
-  const excerpt =
-    `[NSE corporate-announcements digest — ${symbol}]\n${industryLine}Most material recent disclosures:\n${lines}`.slice(
-      0,
-      excerptChars,
-    );
+  const digest = `[NSE corporate-announcements digest — ${symbol}]\n${industryLine}Most material recent disclosures:\n${lines}`;
+
+  // A results announcement's text only says results were filed; the numbers
+  // are in its PDF. Follow the digest with the latest results' figures, trying
+  // the newest few candidates (a board outcome may be only a dividend notice).
+  const lead = digest.slice(0, 4000);
+  const candidates = annc
+    .filter((a) => mayHoldResults(a) && a.attchmntFile)
+    .filter((a) => Date.now() - Date.parse(toIsoDate(a.an_dt || a.sort_date)) <= RESULTS_MAX_AGE_DAYS * 86_400_000)
+    .slice(0, 3);
+  let results: NseAnnouncement | undefined;
+  let figures: string | null = null;
+  for (const a of candidates) {
+    figures = await resultsExcerpt(a.attchmntFile!, excerptChars - lead.length - 100);
+    if (figures) { results = a; break; }
+  }
+  const excerpt = results
+    ? `${lead}\n\n[Financial results filed ${toIsoDate(results.an_dt || results.sort_date)}, from the attached PDF]\n${figures}`
+    : digest.slice(0, excerptChars);
 
   return {
     ticker: symbol,
@@ -250,7 +306,7 @@ export async function fetchLatestIndiaFiling(ticker: string, excerptChars = 1200
     form_type: "NSE-ANNC",
     filed_at: toIsoDate(top.an_dt || top.sort_date),
     source_url: `${NSE_HOME}/companies-listing/corporate-filings-announcements?symbol=${encodeURIComponent(symbol)}`,
-    primary_doc_url: top.attchmntFile || "nse-announcement://no-attachment",
+    primary_doc_url: (results ?? top).attchmntFile || "nse-announcement://no-attachment",
     raw_excerpt: excerpt,
     industry: industry || undefined,
   };
