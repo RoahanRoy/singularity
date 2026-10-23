@@ -5,7 +5,7 @@
 # Every step is a separate short command so none outlives the sandbox's
 # per-command timeout:
 #
-#   bash scripts/cloud-run.sh us prep      deps, Appwrite check, news + filings sweep, retention
+#   bash scripts/cloud-run.sh us prep      deps, Appwrite check, Horizon book sync, news + filings sweep, retention
 #   bash scripts/cloud-run.sh us cycle     one analyst-chain cycle on the US desk
 #   bash scripts/cloud-run.sh us quant     ~8 min of the daily quant sweep
 #   bash scripts/cloud-run.sh india prep|cycle|quant
@@ -24,6 +24,8 @@
 #                   fc.yahoo.com fred.stlouisfed.org mba.tuck.dartmouth.edu cdn-api.cboe.com)
 #   network secret  host fra.cloud.appwrite.io, header X-Appwrite-Key, value = the
 #                   APPWRITE_API_KEY from .env.local (the key never enters the session)
+#   network secret  host singularity-gules-ten.vercel.app, header Authorization,
+#                   value = "Bearer " + the CRON_SECRET from .env.local (Horizon book sync)
 #
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -67,6 +69,14 @@ case "$step" in
       exit 2
     fi
     echo "[cloud] appwrite ok"
+    # Re-pull the real book from Horizon so the sweeps below cover today's holdings.
+    # The proxy attaches the app's bearer (network secret above). Best-effort.
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 -X POST "$MERIDIAN_SYNC_BASE/api/horizon/sync")
+    case "$code" in
+      200) echo "[cloud] horizon sync ok" ;;
+      401) echo "[cloud] horizon sync unauthorised: check the Authorization network secret (continuing)" >&2 ;;
+      *)   echo "[cloud] horizon sync failed: HTTP $code (continuing)" >&2 ;;
+    esac
     MERIDIAN_NEWS_ONCE=1 MERIDIAN_NEWS_MARKETS="$market" npx tsx scripts/agents/news.ts 2>&1 | grep -v "^\[dotenv" | tail -4
     MERIDIAN_INGEST_ONCE=1 npx tsx scripts/agents/ingest-held.ts 2>&1 | grep -v "^\[dotenv" | tail -6
     # Trim old quant_reports so the Free plan's 2 GB storage never fills.
