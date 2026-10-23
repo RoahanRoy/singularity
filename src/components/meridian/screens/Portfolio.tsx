@@ -6,6 +6,7 @@ import { useMarket } from "../MarketContext";
 import { IbkrAccountsPanel } from "../IbkrAccounts";
 import { FundMandatePanel } from "../FundMandate";
 import { HorizonSourcePanel, useHorizonStatus } from "../HorizonSource";
+import { BenchmarkPanel } from "../Benchmark";
 import { fmtMoney, fmtFullMoney } from "@/lib/meridian/format";
 import { operatorFetch } from "@/lib/auth/operator-fetch";
 import {
@@ -775,6 +776,15 @@ export function PortfolioScreen() {
           </div>
         </div>
       </div>
+
+      <Panel
+        title={`Book vs ${market === "IN" ? "Nifty 50" : "S&P 500"}`}
+        meta="the index to beat · current holdings"
+        className="span-col-2"
+        bodyClassName="tight"
+      >
+        <BenchmarkPanel positions={positions} market={market} />
+      </Panel>
 
       <Panel title="Factor Exposures · Net" meta="weighted across book" bodyClassName="tight">
         <Exposures positions={positions} />
