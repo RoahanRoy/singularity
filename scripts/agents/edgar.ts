@@ -108,11 +108,11 @@ async function findPressReleaseUrl(cik: string, accNoDashes: string): Promise<st
     const data = (await res.json()) as { directory: { item: { name: string; type?: string }[] } };
     const items = data.directory.item ?? [];
     // Prefer EX-99.1 specifically, then any ex99, then anything that looks like a press release.
-    // Filers spell the exhibit many ways: ex99-1, ex991, exh9901, exhibit991.
+    // Filers spell the exhibit many ways: ex99-1, ex991, exh9901, exhibit991, ex99d1.
     const score = (name: string) => {
       const n = name.toLowerCase();
       if (!/\.html?$/.test(n) || /^r\d+\.htm|index/.test(n)) return 0;
-      if (/ex(h|hibit)?[-_]?99[._-]?0?1(?!\d)/.test(n)) return 100;
+      if (/ex(h|hibit)?[-_]?99[._d-]?0?1(?!\d)/.test(n)) return 100;
       if (/ex(h|hibit)?[-_]?99/.test(n)) return 80;
       if (/press[-_]?release|earnings/.test(n)) return 60;
       return 0;
@@ -176,6 +176,24 @@ function extractMeaningfulExcerpt(text: string, formType: string, chars: number)
   return text.slice(best, best + chars);
 }
 
+/**
+ * The Item sections of an 8-K's primary doc, from the first "Item N.NN" to the
+ * signature block, without the exhibit index. Empty if no Item heading is found.
+ */
+function eightKItems(text: string): string {
+  const start = text.search(/\bItem\s*\d\.\d{2}\b/i);
+  if (start < 0) return "";
+  const body = text.slice(start);
+  const end = body.search(/\bSIGNATURES?\b|\bExhibit\s+(No\.|Number)/i);
+  return (end > 0 ? body.slice(0, end) : body).trim();
+}
+
+async function fetchDocText(url: string): Promise<string> {
+  const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
+  if (!res.ok) throw new Error(`SEC doc ${url} → ${res.status}`);
+  return stripHtml(await res.text());
+}
+
 /** Strip HTML/tags down to plaintext. Crude but enough for an excerpt. */
 function stripHtml(html: string): string {
   return html
@@ -227,18 +245,25 @@ export async function fetchLatestFiling(ticker: string, excerptChars = 12000): P
   const baseUrl = `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${accNoDashes}`;
   const indexUrl = `${baseUrl}/${accession}-index.htm`;
 
-  // For 8-K, prefer the press release exhibit — primary doc is usually a
-  // 200-word Item 2.02 cover with no narrative.
   let docUrl = `${baseUrl}/${primaryDoc}`;
-  if (form === "8-K") {
-    const pr = await findPressReleaseUrl(cik, accNoDashes);
-    if (pr) docUrl = pr;
-  }
+  const text = await fetchDocText(docUrl);
+  let excerpt = extractMeaningfulExcerpt(text, form, excerptChars);
 
-  const docRes = await fetch(docUrl, { headers: { "User-Agent": USER_AGENT } });
-  if (!docRes.ok) throw new Error(`SEC doc ${docUrl} → ${docRes.status}`);
-  const html = await docRes.text();
-  const text = stripHtml(html);
+  // An 8-K's primary doc is a short cover whose Item text says what happened
+  // (results, a director elected, a deal); the detail sits in the press-release
+  // exhibit. Lead with the Item text, then fill the rest from the exhibit.
+  if (form === "8-K") {
+    const items = eightKItems(text);
+    const pr = await findPressReleaseUrl(cik, accNoDashes);
+    const prText = pr ? await fetchDocText(pr).catch(() => "") : "";
+    if (prText) {
+      docUrl = pr!;
+      const lead = items.slice(0, 3000);
+      excerpt = [lead, extractMeaningfulExcerpt(prText, form, excerptChars - lead.length)].filter(Boolean).join("\n\n[Exhibit 99]\n");
+    } else if (items) {
+      excerpt = items.slice(0, excerptChars);
+    }
+  }
 
   return {
     ticker,
@@ -247,6 +272,6 @@ export async function fetchLatestFiling(ticker: string, excerptChars = 12000): P
     filed_at: filedAt,
     source_url: indexUrl,
     primary_doc_url: docUrl,
-    raw_excerpt: extractMeaningfulExcerpt(text, form, excerptChars),
+    raw_excerpt: excerpt,
   };
 }
