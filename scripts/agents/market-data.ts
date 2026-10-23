@@ -532,6 +532,8 @@ export type CompanyProfile = {
   /** Rating and price-target changes over the last year, newest first. */
   ratingChanges: RatingChange[];
   epsTrend: EpsTrend | null;
+  /** Consensus revenue growth (decimal) for the current and next fiscal year. */
+  revenueGrowth: { current: number | null; next: number | null } | null;
   epsRevisions: { up30: number; down30: number } | null;
   /** Reported vs consensus EPS, oldest first. */
   earnings: EarningsQuarter[];
@@ -587,6 +589,8 @@ export function parseProfile(symbol: string, qs: Obj, now = new Date()): Company
   const epsCurrent = num(et?.current);
   const epsTrend: EpsTrend | null = epsCurrent == null ? null : { current: epsCurrent, d30: num(et?.["30daysAgo"]) ?? undefined, d90: num(et?.["90daysAgo"]) ?? undefined };
   const up30 = num(rv?.upLast30days), down30 = num(rv?.downLast30days);
+  const revGrowth = (period: string) => num(obj(trends.find((t) => t?.period === period)?.revenueEstimate)?.growth);
+  const revCurrent = revGrowth("0y"), revNext = revGrowth("+1y");
 
   const earnings: EarningsQuarter[] = arr(obj(qs.earningsHistory)?.history)
     .flatMap((x) => {
@@ -666,6 +670,7 @@ export function parseProfile(symbol: string, qs: Obj, now = new Date()): Company
     },
     ratingChanges,
     epsTrend,
+    revenueGrowth: revCurrent != null || revNext != null ? { current: revCurrent, next: revNext } : null,
     epsRevisions: up30 != null && down30 != null ? { up30, down30 } : null,
     earnings,
     insiders,

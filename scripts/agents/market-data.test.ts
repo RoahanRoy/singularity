@@ -94,7 +94,7 @@ test("profile: short interest, a year of rating changes, open-market insiders on
         { epochGradeDate: sec("2026-08-01T00:00:00Z"), firm: "Same", action: "main", priceTargetAction: "Maintains", currentPriceTarget: 90, priorPriceTarget: 100 },
       ],
     },
-    earningsTrend: { trend: [{ period: "0q", epsTrend: { current: { raw: 1 } } }, { period: "0y", epsTrend: { current: { raw: 6 }, "30daysAgo": { raw: 5.9 }, "90daysAgo": { raw: 5.7 } }, epsRevisions: { upLast30days: { raw: 3 }, downLast30days: { raw: 1 } } }] },
+    earningsTrend: { trend: [{ period: "0q", epsTrend: { current: { raw: 1 } } }, { period: "0y", epsTrend: { current: { raw: 6 }, "30daysAgo": { raw: 5.9 }, "90daysAgo": { raw: 5.7 } }, epsRevisions: { upLast30days: { raw: 3 }, downLast30days: { raw: 1 } }, revenueEstimate: { growth: { raw: 0.06 } } }, { period: "+1y", revenueEstimate: { growth: { raw: 0.08 } } }] },
     earningsHistory: { history: [{ quarter: { fmt: "2026-06-30" }, epsActual: { raw: 1.2 }, epsEstimate: { raw: 1 } }, { quarter: { fmt: "2026-03-31" }, epsActual: { raw: 1 }, epsEstimate: { raw: 1.1 } }, { quarter: { fmt: "2025-12-31" }, epsActual: null, epsEstimate: { raw: 1 } }] },
     insiderTransactions: {
       transactions: [
@@ -115,6 +115,7 @@ test("profile: short interest, a year of rating changes, open-market insiders on
   assert.deepEqual(p.ratingChanges.map((r) => [r.firm, r.action, r.priceTarget]), [["New Firm", "up", "raise"], ["Old Firm", "main", "raise"], ["Same", "main", null]]);
   assert.deepEqual(p.epsTrend, { current: 6, d30: 5.9, d90: 5.7 }, "the fiscal-year trend, not the quarter's");
   assert.deepEqual(p.epsRevisions, { up30: 3, down30: 1 });
+  assert.deepEqual(p.revenueGrowth, { current: 0.06, next: 0.08 });
   assert.deepEqual(p.earnings.map((e) => e.date), ["2026-03-31", "2026-06-30"]);
   assert.deepEqual([p.insiders?.buys, p.insiders?.sells, p.insiders?.netShares], [1, 1, 600], "the grant and the stale purchase are ignored");
   assert.equal(p.nextEarningsDate, "2026-10-30");

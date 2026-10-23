@@ -82,25 +82,30 @@ export function gordonDdm(i: { d0: number; g: number; r: number }): { value: num
 }
 
 /**
- * Residual income: Value = B₀ + Σ (ROEₜ − r)·Bₜ₋₁ / (1 + r)ᵗ.
- * ROE fades linearly from `roe` to r over `years` (so residual income → 0 and
- * no terminal value is needed); book grows by clean surplus Bₜ = Bₜ₋₁(1 + ROEₜ(1 − payout)).
+ * Residual income: Value = B₀ + Σ (ROEₜ − r)·Bₜ₋₁ / (1 + r)ᵗ + TV.
+ * ROE fades linearly from `roe` to `longRunRoe` (default r) over `years`; book
+ * grows by clean surplus Bₜ = Bₜ₋₁(1 + ROEₜ(1 − payout)). With a terminal growth
+ * the year-n+1 residual income continues as a Gordon perpetuity
+ * TV = RIₙ₊₁ / (r − g); without one (or with ROE fading to r) it stops at year n.
  */
-export function residualIncome(i: { book0: number; roe: number; r: number; payout: number; years?: number }) {
+export function residualIncome(i: { book0: number; roe: number; r: number; payout: number; years?: number; longRunRoe?: number; terminalGrowth?: number }) {
   const years = i.years ?? 10;
   if (!(i.book0 > 0)) return null;
+  const end = i.longRunRoe ?? i.r;
   let b = i.book0;
   let pv = 0;
   const rows: { t: number; roe: number; book: number; ri: number; pv: number }[] = [];
   for (let t = 1; t <= years; t++) {
-    const roeT = i.roe + ((i.r - i.roe) * (t - 1)) / Math.max(1, years - 1);
+    const roeT = i.roe + ((end - i.roe) * (t - 1)) / Math.max(1, years - 1);
     const ri = (roeT - i.r) * b;
     const pvT = ri / Math.pow(1 + i.r, t);
     pv += pvT;
     rows.push({ t, roe: roeT, book: b, ri, pv: pvT });
     b = b * (1 + roeT * (1 - clamp(i.payout, 0, 1)));
   }
-  return { value: i.book0 + pv, pvResidualIncome: pv, rows };
+  const g = i.terminalGrowth;
+  const pvTerminal = isNum(g) && i.r > g ? ((end - i.r) * b) / (i.r - g) / Math.pow(1 + i.r, years) : 0;
+  return { value: i.book0 + pv + pvTerminal, pvResidualIncome: pv, pvTerminal, rows };
 }
 
 /** Linear fade from `start` to `end` across `years` (year 1 = start, year n = end). */
@@ -152,10 +157,16 @@ export type ValuationAssumptions = {
   maxStableGrowth: number;
 };
 
+/**
+ * ERPs follow Damodaran's implied (not historical) premiums. US: the implied
+ * S&P 500 premium has sat around 4–4.6% since 2022. India: a mature 4.3–4.5%
+ * plus a country premium of ~3%, less the ~2% sovereign default spread that the
+ * rupee 10-year (the rf here) already carries, so country risk is counted once.
+ */
 export function defaultAssumptions(market: Market, rf: number, rfSource: string): ValuationAssumptions {
   return market === "IN"
-    ? { market, rf, rfSource, erp: 0.07, terminalGrowth: 0.05, statutoryTax: 0.2517, maxStableGrowth: 0.07 }
-    : { market, rf, rfSource, erp: 0.05, terminalGrowth: 0.025, statutoryTax: 0.21, maxStableGrowth: 0.04 };
+    ? { market, rf, rfSource, erp: 0.055, terminalGrowth: 0.05, statutoryTax: 0.2517, maxStableGrowth: 0.07 }
+    : { market, rf, rfSource, erp: 0.045, terminalGrowth: 0.025, statutoryTax: 0.21, maxStableGrowth: 0.04 };
 }
 
 // ── Inputs from normalized fundamentals ─────────────────────────────────────
@@ -197,8 +208,13 @@ function effectiveTax(rows: readonly FinRow[], fallback: number): { rate: number
   return { rate: clamp(median(rates), 0, 0.35), source: `median effective rate, last ${rates.length}y` };
 }
 
-/** Per-share and balance-sheet facts in the listing currency. */
-export function snapshot(f: Fundamentals, price: number, a: ValuationAssumptions, fx = 1, sharesHint?: number): CompanySnapshot | null {
+/**
+ * Per-share and balance-sheet facts in the listing currency. `tangible` puts
+ * book (and so ROE and P/B) on tangible equity: the basis for banks and
+ * insurers, whose acquisition goodwill earns nothing a lender can lend against
+ * (HDFC Bank carries ~₹3 lakh crore of it from the HDFC Ltd merger).
+ */
+export function snapshot(f: Fundamentals, price: number, a: ValuationAssumptions, fx = 1, sharesHint?: number, opts: { tangible?: boolean } = {}): CompanySnapshot | null {
   const shares = latestBalance(f, "sharesOutstanding") ?? ttmOrAnnual(f, "dilutedShares") ?? sharesHint;
   if (!isNum(shares) || shares <= 0 || !(price > 0)) return null;
   const x = (v: number | undefined) => (isNum(v) ? v * fx : undefined);
@@ -206,15 +222,17 @@ export function snapshot(f: Fundamentals, price: number, a: ValuationAssumptions
   const ebit = x(ttmOrAnnual(f, "ebit") ?? ttmOrAnnual(f, "operatingIncome"));
   const ebitda = x(ttmOrAnnual(f, "ebitda"));
   const netIncome = x(ttmOrAnnual(f, "netIncome"));
-  const equity = x(latestBalance(f, "equity"));
+  const tbv = opts.tangible ? latestBalance(f, "tangibleBook") : undefined;
+  const bookField = isNum(tbv) && tbv > 0 ? "tangibleBook" : "equity";
+  const equity = x(latestBalance(f, bookField));
   const totalDebt = x(latestBalance(f, "totalDebt")) ?? 0;
   const cash = x(latestBalance(f, "cashAndSti") ?? latestBalance(f, "cash")) ?? 0;
   const dividendsPaid = x(ttmOrAnnual(f, "dividendsPaid"));
   const marketCap = price * shares;
   const netDebt = totalDebt - cash;
   // ROE on average equity: the latest balance and the one ~a year earlier.
-  const eqRow = newestRowWith(f, "equity");
-  const eqPrev = eqRow ? x(valueNear([...f.annual, ...f.quarterly], "equity", Date.parse(eqRow.asOf) - 365 * DAY_MS)) : undefined;
+  const eqRow = newestRowWith(f, bookField);
+  const eqPrev = eqRow ? x(valueNear([...f.annual, ...f.quarterly], bookField, Date.parse(eqRow.asOf) - 365 * DAY_MS)) : undefined;
   const avgEquity = isNum(equity) ? (isNum(eqPrev) && eqPrev > 0 ? (equity + eqPrev) / 2 : equity) : undefined;
   const tax = effectiveTax(f.annual, a.statutoryTax);
   return {
@@ -267,6 +285,27 @@ export function revenueCagr(f: Fundamentals, years = 3): number | null {
   return Math.pow(end / start, 1 / span) - 1;
 }
 
+export type GrowthHint = { value: number; source: string };
+
+/**
+ * Stage-one revenue growth for the DCF: the consensus for this and next fiscal
+ * year when analysts publish one (the market prices forward growth, not the
+ * trailing three years), else the 3y revenue CAGR. A consensus more than 10
+ * points from the CAGR is held to that band: thin Indian coverage and fiscal-year
+ * mismatches produce estimates like +30% for a company growing at 8%.
+ */
+export function growthHint(f: Fundamentals, consensus: { current: number | null; next: number | null } | null | undefined): GrowthHint | null {
+  const cagr = revenueCagr(f, 3);
+  const est = [consensus?.current, consensus?.next].filter(isNum);
+  if (est.length) {
+    const mean = est.reduce((a, b) => a + b, 0) / est.length;
+    const source = `consensus revenue growth (${est.length === 2 ? "this and next FY" : "one FY"})`;
+    if (!isNum(cagr) || Math.abs(mean - cagr) <= 0.1) return { value: mean, source };
+    return { value: clamp(mean, cagr - 0.1, cagr + 0.1), source: `${source}, held within 10pp of the 3y CAGR` };
+  }
+  return isNum(cagr) ? { value: cagr, source: "3y revenue CAGR" } : null;
+}
+
 // ── Model results ───────────────────────────────────────────────────────────
 
 export type ModelValue = {
@@ -279,8 +318,6 @@ export type ModelValue = {
   high?: number;
   detail?: Record<string, unknown>;
 };
-
-export type GrowthHint = { value: number; source: string };
 
 /**
  * Two-stage FCFF DCF: revenue grows at the hint for two years, fades linearly
@@ -424,11 +461,19 @@ export function ddmModel(f: Fundamentals, s: CompanySnapshot, coc: CostOfCapital
   };
 }
 
-/** Residual income — the primary model for banks and insurers. Low/high from r ± 1%. */
 /** Above this P/B, book is under 5% of price and residual income values the buyback history, not the business. */
 export const RI_MAX_PB = 20;
+/** The most ROE may exceed r in perpetuity: a 40% ROE does not stay 15 points above r forever. */
+export const RI_MAX_SPREAD = 0.05;
 
-export function residualIncomeModel(s: CompanySnapshot, coc: CostOfCapital): ModelValue {
+/**
+ * Residual income — the primary model for banks and insurers. Low/high from r ± 1%.
+ * ROE fades over ten years to r + ½(ROE − r), capped at r + RI_MAX_SPREAD, and
+ * that spread then persists at terminal growth: the same "advantage half-decays and stays" stance as the
+ * DCF's RONIC between WACC and 2×WACC. Fading all the way to r would value a
+ * franchise lender at little more than book.
+ */
+export function residualIncomeModel(s: CompanySnapshot, coc: CostOfCapital, a?: ValuationAssumptions): ModelValue {
   if (!isNum(s.bookPerShare) || s.bookPerShare <= 0) return { method: "residual_income", applicable: false, reason: "book value is zero or negative (buybacks/losses) — residual income needs positive book" };
   if (!isNum(s.roe)) return { method: "residual_income", applicable: false, reason: "no ROE" };
   const pb = s.price / s.bookPerShare;
@@ -437,15 +482,20 @@ export function residualIncomeModel(s: CompanySnapshot, coc: CostOfCapital): Mod
   }
   const roe = clamp(s.roe, -0.5, 0.6);
   const payout = isNum(s.payout) ? clamp(s.payout, 0, 1) : 0.3;
-  const base = residualIncome({ book0: s.bookPerShare, roe, r: coc.costOfEquity, payout });
-  const lo = residualIncome({ book0: s.bookPerShare, roe, r: coc.costOfEquity + 0.01, payout });
-  const hi = residualIncome({ book0: s.bookPerShare, roe, r: Math.max(0.01, coc.costOfEquity - 0.01), payout });
+  const run = (r: number) => residualIncome({
+    book0: s.bookPerShare as number, roe, r, payout,
+    longRunRoe: a ? r + Math.min(0.5 * (roe - r), RI_MAX_SPREAD) : undefined,
+    terminalGrowth: a ? Math.min(a.terminalGrowth, r - 0.01) : undefined,
+  });
+  const base = run(coc.costOfEquity);
+  const lo = run(coc.costOfEquity + 0.01);
+  const hi = run(Math.max(0.01, coc.costOfEquity - 0.01));
   if (!base) return { method: "residual_income", applicable: false, reason: "no book value" };
   return {
     method: "residual_income", applicable: base.value > 0, perShare: base.value,
     low: Math.min(lo?.value ?? base.value, hi?.value ?? base.value),
     high: Math.max(lo?.value ?? base.value, hi?.value ?? base.value),
-    detail: { book0: s.bookPerShare, roe, costOfEquity: coc.costOfEquity, payout, fadeYears: 10, pvResidualIncome: base.pvResidualIncome, roeClamped: roe !== s.roe },
+    detail: { book0: s.bookPerShare, roe, costOfEquity: coc.costOfEquity, payout, fadeYears: 10, pvResidualIncome: base.pvResidualIncome, pvTerminal: base.pvTerminal, roeClamped: roe !== s.roe },
   };
 }
 
@@ -467,7 +517,7 @@ export function computeMultiples(s: CompanySnapshot, epsGrowth: number | null): 
 }
 
 /** Own multiples at past fiscal year-ends: MarketCapₜ ≈ MarketCap_now · closeₜ / close_now (split-safe; ignores buybacks). */
-export function historicalMultiples(f: Fundamentals, s: CompanySnapshot, closeAt: (date: string) => number | null): Partial<Record<MultipleKey, number[]>> {
+export function historicalMultiples(f: Fundamentals, s: CompanySnapshot, closeAt: (date: string) => number | null, opts: { tangible?: boolean } = {}): Partial<Record<MultipleKey, number[]>> {
   const out: Partial<Record<MultipleKey, number[]>> = { pe: [], evEbitda: [], pb: [], ps: [] };
   for (const r of f.annual) {
     const c = closeAt(r.asOf);
@@ -477,7 +527,8 @@ export function historicalMultiples(f: Fundamentals, s: CompanySnapshot, closeAt
     const cash = (r.cashAndSti ?? r.cash ?? 0) * s.fx;
     if (isNum(r.netIncome) && r.netIncome > 0) out.pe!.push(mcap / (r.netIncome * s.fx));
     if (isNum(r.ebitda) && r.ebitda > 0) out.evEbitda!.push((mcap + debt - cash) / (r.ebitda * s.fx));
-    if (isNum(r.equity) && r.equity > 0) out.pb!.push(mcap / (r.equity * s.fx));
+    const book = opts.tangible && isNum(r.tangibleBook) ? r.tangibleBook : r.equity;
+    if (isNum(book) && book > 0) out.pb!.push(mcap / (book * s.fx));
     if (isNum(r.revenue) && r.revenue > 0) out.ps!.push(mcap / (r.revenue * s.fx));
   }
   return out;

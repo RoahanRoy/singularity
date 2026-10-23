@@ -31,7 +31,7 @@ import { forensic, growth, ratioHistory, screen, type ScreenResult } from "../..
 import { riskReport, type RiskReport } from "../../src/lib/quant/risk";
 import {
   blendValuation, computeMultiples, costOfCapital, dcfModel, ddmModel, defaultAssumptions, historicalMultiples,
-  relativeModel, residualIncomeModel, revenueCagr, snapshot,
+  growthHint, relativeModel, residualIncomeModel, revenueCagr, snapshot,
   type BlendResult, type CompanySnapshot, type CostOfCapital, type ModelValue, type Multiples, type RelativeRow, type ValuationAssumptions,
 } from "../../src/lib/quant/valuation";
 import { arimaReport, garchReport, kalmanTrendReport, markovSwitching, pairsScan, smoothingReport, type GarchReport, type OosScore, type RegimeReport } from "../../src/lib/quant/timeseries";
@@ -381,7 +381,7 @@ function ensureSnapshot(st: QuantState): CompanySnapshot | null {
   const b = st.bundle;
   const price = priceOf(st);
   if (!b.fundamentals || !b.fx || !isNum(price)) return null;
-  st.snapshot = snapshot(b.fundamentals, price, st.assumptions, b.fx.value, b.profile?.sharesOutstanding ?? undefined);
+  st.snapshot = snapshot(b.fundamentals, price, st.assumptions, b.fx.value, b.profile?.sharesOutstanding ?? undefined, { tangible: b.financial });
   return st.snapshot;
 }
 
@@ -562,11 +562,11 @@ const COMPUTE_AGENTS: Record<string, (st: QuantState) => AgentResult> = {
     if (!f) return skip("dcf-modeler", "no fundamentals");
     const s = ensureSnapshot(st), coc = ensureCoc(st);
     if (!s || !coc) return skip("dcf-modeler", b.fx ? "no price or share count" : "no FX rate between reporting and listing currency");
-    const g = revenueCagr(f, 3);
-    const mv = dcfModel(f, s, coc, st.assumptions, isNum(g) ? { value: g, source: "3y revenue CAGR" } : null, { financial: b.financial });
+    const mv = dcfModel(f, s, coc, st.assumptions, growthHint(f, b.profile?.revenueGrowth), { financial: b.financial });
     return valuationResult(st, "dcf-modeler", "DCF", mv, (m) => {
       const tv = detailNum(m, "tvShareOfEv");
-      return `WACC ${pc(coc.wacc)} (β ${fx2(coc.beta)}), g ${pc(st.assumptions.terminalGrowth)}${isNum(tv) ? `, TV ${pc(tv, 0)} of EV` : ""}`;
+      const g0 = detailNum(m, "growthStart");
+      return `WACC ${pc(coc.wacc)} (β ${fx2(coc.beta)}), growth ${pc(g0)} → ${pc(st.assumptions.terminalGrowth)}${isNum(tv) ? `, TV ${pc(tv, 0)} of EV` : ""}`;
     });
   },
 
@@ -582,8 +582,9 @@ const COMPUTE_AGENTS: Record<string, (st: QuantState) => AgentResult> = {
   "residual-income-modeler": (st) => {
     const s = ensureSnapshot(st), coc = ensureCoc(st);
     if (!s || !coc) return skip("residual-income-modeler", "no snapshot (price, shares or FX missing)");
-    const mv = residualIncomeModel(s, coc);
-    return valuationResult(st, "residual-income-modeler", "Residual income", mv, () => `ROE ${pc(s.roe)} vs r ${pc(coc.costOfEquity)}, book ${money(st, s.bookPerShare)}`);
+    const mv = residualIncomeModel(s, coc, st.assumptions);
+    const basis = st.bundle.financial ? "ROTE" : "ROE";
+    return valuationResult(st, "residual-income-modeler", "Residual income", mv, () => `${basis} ${pc(s.roe)} vs r ${pc(coc.costOfEquity)}, ${st.bundle.financial ? "tangible book" : "book"} ${money(st, s.bookPerShare)}`);
   },
 
   "multiples-analyst": (st) => {
@@ -597,11 +598,11 @@ const COMPUTE_AGENTS: Record<string, (st: QuantState) => AgentResult> = {
     for (const p of b.peers) {
       const pb = p.history?.bars;
       if (!p.fundamentals || !p.fx || !pb?.length) continue;
-      const ps = snapshot(p.fundamentals, pb[pb.length - 1].close, st.assumptions, p.fx.value);
+      const ps = snapshot(p.fundamentals, pb[pb.length - 1].close, st.assumptions, p.fx.value, undefined, { tangible: b.financial });
       if (ps) peerMultiples.push({ ticker: p.ticker, ...computeMultiples(ps, growth(p.fundamentals, 3).epsCagr) });
     }
     const own_bars = barsOf(st);
-    const hist = historicalMultiples(f, s, (d) => closeOnOrBefore(own_bars, d));
+    const hist = historicalMultiples(f, s, (d) => closeOnOrBefore(own_bars, d), { tangible: b.financial });
     const rel = relativeModel(s, own, peerMultiples, hist, epsG, { financial: b.financial });
     st.relativeRows = rel.rows;
     const pe = rel.rows.find((r) => r.multiple === "pe");

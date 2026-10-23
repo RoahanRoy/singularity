@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   fcff, capm, wacc, dcf, gordonDdm, residualIncome, terminalValue, fadePath, snapshot, defaultAssumptions,
   costOfCapital, dcfModel, ddmModel, residualIncomeModel, computeMultiples, relativeModel, impliedPrice,
-  blendValuation, verdictFor, historicalMultiples,
+  blendValuation, verdictFor, historicalMultiples, growthHint, RI_MAX_SPREAD,
 } from "./valuation";
 import type { Fundamentals } from "./types";
 
@@ -66,7 +66,7 @@ test("snapshot, cost of capital and the DCF model on a toy company", () => {
   close(s.taxRate, 40 / 190, 1e-9, "median of 21.05%, 21.05%, 20.87%");
   const coc = costOfCapital(s, a, 1.0);
   close(coc.beta, 1.0, 1e-12, "Blume(1) = 1");
-  close(coc.costOfEquity, 0.09, 1e-12);
+  close(coc.costOfEquity, 0.085, 1e-12, "rf 4% + implied ERP 4.5%");
   const m = dcfModel(toyCo, s, coc, a, { value: 0.1, source: "test" });
   assert.ok(m.applicable, m.reason);
   assert.ok(m.low! <= m.perShare! && m.perShare! <= m.high!, "base inside its sensitivity band");
@@ -81,7 +81,51 @@ test("snapshot, cost of capital and the DCF model on a toy company", () => {
   const ddm = ddmModel(toyCo, s, coc, a);
   assert.ok(ddm.applicable, ddm.reason);
   const ri = residualIncomeModel(s, coc);
-  assert.ok(ri.applicable && ri.perShare! > s.bookPerShare!, "ROE ≈ 19.7% > 9% ⇒ above book");
+  assert.ok(ri.applicable && ri.perShare! > s.bookPerShare!, "ROE ≈ 19.7% > 8.5% ⇒ above book");
+  const persistent = residualIncomeModel(s, coc, a);
+  assert.ok(persistent.perShare! > ri.perShare!, "a spread that persists is worth more than one that fades to zero");
+  assert.ok((persistent.detail as { pvTerminal: number }).pvTerminal > 0);
+});
+
+test("residual income: a persistent spread adds a terminal value, capped for very high ROE", () => {
+  const faded = residualIncome({ book0: 50, roe: 0.18, r: 0.09, payout: 0.4 })!;
+  assert.equal(faded.pvTerminal, 0);
+  const kept = residualIncome({ book0: 50, roe: 0.18, r: 0.09, payout: 0.4, longRunRoe: 0.135, terminalGrowth: 0.025 })!;
+  const last = kept.rows.at(-1)!;
+  const b11 = last.book * (1 + 0.135 * 0.6);
+  close(kept.pvTerminal, ((0.135 - 0.09) * b11) / (0.09 - 0.025) / Math.pow(1.09, 10), 1e-9);
+  close(kept.value, 50 + kept.pvResidualIncome + kept.pvTerminal, 1e-9);
+
+  const a = defaultAssumptions("US", 0.04, "test");
+  const s = { ...snapshot(toyCo, 30, a)!, roe: 0.6 };
+  const coc = costOfCapital(s, a, 1.0);
+  const m = residualIncomeModel(s, coc, a);
+  const rows = (m.detail as { roe: number }).roe;
+  assert.equal(rows, 0.6);
+  const capped = residualIncome({ book0: s.bookPerShare!, roe: 0.6, r: coc.costOfEquity, payout: s.payout ?? 0.3, longRunRoe: coc.costOfEquity + RI_MAX_SPREAD, terminalGrowth: a.terminalGrowth })!;
+  close(m.perShare!, capped.value, 1e-9, "long-run ROE stops at r + RI_MAX_SPREAD");
+});
+
+test("financials value tangible book: goodwill is not lending capital", () => {
+  const bank: Fundamentals = { ...toyCo, annual: toyCo.annual.map((r) => ({ ...r, tangibleBook: r.equity! - 400 })) };
+  const a = defaultAssumptions("IN", 0.065, "test");
+  const plain = snapshot(bank, 30, a)!;
+  const tang = snapshot(bank, 30, a, 1, undefined, { tangible: true })!;
+  close(tang.bookPerShare!, 5.6, 1e-9);
+  close(tang.roe!, 181 / 520, 1e-9, "TTM NI over average tangible equity");
+  assert.ok(tang.roe! > plain.roe!);
+  const hist = historicalMultiples(bank, tang, () => 25, { tangible: true });
+  close(hist.pb!.at(-1)!, 2500 / 560, 1e-9);
+});
+
+test("growth hint prefers consensus, held near the trailing CAGR", () => {
+  const cagr = Math.pow(1210 / 1000, 1 / 2) - 1;
+  assert.deepEqual(growthHint(toyCo, null), { value: cagr, source: "3y revenue CAGR" });
+  const both = growthHint(toyCo, { current: 0.06, next: 0.08 })!;
+  close(both.value, 0.07, 1e-12);
+  assert.match(both.source, /this and next FY/);
+  close(growthHint(toyCo, { current: 0.3, next: null })!.value, cagr + 0.1, 1e-12, "a +30% estimate for a 10% grower");
+  assert.match(growthHint(toyCo, { current: 0.3, next: null })!.source, /held within 10pp/);
 });
 
 test("multiples, implied prices and the blend", () => {
