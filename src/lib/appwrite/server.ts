@@ -1,7 +1,9 @@
 import "server-only";
 import { cookies } from "next/headers";
+import { after } from "next/server";
 import { Client, Account, Databases, Storage, Users } from "node-appwrite";
 import { isOperatorEmail } from "@/lib/auth/allowlist";
+import { flushQuota, meterAppwrite } from "@/lib/appwrite/quota";
 
 const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!;
 const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!;
@@ -87,7 +89,12 @@ export function createAdminClient() {
   if (!apiKey) {
     throw new Error("APPWRITE_API_KEY is not set");
   }
-  const client = base().setKey(apiKey);
+  // Count its database requests against the Free plan, and save the counts
+  // once the response has gone out (no request scope, e.g. a script: skip).
+  const client = meterAppwrite(base().setKey(apiKey), DATABASE_ID);
+  try {
+    after(flushQuota);
+  } catch {}
   return {
     account: new Account(client),
     databases: new Databases(client),

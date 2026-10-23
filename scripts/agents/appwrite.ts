@@ -3,6 +3,7 @@
  */
 import dotenv from "dotenv";
 import { Client, Databases, ID, Query } from "node-appwrite";
+import { meterAppwrite } from "../../src/lib/appwrite/quota";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config(); // fall back to .env if .env.local missing
@@ -36,8 +37,11 @@ if (process.env.NODE_USE_ENV_PROXY === "1") {
     return req;
   };
 }
+// Count every database request against the Free plan (see quota.ts).
+meterAppwrite(client, DB);
 export const db = new Databases(client);
 export { ID, Query };
+export { quotaCheck, flushQuota } from "../../src/lib/appwrite/quota";
 
 export type Market = "US" | "IN";
 export type ClusterRef = { name: string; theme: string; market?: Market };
