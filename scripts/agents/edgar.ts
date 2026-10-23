@@ -108,12 +108,13 @@ async function findPressReleaseUrl(cik: string, accNoDashes: string): Promise<st
     const data = (await res.json()) as { directory: { item: { name: string; type?: string }[] } };
     const items = data.directory.item ?? [];
     // Prefer EX-99.1 specifically, then any ex99, then anything that looks like a press release.
+    // Filers spell the exhibit many ways: ex99-1, ex991, exh9901, exhibit991.
     const score = (name: string) => {
       const n = name.toLowerCase();
-      if (!/\.html?$/.test(n)) return 0;
-      if (/ex-?99[._-]?1\b/.test(n)) return 100;
-      if (/ex-?99/.test(n)) return 80;
-      if (/press[-_]?release/.test(n)) return 60;
+      if (!/\.html?$/.test(n) || /^r\d+\.htm|index/.test(n)) return 0;
+      if (/ex(h|hibit)?[-_]?99[._-]?0?1(?!\d)/.test(n)) return 100;
+      if (/ex(h|hibit)?[-_]?99/.test(n)) return 80;
+      if (/press[-_]?release|earnings/.test(n)) return 60;
       return 0;
     };
     const best = items
@@ -126,11 +127,19 @@ async function findPressReleaseUrl(cik: string, accNoDashes: string): Promise<st
   }
 }
 
+/** Dollar amounts, thousands-separated numbers and percentages. */
+const FIGURE = /\$\s?\d[\d,.]*|\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?\s?%/g;
+/** A slice with fewer figures than this is narrative or boilerplate. */
+const MIN_FIGURES = 40;
+
 /**
- * Carve a meaningful slice out of stripped 10-Q/10-K plaintext. Inline-XBRL
- * filings front-load tagging metadata; the first N chars are noise. We search
- * for section markers and slice from there. If nothing matches, we drop the
- * first quarter of the doc (almost always XBRL) and take from there.
+ * Carve a meaningful slice out of stripped filing plaintext. Inline-XBRL
+ * filings front-load tagging metadata, and a 10-Q's first section headings
+ * are its table of contents, so we look for section markers instead. The
+ * analyst needs figures: take the first candidate slice with enough of them
+ * (an MD&A that opens on forward-looking boilerplate falls through), else the
+ * one with the most. An 8-K exhibit has no XBRL preamble, so its opening is
+ * tried first; the last fallback skips the first quarter of the doc.
  */
 function extractMeaningfulExcerpt(text: string, formType: string, chars: number): string {
   const markers: RegExp[] = formType === "8-K"
@@ -146,15 +155,25 @@ function extractMeaningfulExcerpt(text: string, formType: string, chars: number)
         /financial highlights/i,
       ];
 
+  const starts: number[] = formType === "8-K" ? [0] : [];
   for (const re of markers) {
-    const m = text.match(re);
-    if (m && m.index !== undefined && m.index < text.length - 500) {
-      return text.slice(m.index, m.index + chars);
+    for (const m of text.matchAll(new RegExp(re.source, "gi"))) {
+      // Skip the table of contents: there the heading runs into its page
+      // number and the next item ("... Operations 34 Item 3."), with no prose.
+      if (/\b\d{1,3}\s+(item|part)\b/i.test(text.slice(m.index, m.index + 200))) continue;
+      if (m.index < text.length - 500) starts.push(m.index);
     }
   }
-  // Fallback: skip the first 25% (XBRL territory) and take from there.
-  const start = Math.min(Math.floor(text.length * 0.25), Math.max(0, text.length - chars));
-  return text.slice(start, start + chars);
+  starts.push(Math.min(Math.floor(text.length * 0.25), Math.max(0, text.length - chars)));
+
+  let best = starts[0];
+  let bestCount = -1;
+  for (const s of starts) {
+    const count = text.slice(s, s + chars).match(FIGURE)?.length ?? 0;
+    if (count >= MIN_FIGURES) return text.slice(s, s + chars);
+    if (count > bestCount) [best, bestCount] = [s, count];
+  }
+  return text.slice(best, best + chars);
 }
 
 /** Strip HTML/tags down to plaintext. Crude but enough for an excerpt. */
