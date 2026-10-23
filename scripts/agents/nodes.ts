@@ -673,6 +673,20 @@ export async function valuation(ctx: Ctx): Promise<Ctx> {
   return { ...ctx, valuation: v };
 }
 
+/** The committee's JSON, or null when it has no valid decision. Fills gaps in the rest. */
+function readIc(raw: string): NonNullable<Ctx["ic"]> | null {
+  const ic = extractJson<Partial<Record<keyof NonNullable<Ctx["ic"]>, unknown>>>(raw);
+  const decision = String(ic.decision ?? "").trim().toLowerCase();
+  if (decision !== "approve" && decision !== "reject" && decision !== "revise") return null;
+  return {
+    decision,
+    conviction: Number(ic.conviction) || 0,
+    target_weight_hint_pct: Number(ic.target_weight_hint_pct) || 0,
+    rationale: String(ic.rationale || "(no rationale given)"),
+    dissent: String(ic.dissent || "none stated"),
+  };
+}
+
 // 3c. CIO / Investment Committee --------------------------------------------
 //
 // The committee decision. Synthesizes the memo, the critic verdict, the
@@ -697,8 +711,22 @@ export async function cio(ctx: Ctx): Promise<Ctx> {
     ctx.quant ? `Quant desk facts:\n${ctx.quant.facts}` : "",
   ].join("\n");
 
-  const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg, label: `cio:${ctx.ticker}` });
-  const ic = extractJson<NonNullable<Ctx["ic"]>>(raw);
+  // An unparseable reply used to come back as {} and print "IC undefined". Ask
+  // once more for the bare JSON; if that fails too, stage it for the operator.
+  let raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg, label: `cio:${ctx.ticker}` });
+  let ic = readIc(raw);
+  if (!ic) {
+    console.warn(`[cio] ${ctx.ticker}: unreadable IC reply, retrying: ${raw.slice(0, 200).replace(/\s+/g, " ")}`);
+    raw = await ask({
+      model: prompt.meta.model, system: prompt.body, label: `cio:${ctx.ticker}:retry`,
+      user: `${userMsg}\n\nReply with only the JSON object in the output format, nothing else.`,
+    });
+    ic = readIc(raw) ?? {
+      decision: "revise", conviction: 0, target_weight_hint_pct: 0,
+      rationale: "The committee's reply was unreadable twice; staged for operator review.",
+      dissent: "none stated",
+    };
+  }
 
   await db.createDocument(DB, "governance_events", ID.unique(), {
     kind: ic.decision === "approve" ? "approval" : ic.decision === "reject" ? "block" : "policy_change",
