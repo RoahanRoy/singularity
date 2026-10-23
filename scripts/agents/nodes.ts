@@ -541,7 +541,7 @@ export async function quant(ctx: Ctx): Promise<Ctx> {
 
   // The quant desk already measured this name: pass its ensemble on as the
   // signal (no LLM). The prompt below is the fallback when that stage is off.
-  const ens = ctx.quant?.state.ensemble;
+  const ens = ctx.quant?.ensemble;
   if (ens) {
     await setStatus(id, "thinking");
     const voting = ens.inputs.filter((c) => c.score != null && c.weight > 0);

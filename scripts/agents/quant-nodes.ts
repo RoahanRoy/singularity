@@ -17,7 +17,10 @@
  * nodes read the stage's output from `ctx.quant`.
  *
  * Env knobs:
- *   MERIDIAN_QUANT=0              skip the stage (and don't create its agents)
+ *   MERIDIAN_QUANT=0              skip the stage (and don't create its agents);
+ *                                 the cycle reads the newest stored sweep instead
+ *   MERIDIAN_QUANT_STORED_MAX_AGE_H  how old that stored sweep may be (default
+ *                                 36; 0 runs the chain without quant facts)
  *   MERIDIAN_QUANT_LLM=0          skip the seven LLM agents (compute only)
  *   MERIDIAN_QUANT_SCREEN_GATE=0  report a failed screen but keep the cycle going
  *   MERIDIAN_QUANT_LLM_MAX_AGE_H  reuse an LLM agent's last report for the name
@@ -30,11 +33,12 @@ import { db, DB, ID, Query, emit, setStatus, ensureAgent, type ClusterRef } from
 import { sectorOf, indiaSectorOf, SECTOR_UNIVERSE, INDIA_SECTOR_UNIVERSE } from "./universe";
 import {
   QUANT_AGENTS, loadBundle, newState, runCompute, recordResult, skip, qualitativeFacts, normalizeTilts, llmScore,
-  dailyVar, factsSheet, compact,
+  dailyVar, factsSheet, storedFactsSheet, compact,
   type AgentResult, type AgentSpec, type QuantState, type Stage,
 } from "./quant-agents";
 import type { Sourced } from "../../src/lib/quant/types";
 import type { BlendResult } from "../../src/lib/quant/valuation";
+import type { EnsembleResult } from "../../src/lib/quant/ensemble";
 import type { Ctx } from "./nodes";
 
 const ENABLED = process.env.MERIDIAN_QUANT !== "0";
@@ -58,9 +62,11 @@ export type QuantCtx = {
   blend: BlendResult | null;
   /** Plain-text findings for the desk's LLM nodes; every line is computed. */
   facts: string;
+  ensemble: EnsembleResult | null;
   /** Set when the screen failed and the gate is on: the cycle stops here. */
   halted?: string;
-  state: QuantState;
+  /** The live stage's working state; absent when the hand-off was read back from a stored sweep. */
+  state?: QuantState;
 };
 
 // ── Roster: five clusters per desk ──────────────────────────────────────────
@@ -308,9 +314,13 @@ function peersFor(ticker: string, market: "US" | "IN", sector: keyof typeof SECT
  * unchanged, so the rest of the chain runs as it did before this stage.
  */
 export async function quantDesk(ctx: Ctx): Promise<Ctx> {
-  if (!ENABLED) return ctx;
   const market = ctx.market ?? "US";
   const ticker = ctx.ticker.toUpperCase();
+  if (!ENABLED) {
+    const quant = await storedQuant(ticker, market);
+    if (quant) console.log(`[quant] ${ticker}: using the stored sweep ${quant.cycleId}`);
+    return quant ? { ...ctx, quant } : ctx;
+  }
   const sector = ctx.sector ?? (market === "IN" ? indiaSectorOf(ticker) : sectorOf(ticker));
   const cycleId = `${market}-${ticker}-${Date.now().toString(36)}`;
   const readerId = ctx.agentIds[quantAgentKey("market-data-reader")];
@@ -367,6 +377,71 @@ function handOff(st: QuantState, cycleId: string): QuantCtx {
     dailyVar: dailyVar(st),
     blend: st.blend,
     facts: factsSheet(st),
+    ensemble: e,
     state: st,
   };
+}
+
+const STORED_MAX_AGE_H = Number(process.env.MERIDIAN_QUANT_STORED_MAX_AGE_H ?? 36);
+
+/**
+ * The hand-off from the newest stored sweep of the name, for cycles that run
+ * with the stage off (the cloud routines sweep first, then run the desk with
+ * MERIDIAN_QUANT=0). Reading it back costs two queries and no LLM calls, and
+ * the analyst, critic, valuation, CIO, PM and risk nodes then see the same
+ * facts they would after a live stage. Null when no sweep is young enough.
+ */
+async function storedQuant(ticker: string, market: "US" | "IN"): Promise<QuantCtx | null> {
+  if (!(STORED_MAX_AGE_H > 0) || reportsOff) return null;
+  try {
+    const since = new Date(Date.now() - STORED_MAX_AGE_H * 3_600_000).toISOString();
+    const head = await db.listDocuments(DB, "quant_reports", [
+      Query.equal("agent", "ensemble-combiner"), Query.equal("market", market), Query.equal("ticker", ticker),
+      Query.greaterThan("run_at", since), Query.orderDesc("run_at"), Query.limit(1),
+    ]);
+    const top = head.documents[0];
+    if (!top?.cycle_id) return null;
+    let data: Record<string, unknown> = {};
+    try {
+      const p = JSON.parse(String(top.payload_json ?? "{}")) as { data?: unknown };
+      if (p.data && typeof p.data === "object") data = p.data as Record<string, unknown>;
+    } catch { /* fall back to the row's score */ }
+    const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : null);
+    const str = (x: unknown) => (typeof x === "string" ? x : null);
+    const composite = num(data.composite) ?? num(top.score);
+    const confidence = num(data.confidence);
+    const direction = data.direction === "long" || data.direction === "short" || data.direction === "neutral" ? data.direction : null;
+    const inputs = Array.isArray(data.inputs) ? data.inputs.filter((x) => x && typeof x === "object") : [];
+    const ensemble: EnsembleResult | null = composite != null && confidence != null && direction
+      ? {
+          composite, direction, confidence, inputs: inputs as EnsembleResult["inputs"],
+          totalWeight: num(data.totalWeight) ?? 0, validatedWeight: num(data.validatedWeight) ?? 0,
+          agreement: num(data.agreement) ?? 0, notes: Array.isArray(data.notes) ? (data.notes as string[]) : [],
+        }
+      : null;
+    const blend = data.blend && typeof data.blend === "object" && num((data.blend as BlendResult).fairValueMid) != null
+      ? (data.blend as BlendResult) : null;
+    const dv = data.dailyVar as Sourced | null | undefined;
+    const dailyVar = dv && num(dv.value) != null ? { value: dv.value, source: `${dv.source}, stored sweep` } : null;
+
+    const rows = await db.listDocuments(DB, "quant_reports", [
+      Query.equal("cycle_id", String(top.cycle_id)), Query.select(["agent", "score", "summary"]), Query.limit(100),
+    ]);
+    const reports = rows.documents.map((d) => ({
+      agent: String(d.agent), score: typeof d.score === "number" ? d.score : null, summary: String(d.summary ?? ""),
+    }));
+    const price = num(data.price);
+    const currency = str(data.currency);
+    const runAt = String(top.run_at);
+    return {
+      cycleId: String(top.cycle_id),
+      composite, direction, confidence,
+      price, priceSource: price != null ? `quant sweep at ${runAt.slice(0, 16).replace("T", " ")} UTC` : null,
+      currency, dailyVar, blend, ensemble,
+      facts: storedFactsSheet({ ticker, market, runAt, price, currency, blend, dailyVar, reports }),
+    };
+  } catch (e) {
+    console.warn(`[quant] stored sweep lookup failed for ${ticker}: ${errText(e)}`);
+    return null;
+  }
 }

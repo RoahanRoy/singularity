@@ -354,15 +354,19 @@ function big(x: number | null | undefined): string {
   return x.toFixed(0);
 }
 
-function ccySymbol(st: QuantState): string {
-  const c = (st.bundle.history?.currency ?? (st.bundle.market === "IN" ? "INR" : "USD")).toUpperCase();
+function symbolFor(currency: string): string {
+  const c = currency.toUpperCase();
   return c === "USD" ? "$" : c === "INR" ? "₹" : `${c} `;
 }
 
-function money(st: QuantState, x: number | null | undefined): string {
+const ccySymbol = (st: QuantState) => symbolFor(st.bundle.history?.currency ?? (st.bundle.market === "IN" ? "INR" : "USD"));
+
+function moneyIn(symbol: string, x: number | null | undefined): string {
   if (!isNum(x)) return "n/a";
-  return `${ccySymbol(st)}${Math.abs(x) >= 10_000 ? Math.round(x).toLocaleString("en-US") : x.toFixed(2)}`;
+  return `${symbol}${Math.abs(x) >= 10_000 ? Math.round(x).toLocaleString("en-US") : x.toFixed(2)}`;
 }
+
+const money = (st: QuantState, x: number | null | undefined) => moneyIn(ccySymbol(st), x);
 
 // ── Shared inputs ───────────────────────────────────────────────────────────
 
@@ -1201,6 +1205,35 @@ export function factsSheet(st: QuantState, only?: readonly string[]): string {
   }
   const gaps = Object.entries(b.coverage).filter(([, v]) => v.startsWith("missing")).map(([k]) => k);
   if (gaps.length) L.push(`Data gaps: ${gaps.join(", ")}.`);
+  return L.join("\n");
+}
+
+/** One quant_reports row as a desk cycle reads it back. */
+export type StoredReport = { agent: string; score: number | null; summary: string };
+
+/**
+ * factsSheet for a sweep read back from quant_reports, when a desk cycle runs
+ * without the live stage: the same lines in roster order, built from the stored
+ * summaries and the ensemble's payload.
+ */
+export function storedFactsSheet(i: {
+  ticker: string; market: "US" | "IN"; runAt: string; price: number | null; currency: string | null;
+  blend: BlendResult | null; dailyVar: Sourced | null; reports: readonly StoredReport[];
+}): string {
+  const sym = symbolFor(i.currency ?? (i.market === "IN" ? "INR" : "USD"));
+  const L: string[] = [`Quant facts for ${i.ticker} (${i.market}), computed in code by the quant sweep at ${i.runAt.slice(0, 16).replace("T", " ")} UTC. Cite as [quant:<agent>].`];
+  if (isNum(i.price)) L.push(`[quant:market-data-reader] price ${moneyIn(sym, i.price)} (at the sweep)`);
+  const bl = i.blend;
+  if (bl) {
+    L.push(`[quant:valuation-blend] fair value ${moneyIn(sym, bl.fairValueLow)}–${moneyIn(sym, bl.fairValueHigh)} (mid ${moneyIn(sym, bl.fairValueMid)}), upside ${sgn(bl.impliedUpsidePct)}% → ${bl.verdict}; ${bl.method}`);
+  }
+  if (i.dailyVar && isNum(i.dailyVar.value)) L.push(`[quant:risk] 1-day VaR95 of the position's price ${pc(i.dailyVar.value, 2)} (${i.dailyVar.source})`);
+  const bySlug = new Map(i.reports.map((r) => [r.agent, r]));
+  for (const spec of QUANT_AGENTS) {
+    const r = bySlug.get(spec.slug);
+    if (!r || spec.slug === "market-data-reader" || r.summary.startsWith("skipped:")) continue;
+    L.push(`[quant:${spec.slug}] ${r.summary}${r.score != null ? ` (score ${sgn(r.score, 0)})` : ""}`);
+  }
   return L.join("\n");
 }
 
