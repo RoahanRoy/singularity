@@ -139,19 +139,36 @@ function toIsoDate(dt?: string): string {
   return Number.isNaN(d.getTime()) ? new Date().toISOString().slice(0, 10) : d.toISOString().slice(0, 10);
 }
 
-// How "material" an announcement category is, for ranking. Procedural notices
-// (trading-window closures, board-meeting intimations) carry no fundamental
-// signal on their own, so a single one of them would starve the analyst. We
-// surface a DIGEST of recent disclosures and lead with the most material.
-function materiality(desc: string): number {
+// Notices that say nothing about the business. Matched on the category and the
+// body together: "Analysts/Institutional Investor Meet" is NSE's commonest
+// category and mostly meeting schedules, but transcripts and results decks are
+// filed under it too.
+const PROCEDURAL = new RegExp([
+  "trading window", "newspaper", "board meeting(?! held)", "loss of share", "duplicate share", "transmission of shares",
+  "record date", "book closure", "schedule of (?:the )?(?:analyst|investor|meet|call|con)", "will be participating",
+  "participated in the", "modification in the analyst", "audio recording", "link of (?:the )?recording",
+  "depositories and participants", "74\\(5\\)", "esop|esos|esps", "designated officers", "code of conduct",
+  "compliance certificate", "investor complaints", "sc?rutini[sz]er", "voting results", "proceedings of (?:the )?annual general",
+].join("|"), "i");
+
+/**
+ * How material an announcement is, for ranking and for deciding whether it is
+ * worth a desk cycle at all (anything above 10). Results lead; procedural
+ * notices score 10 and never wake the desk on their own.
+ */
+export function materiality(desc: string, text = ""): number {
   const d = desc.toLowerCase();
-  if (/financial result|outcome of board|earnings|quarterly result/.test(d)) return 100;
-  if (/investor|analyst|press release|presentation|conference call|transcript/.test(d)) return 80;
-  if (/acquisition|merger|amalgamation|order|contract|capacity|expansion|fund rais|dividend|buyback|bonus/.test(d)) return 70;
-  if (/credit rating|agreement|joint venture|subsidiary|allotment/.test(d)) return 50;
-  if (/trading window|board meeting|loss of|duplicate|newspaper|record date|book closure/.test(d)) return 10;
+  const all = `${d} ${text.toLowerCase()}`;
+  if (/financial result|outcome of board|decisions at board|earnings|quarterly result/.test(all)) return 100;
+  if (PROCEDURAL.test(all)) return 10;
+  if (/transcript|press release|presentation|media statement|conference call/.test(all)) return 80;
+  if (/acquisition|merger|amalgamation|order|contract|capacity|expansion|fund rais|dividend|buyback|bonus|initial public offer|tie up|restructuring/.test(all)) return 70;
+  if (/credit rating|agreement|joint venture|subsidiary|allotment/.test(all)) return 50;
   return 30;
 }
+
+const isMaterial = (a: NseAnnouncement) => materiality(a.desc ?? "", a.attchmntText ?? "") > 10;
+const whenOf = (a: NseAnnouncement) => (a.sort_date || a.an_dt || "").trim();
 
 /** Figures as results statements print them: 1,54,034 · 30,622.84 · 18% */
 const FIGURE = /\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+\.\d{2}\b|\d+(?:\.\d+)?\s?%/g;
@@ -225,11 +242,11 @@ export async function fetchLatestIndiaKey(
   ticker: string,
 ): Promise<{ key: string; form: string; filedAt: string } | null> {
   try {
-    const annc = await fetchAnnouncements(ticker.toUpperCase());
+    const annc = (await fetchAnnouncements(ticker.toUpperCase())).filter(isMaterial);
     if (!annc.length) return null;
-    annc.sort((a, b) => (b.sort_date ?? b.an_dt ?? "").localeCompare(a.sort_date ?? a.an_dt ?? ""));
+    annc.sort((a, b) => whenOf(b).localeCompare(whenOf(a)));
     const top = annc[0];
-    const key = (top.sort_date || top.an_dt || "").trim();
+    const key = whenOf(top);
     return {
       key: key || toIsoDate(top.an_dt || top.sort_date),
       form: cleanText(top.desc ?? "NSE-ANNC") || "NSE-ANNC",
@@ -258,19 +275,21 @@ export async function fetchLatestIndiaFiling(ticker: string, excerptChars = 1200
   const annc = await fetchAnnouncements(symbol);
   if (!annc.length) throw new Error(`No NSE announcements for ${symbol}`);
 
-  // Most recent first by announcement datetime.
-  annc.sort((a, b) => (b.sort_date ?? b.an_dt ?? "").localeCompare(a.sort_date ?? a.an_dt ?? ""));
-  const top = annc[0];
+  // Most recent first by announcement datetime. The newest material one is
+  // the disclosure: procedural notices after it don't make the filing new.
+  annc.sort((a, b) => whenOf(b).localeCompare(whenOf(a)));
+  const material = annc.filter(isMaterial);
+  const top = material[0] ?? annc[0];
 
   // NSE's own industry classification, where present (often blank for newer or
   // market-infrastructure names). Prefer the most recent record that carries it.
   const industry = cleanText(annc.find((a) => a.smIndustry)?.smIndustry ?? "");
   const industryLine = industry ? `Industry: ${industry}.\n` : "";
 
-  // Take the most recent ~15 announcements, then order by materiality so the
-  // summarizer leads with substance, not the latest procedural notice.
-  const recent = annc.slice(0, 15);
-  recent.sort((a, b) => materiality(b.desc ?? "") - materiality(a.desc ?? ""));
+  // Take the most recent ~15 material announcements, then order by materiality
+  // so the summarizer leads with substance.
+  const recent = (material.length ? material : annc).slice(0, 15);
+  recent.sort((a, b) => materiality(b.desc ?? "", b.attchmntText ?? "") - materiality(a.desc ?? "", a.attchmntText ?? ""));
   const lines = recent
     .map((a) => {
       const date = toIsoDate(a.an_dt || a.sort_date);
@@ -305,7 +324,9 @@ export async function fetchLatestIndiaFiling(ticker: string, excerptChars = 1200
     cik: "NSE",
     form_type: "NSE-ANNC",
     filed_at: toIsoDate(top.an_dt || top.sort_date),
-    source_url: `${NSE_HOME}/companies-listing/corporate-filings-announcements?symbol=${encodeURIComponent(symbol)}`,
+    // Keyed on the newest material announcement, so the parser's (ticker,
+    // source_url) dedup sees each one as a new disclosure.
+    source_url: `${NSE_HOME}/companies-listing/corporate-filings-announcements?symbol=${encodeURIComponent(symbol)}#${encodeURIComponent(material.length ? whenOf(top) : "procedural")}`,
     primary_doc_url: (results ?? top).attchmntFile || "nse-announcement://no-attachment",
     raw_excerpt: excerpt,
     industry: industry || undefined,

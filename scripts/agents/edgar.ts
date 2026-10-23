@@ -25,6 +25,18 @@ const TICKER_MAP_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7d
 // reports / press releases) cover foreign private issuers — TSM, ASML, etc.
 const FORMS_OF_INTEREST = ["10-Q", "10-K", "8-K", "20-F", "6-K"] as const;
 
+// 8-K items that carry no read on the business: charter and bylaw amendments
+// (5.03), blackout notices (5.04), code-of-ethics changes (5.05), shell status
+// (5.06), shareholder vote tallies (5.07), director nominations (5.08) and the
+// exhibit list (9.01). An 8-K made only of these would wake the desk for nothing.
+const ROUTINE_8K_ITEMS = new Set(["5.03", "5.04", "5.05", "5.06", "5.07", "5.08", "9.01"]);
+
+/** Is an 8-K with these items ("2.02,9.01") worth a desk cycle? Unknown items count as material. */
+export function isMaterial8K(items: string | null | undefined): boolean {
+  const list = (items ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  return !list.length || list.some((x) => !ROUTINE_8K_ITEMS.has(x));
+}
+
 export type EdgarFiling = {
   ticker: string;
   cik: string;            // zero-padded 10 digits
@@ -76,14 +88,15 @@ export async function hasSecFilings(ticker: string): Promise<boolean> {
   }
 }
 
-/** Most recent filing matching FORMS_OF_INTEREST. */
+/** Most recent filing matching FORMS_OF_INTEREST, skipping 8-Ks made only of routine items. */
 async function latestFiling(cik: string): Promise<{ form: string; filedAt: string; accession: string; primaryDoc: string }> {
   const res = await fetchSec(`https://data.sec.gov/submissions/CIK${cik}.json`);
   const data = (await res.json()) as {
-    filings: { recent: { form: string[]; filingDate: string[]; accessionNumber: string[]; primaryDocument: string[] } };
+    filings: { recent: { form: string[]; filingDate: string[]; accessionNumber: string[]; primaryDocument: string[]; items?: string[] } };
   };
   const r = data.filings.recent;
   for (let i = 0; i < r.form.length; i++) {
+    if (r.form[i] === "8-K" && !isMaterial8K(r.items?.[i])) continue;
     if ((FORMS_OF_INTEREST as readonly string[]).includes(r.form[i])) {
       return {
         form: r.form[i],
