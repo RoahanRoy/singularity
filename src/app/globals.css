@@ -738,6 +738,12 @@
 .meridian-root .v2-head .ticker { border-top: 1px solid var(--line); padding: 7px 16px; gap: 10px; font-family: var(--f-mono); font-size: 12px; color: var(--ink-2); }
 .meridian-root .v2-head .ticker .sym { color: var(--ink-2); }
 .meridian-root .v2-head .ticker .item { gap: 7px; color: var(--ink); }
+/* Mobile-only header controls (brand mark, market pill, theme) — shown when the sidebar is hidden. */
+.meridian-root .v2-head .mob { display: none; }
+.meridian-root .v2-head .mark { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--ink); place-items: center; flex: none; }
+.meridian-root .v2-head .mark span { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.meridian-root .v2-head .v2-round { margin-left: 0; background: var(--seg); flex: none; }
+.meridian-root .v2-pill { border-radius: 980px; background: var(--seg); color: var(--ink); font-size: 12px; font-weight: 600; padding: 5px 10px; white-space: nowrap; flex: none; }
 
 /* Bottom tabs replace the sidebar on narrow screens. */
 .meridian-root .v2-tabs { display: none; }
@@ -752,4 +758,10 @@
   .meridian-root .v2-tabs button { flex: 1; min-height: 50px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: var(--ink-3); }
   .meridian-root .v2-tabs button.on { color: var(--tint); }
   .meridian-root .v2-tabs button span:last-child { font-size: 10px; font-weight: 600; }
+  .meridian-root .v2-head .mob { display: grid; }
+}
+/* Phones: drop the crumb and status text (the dot keeps its colour) so the controls fit. */
+@media (max-width: 560px) {
+  .meridian-root .v2-head .row { gap: 10px; }
+  .meridian-root .v2-head .crumb, .meridian-root .v2-status .lbl { display: none; }
 }

@@ -219,10 +219,11 @@ function MarketStatus({ market }: { market: Market }) {
     return () => clearInterval(id);
   }, [market]);
   if (!status) return null;
+  const label = `${STATUS_LABEL[status]} · ${market === "IN" ? "NSE" : "NYSE"}`;
   return (
-    <span className={"v2-status " + status}>
+    <span className={"v2-status " + status} title={label}>
       <span className="ping" aria-hidden />
-      {STATUS_LABEL[status]} · {market === "IN" ? "NSE" : "NYSE"}
+      <span className="lbl">{label}</span>
     </span>
   );
 }
@@ -236,7 +237,7 @@ export function Shell({
   setActive: (id: ScreenId) => void;
   children: ReactNode;
 }) {
-  const { market } = useMarket();
+  const { market, setMarket } = useMarket();
   const [theme, toggleTheme] = useTheme("dark");
   const book = useBook(market);
   const cur = SCREENS.find((s) => s.id === active)!;
@@ -277,6 +278,10 @@ export function Shell({
 
         <header className="v2-head mx-glass">
           <div className="row">
+            {/* Narrow screens hide the sidebar, so the brand, market and theme controls move up here. */}
+            <span className="mark mob" aria-hidden>
+              <span />
+            </span>
             <span className="title">{cur.label}</span>
             <span className="crumb">{cur.crumb}</span>
             <div className="right">
@@ -284,6 +289,16 @@ export function Shell({
               <span className="clock">
                 <ExchangeClock market={market} />
               </span>
+              <button
+                className="v2-pill mob"
+                onClick={() => setMarket(market === "IN" ? "US" : "IN")}
+                aria-label={`Switch to ${market === "IN" ? "US" : "India"} desk`}
+              >
+                {market === "IN" ? "🇮🇳 IN" : "🇺🇸 US"}
+              </button>
+              <button className="v2-round mob" onClick={toggleTheme} aria-label="Toggle appearance">
+                <Icon name={theme === "dark" ? "light_mode" : "dark_mode"} size={18} />
+              </button>
             </div>
           </div>
           <MarketTicker />
