@@ -3,7 +3,9 @@
  *
  * Fetches Google News RSS per ticker and indexes results into the `news`
  * Appwrite collection. Free, no API key. Items are deduped via a unique
- * index on sha256(url), so re-running is safe.
+ * index on sha256(url), so re-running is safe. Google News sometimes throttles
+ * a shared address (the cloud sandbox) for hours; the US pass then switches to
+ * Yahoo Finance's news search, which has no NSE coverage, so the IN pass stops.
  *
  * Run with:
  *   npm run agents:news               continuous (every NEWS_INTERVAL_MS)
@@ -84,11 +86,37 @@ async function fetchTickerNews(ticker: string, market: "US" | "IN"): Promise<Rss
     },
     signal: AbortSignal.timeout(15_000),
   });
+  if (res.status === 429 || res.status === 503) throw new Throttled(`HTTP ${res.status} for ${ticker}`);
   if (!res.ok) {
     throw new Error(`HTTP ${res.status} for ${ticker}`);
   }
   const xml = await res.text();
   return parseRss(xml).slice(0, PER_TICKER);
+}
+
+/** Google News refusing this address, as opposed to a failure for one ticker. */
+class Throttled extends Error {}
+
+/** US fallback: Yahoo Finance's news search, keeping items tagged with the ticker. */
+async function fetchYahooNews(ticker: string): Promise<RssItem[]> {
+  const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(ticker)}&quotesCount=0&newsCount=${PER_TICKER * 2}`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Yahoo HTTP ${res.status} for ${ticker}`);
+  const data = (await res.json()) as {
+    news?: { title?: string; link?: string; publisher?: string; providerPublishTime?: number; relatedTickers?: string[] }[];
+  };
+  return (data.news ?? [])
+    .filter((n) => n.title && n.link && (!n.relatedTickers || n.relatedTickers.includes(ticker)))
+    .slice(0, PER_TICKER)
+    .map((n) => ({
+      title: n.title!,
+      link: n.link!,
+      pubDate: new Date((n.providerPublishTime ?? Date.now() / 1000) * 1000).toISOString(),
+      source: n.publisher || "Yahoo Finance",
+    }));
 }
 
 async function indexItem(ticker: string, market: "US" | "IN", item: RssItem): Promise<"new" | "dup"> {
@@ -121,27 +149,49 @@ function universeFor(market: "US" | "IN"): readonly string[] {
   return market === "IN" ? INDIA_UNIVERSE : FULL_UNIVERSE;
 }
 
+/** Google refusals in a row before the pass gives up on it. */
+const THROTTLE_LIMIT = 3;
+
 async function pass(): Promise<void> {
   for (const market of MARKETS) {
-    const tickers = universeFor(market);
+    const tickers = [...universeFor(market)];
     console.log(`[news] ${market} pass — ${tickers.length} tickers`);
     let added = 0, dup = 0, failed = 0;
-    for (const ticker of tickers) {
+    let useYahoo = false;
+    let refused: string[] = [];
+    while (tickers.length) {
       if (stopping) return;
+      const ticker = tickers.shift()!;
       try {
-        const items = await fetchTickerNews(ticker, market);
+        const items = useYahoo ? await fetchYahooNews(ticker) : await fetchTickerNews(ticker, market);
+        failed += refused.length; // a passing refusal, not a block
+        refused = [];
         for (const it of items) {
           const r = await indexItem(ticker, market, it);
           if (r === "new") added++; else dup++;
         }
       } catch (err) {
-        failed++;
-        console.warn(`[news] ${market}/${ticker} failed: ${(err as Error).message}`);
+        if (!(err instanceof Throttled)) {
+          failed++;
+          console.warn(`[news] ${market}/${ticker} failed: ${(err as Error).message}`);
+        } else if (refused.push(ticker) >= THROTTLE_LIMIT) {
+          if (market !== "US") {
+            failed += tickers.length; // the refused ones are counted after the loop
+            console.warn(`[news] Google News is throttling this address (${err.message}); no fallback for ${market}, ending the pass`);
+            break;
+          }
+          console.warn(`[news] Google News is throttling this address (${err.message}); using Yahoo Finance for the rest of the pass`);
+          useYahoo = true;
+          tickers.unshift(...refused);
+          refused = [];
+        }
       }
       // Gentle pacing — Google News tolerates ~1 req/sec from a single IP.
       await new Promise((r) => setTimeout(r, 600));
     }
-    console.log(`[news] ${market} pass done — +${added} new, ${dup} dup, ${failed} failed`);
+    failed += refused.length;
+    const via = useYahoo ? " (via Yahoo Finance after Google throttled)" : "";
+    console.log(`[news] ${market} pass done — +${added} new, ${dup} dup, ${failed} failed${via}`);
   }
 }
 
