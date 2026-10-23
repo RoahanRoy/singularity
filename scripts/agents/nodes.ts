@@ -381,6 +381,20 @@ export const _paperBook = { paperPositions, bookPaperBuy, fillPaperTrade };
 // One agent per sector — each loads its own prompt and is recorded as a
 // distinct row in the `agents` collection so the Swarm screen shows them
 // separately. The orchestrator picks the right analyst from `sectorOf(ticker)`.
+/** The analyst's memo, or null without the title and thesis a memo row requires. */
+function readMemo(raw: string): NonNullable<Ctx["memo"]> | null {
+  const memo = extractJson<Partial<NonNullable<Ctx["memo"]>>>(raw);
+  const title = String(memo.title ?? "").trim();
+  const thesis = String(memo.thesis ?? "").trim();
+  if (!title || !thesis) return null;
+  return {
+    ...memo,
+    title: title.slice(0, 256),
+    thesis: thesis.slice(0, 16384),
+    conviction: Math.min(1, Math.max(0, Number(memo.conviction) || 0)),
+  };
+}
+
 export async function analyst(ctx: Ctx, reviseConcerns?: string[]): Promise<Ctx> {
   // Prefer the sector the parser resolved from the venue's industry tag; fall
   // back to the curated ticker map (now correct for market-infra names).
@@ -425,8 +439,23 @@ export async function analyst(ctx: Ctx, reviseConcerns?: string[]): Promise<Ctx>
       : "",
   ].join("\n");
 
-  const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg, label: `analyst:${ctx.ticker}` });
-  const memo = extractJson<NonNullable<Ctx["memo"]>>(raw);
+  // A reply without a title or thesis used to crash the cycle on the memo
+  // write (both are required). Ask once more for the bare JSON; if that fails
+  // too, return without a memo: a first draft ends the cycle, a revision keeps
+  // the draft it was revising.
+  let raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg, label: `analyst:${ctx.ticker}` });
+  let memo = readMemo(raw);
+  if (!memo) {
+    console.warn(`[analyst] ${ctx.ticker}: unreadable memo, retrying: ${raw.slice(0, 200).replace(/\s+/g, " ")}`);
+    raw = await ask({ model: prompt.meta.model, system: prompt.body, label: `analyst:${ctx.ticker}:retry`,
+      user: `${userMsg}\n\nReply with only the JSON object in the output format, nothing else.` });
+    memo = readMemo(raw);
+  }
+  if (!memo) {
+    await emit(id, "alert", `No memo on ${ctx.ticker}: the analyst's reply was unreadable twice`);
+    await setStatus(id, "idle");
+    return ctx;
+  }
 
   const entities = Array.isArray(memo.entities)
     ? memo.entities

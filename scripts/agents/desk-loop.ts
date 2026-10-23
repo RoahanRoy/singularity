@@ -233,6 +233,10 @@ export async function runDesk(config: DeskConfig): Promise<void> {
       return;
     }
     ctx = await analyst(ctx);
+    if (!ctx.memo) {
+      console.log(`\n=== ${ticker}: no readable memo — skipping analysis ===`);
+      return;
+    }
     ctx = await quant(ctx);
     ctx = await critic(ctx);
     ctx = await valuation(ctx);
