@@ -333,6 +333,24 @@ export async function listQuantHeads(market?: Market, limit = 1500): Promise<Qua
   return out;
 }
 
+/**
+ * The quant desk's ensemble verdicts on a desk from the last `days`, newest
+ * first. The Portfolio rebalance takes the newest row per ticker; a daily sweep
+ * writes well under a hundred, so one page covers the week.
+ */
+export async function listEnsembleVerdicts(market: Market, days = 7): Promise<QuantReport[]> {
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const res = await databases.listDocuments<QuantReport & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.quant_reports,
+    [
+      Query.equal("agent", "ensemble-combiner"), ...marketFilter(market), Query.greaterThan("run_at", since),
+      Query.orderDesc("run_at"), Query.limit(500),
+    ],
+  );
+  return res.documents;
+}
+
 /** Every agent report from one quant-desk cycle, in the order they ran. */
 export async function listQuantCycle(cycleId: string): Promise<QuantReport[]> {
   const res = await databases.listDocuments<QuantReport & Models.Document>(

@@ -14,7 +14,9 @@ import {
   subscribeTrades,
   listFundSnapshots,
   listScenarios,
+  listEnsembleVerdicts,
 } from "@/lib/appwrite/queries";
+import { planRebalance, verdictOf, type RebalanceAction, type Verdict } from "@/lib/fund/rebalance";
 import type {
   Position,
   Trade,
@@ -398,6 +400,136 @@ function PositionsList({ rows, loaded, market }: { rows: Position[]; loaded: boo
   );
 }
 
+// ── Rebalance (advisory, from the quant desk's ensemble verdicts) ─────────────
+
+type MandateCaps = { cash: number; max_names: number; max_name_weight_pct: number };
+
+// Desks without an onboarded mandate plan against the balanced posture's caps
+// (POSTURE_CAPS in src/lib/fund/mandate.ts, which is server-side only).
+const DEFAULT_CAPS: MandateCaps = { cash: 0, max_names: 20, max_name_weight_pct: 9 };
+
+const ACTION_COLOR: Record<RebalanceAction, string> = {
+  trim: "var(--red)",
+  add: "var(--green)",
+  buy: "var(--green)",
+};
+
+function RebalancePanel({ positions, mandate, market }: { positions: Position[]; mandate: MandateCaps | null; market: Market }) {
+  // Tagged with the desk they were read for, so a market switch shows "reading"
+  // until that desk's verdicts land instead of planning against the other desk's.
+  const [loaded, setLoaded] = useState<{ market: Market; verdicts: Verdict[] } | null>(null);
+  const [showUnrated, setShowUnrated] = useState(false);
+  const verdicts = loaded?.market === market ? loaded.verdicts : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    listEnsembleVerdicts(market)
+      .then((rows) => {
+        if (!cancelled) setLoaded({ market, verdicts: rows.map(verdictOf).filter((v): v is Verdict => v !== null) });
+      })
+      .catch(() => { if (!cancelled) setLoaded({ market, verdicts: [] }); });
+    return () => { cancelled = true; };
+  }, [market]);
+
+  const plan = useMemo(() => {
+    if (!verdicts) return null;
+    const caps = mandate ?? DEFAULT_CAPS;
+    // Advice is for the real book; paper rows the desk loop may have written are left out.
+    const real = positions.filter((p) => p.horizon_source || p.ibkr_account_id || p.kite_account_id);
+    return planRebalance({
+      holdings: real.map((p) => ({
+        ticker: p.ticker,
+        label: p.label,
+        marketValue: p.market_value || 0,
+        qty: p.qty,
+        isFund: p.ticker.startsWith("MF:"),
+      })),
+      verdicts,
+      cash: caps.cash,
+      maxNames: caps.max_names,
+      maxNameWeightPct: caps.max_name_weight_pct,
+      currency: market === "IN" ? "INR" : "USD",
+      wholeShares: market === "IN",
+    });
+  }, [positions, mandate, verdicts, market]);
+
+  const mono = { fontFamily: "var(--mono)", fontSize: 11 } as const;
+  if (!plan) {
+    return <div className="dim" style={{ ...mono, padding: "12px 16px" }}>Reading quant verdicts…</div>;
+  }
+
+  const stat = (k: string, v: string, color = "var(--ink-0)") => (
+    <div style={{ padding: "8px 12px", borderRight: "1px solid var(--line-soft)" }}>
+      <div style={{ fontSize: 9.5, color: "var(--ink-3)", letterSpacing: "0.12em", textTransform: "uppercase" }}>{k}</div>
+      <div style={{ color, marginTop: 2 }}>{v}</div>
+    </div>
+  );
+  const shares = (n: number | null) =>
+    n == null ? "—" : n.toLocaleString(undefined, { maximumFractionDigits: market === "IN" ? 0 : 2 });
+
+  return (
+    <div style={mono}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", borderBottom: "1px solid var(--line-soft)" }}>
+        {stat("Capital", fmtMoney(plan.capital, market))}
+        {stat("Sell", fmtMoney(plan.sellProceeds, market), "var(--red)")}
+        {stat("Buy", fmtMoney(plan.buyCost, market), "var(--green)")}
+        {stat("Cash after", fmtMoney(plan.cashAfter, market))}
+      </div>
+
+      {plan.trades.length === 0 && (
+        <div className="dim" style={{ padding: "12px 16px" }}>
+          Nothing to change: no held name is shorted or over its cap, and no fresh long fits the book.
+        </div>
+      )}
+      {plan.trades.map((t) => (
+        <div key={t.ticker} style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 44px 70px 80px 92px", gap: 8, alignItems: "baseline" }}>
+            <span style={{ color: "var(--ink-0)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={t.label ?? undefined}>
+              {t.ticker}
+            </span>
+            <span style={{ color: ACTION_COLOR[t.action], letterSpacing: "0.12em", textTransform: "uppercase" }}>{t.action}</span>
+            <span style={{ color: "var(--ink-2)", textAlign: "right" }}>{shares(t.shares)} sh</span>
+            <span style={{ color: "var(--ink-1)", textAlign: "right" }}>{fmtMoney(t.value, market)}</span>
+            <span style={{ color: "var(--ink-3)", textAlign: "right" }}>
+              {(t.fromWeight * 100).toFixed(1)}→{(t.toWeight * 100).toFixed(1)}%
+            </span>
+          </div>
+          <div className="dim" style={{ fontSize: 10, marginTop: 3, lineHeight: 1.4 }}>{t.reason}</div>
+        </div>
+      ))}
+
+      {plan.notes.map((n) => (
+        <div key={n} style={{ padding: "8px 12px", color: "var(--md-accent)", borderBottom: "1px solid var(--line-soft)", lineHeight: 1.5 }}>
+          {n}
+        </div>
+      ))}
+
+      {plan.unrated.length > 0 && (
+        <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)" }}>
+          <button
+            type="button"
+            onClick={() => setShowUnrated((s) => !s)}
+            style={{ all: "unset", cursor: "pointer", color: "var(--ink-2)" }}
+          >
+            {showUnrated ? "▾" : "▸"} {plan.unrated.length} held without a quant view
+          </button>
+          {showUnrated && plan.unrated.map((u) => (
+            <div key={u.ticker} className="dim" style={{ fontSize: 10, marginTop: 4 }} title={u.label ?? undefined}>
+              {u.ticker}{u.label ? ` · ${u.label}` : ""} — {u.reason}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="dim" style={{ padding: "8px 12px", fontSize: 10, lineHeight: 1.5 }}>
+        Advisory only: nothing is sent to a broker. Shorts trim by half, no name above{" "}
+        {(mandate ?? DEFAULT_CAPS).max_name_weight_pct}%, new longs fill open slots under{" "}
+        {(mandate ?? DEFAULT_CAPS).max_names} names, mandate cash counts as new money.
+      </div>
+    </div>
+  );
+}
+
 // ── KPI derivation ────────────────────────────────────────────────────────────
 
 type Kpi = [string, string, "up" | "down" | ""];
@@ -479,7 +611,8 @@ export function PortfolioScreen() {
   // Undeployed cash of a from-scratch fund mandate (null when the desk runs an
   // attached brokerage book instead). Folded into NAV so a freshly-onboarded
   // fund shows its capital base, not "—", before it has deployed anything.
-  const [mandateCash, setMandateCash] = useState<number | null>(null);
+  const [mandate, setMandate] = useState<MandateCaps | null>(null);
+  const mandateCash = mandate?.cash ?? null;
   // Bumped after a Horizon sync so the book re-reads without a market switch.
   const [reloadKey, setReloadKey] = useState(0);
   const { status: horizon, refresh: refreshHorizon } = useHorizonStatus();
@@ -490,7 +623,7 @@ export function PortfolioScreen() {
     setPositions([]);
     setSnapshots([]);
     setScenarios([]);
-    setMandateCash(null);
+    setMandate(null);
     listPositions(200, market)
       .then((p) => {
         if (cancelled) return;
@@ -506,8 +639,8 @@ export function PortfolioScreen() {
       .catch(() => {});
     operatorFetch("/api/fund/onboard", { cache: "no-store" })
       .then((r) => r.json())
-      .then((j: { mandates?: Record<string, { cash?: number } | null> }) => {
-        if (!cancelled) setMandateCash(j.mandates?.[market]?.cash ?? null);
+      .then((j: { mandates?: Record<string, MandateCaps | null> }) => {
+        if (!cancelled) setMandate(j.mandates?.[market] ?? null);
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -626,6 +759,10 @@ export function PortfolioScreen() {
 
       <Panel title="Positions · Live" meta="ranked by MV" bodyClassName="tight">
         <PositionsList rows={positions} loaded={posLoaded} market={market} />
+      </Panel>
+
+      <Panel title="Rebalance · Advisory" meta="quant verdicts · real book" bodyClassName="tight">
+        <RebalancePanel positions={positions} mandate={mandate} market={market} />
       </Panel>
 
       <Panel
