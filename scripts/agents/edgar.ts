@@ -62,6 +62,20 @@ async function tickerToCik(ticker: string): Promise<string> {
   return String(hit.cik_str).padStart(10, "0");
 }
 
+/**
+ * Does the ticker file with the SEC? False only for a confirmed miss (e.g. a
+ * European listing held abroad); a failed lookup counts as yes, so an EDGAR
+ * outage doesn't empty the round-robin.
+ */
+export async function hasSecFilings(ticker: string): Promise<boolean> {
+  try {
+    await tickerToCik(ticker);
+    return true;
+  } catch (err) {
+    return !(err as Error).message.startsWith("No CIK");
+  }
+}
+
 /** Most recent filing matching FORMS_OF_INTEREST. */
 async function latestFiling(cik: string): Promise<{ form: string; filedAt: string; accession: string; primaryDoc: string }> {
   const res = await fetchSec(`https://data.sec.gov/submissions/CIK${cik}.json`);
