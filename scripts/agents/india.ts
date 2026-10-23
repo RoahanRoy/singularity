@@ -57,6 +57,7 @@ async function nseCookie(): Promise<string> {
   if (cookieJar && Date.now() - cookieJar.at < COOKIE_TTL_MS) return cookieJar.value;
   const res = await fetch(NSE_HOME, {
     headers: { ...BROWSER_HEADERS, Accept: "text/html,application/xhtml+xml" },
+    signal: AbortSignal.timeout(15_000),
   });
   // Node 18+/undici exposes getSetCookie(); fall back to the combined header.
   const setCookies =
@@ -68,19 +69,39 @@ async function nseCookie(): Promise<string> {
   return jar;
 }
 
+/**
+ * GET an NSE API path with the session cookie. From the cloud sandbox NSE
+ * often drops the connection or answers 5xx/bot-wall for one request in a
+ * sweep, so a failed attempt re-handshakes and tries once more after a pause.
+ */
+async function nseGet(apiPath: string, refererPath: string): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    let res: Response;
+    try {
+      const cookie = await nseCookie();
+      res = await fetch(`${NSE_HOME}${apiPath}`, {
+        headers: { ...BROWSER_HEADERS, Accept: "application/json", Referer: `${NSE_HOME}${refererPath}`, Cookie: cookie },
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch (err) {
+      if (attempt >= 2) throw err;
+      cookieJar = null;
+      await new Promise((r) => setTimeout(r, 2000));
+      continue;
+    }
+    const retryable = res.status === 401 || res.status === 403 || res.status >= 500;
+    if (retryable) cookieJar = null; // force re-handshake next attempt
+    if (!retryable || attempt >= 2) return res;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
 async function fetchAnnouncements(symbol: string): Promise<NseAnnouncement[]> {
-  const cookie = await nseCookie();
-  const url = `${NSE_HOME}/api/corporate-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`;
-  const res = await fetch(url, {
-    headers: {
-      ...BROWSER_HEADERS,
-      Accept: "application/json",
-      Referer: `${NSE_HOME}/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`,
-      Cookie: cookie,
-    },
-  });
+  const res = await nseGet(
+    `/api/corporate-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`,
+    `/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`,
+  );
   if (res.status === 401 || res.status === 403) {
-    cookieJar = null; // force re-handshake next attempt
     throw new Error(`NSE announcements ${symbol} → ${res.status} (bot wall)`);
   }
   if (!res.ok) throw new Error(`NSE announcements ${symbol} → ${res.status}`);
@@ -97,13 +118,8 @@ async function fetchAnnouncements(symbol: string): Promise<NseAnnouncement[]> {
  * Throws on failure, like fetchAnnouncements.
  */
 export async function nseJson<T>(apiPath: string, refererPath: string): Promise<T> {
-  const cookie = await nseCookie();
-  const res = await fetch(`${NSE_HOME}${apiPath}`, {
-    headers: { ...BROWSER_HEADERS, Accept: "application/json", Referer: `${NSE_HOME}${refererPath}`, Cookie: cookie },
-    signal: AbortSignal.timeout(15_000),
-  });
+  const res = await nseGet(apiPath, refererPath);
   if (res.status === 401 || res.status === 403) {
-    cookieJar = null;
     throw new Error(`NSE ${apiPath} → ${res.status} (bot wall)`);
   }
   if (!res.ok) throw new Error(`NSE ${apiPath} → ${res.status}`);

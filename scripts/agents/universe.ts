@@ -44,19 +44,21 @@ export function sectorOf(ticker: string): Sector {
 // the India loop reuses the existing sector-analyst prompts. Banks/NBFC →
 // financials, IT services → tech, FMCG/auto → consumer, pharma → healthcare,
 // energy/materials → energy, capital goods → industrials.
+// Symbols follow NSE's renames: LTIMindtree is LTM, ICICI Prudential Life is
+// ICICILIFE, and Tata Motors split into TMPV (cars) and TMCV (trucks).
 export const INDIA_SECTOR_UNIVERSE: Record<Sector, readonly string[]> = {
-  tech:        ["TCS", "INFY", "HCLTECH", "WIPRO", "TECHM", "LTIM", "PERSISTENT", "COFORGE"],
+  tech:        ["TCS", "INFY", "HCLTECH", "WIPRO", "TECHM", "LTM", "PERSISTENT", "COFORGE"],
   healthcare:  ["SUNPHARMA", "DRREDDY", "CIPLA", "DIVISLAB", "APOLLOHOSP", "LUPIN", "AUROPHARMA"],
   energy:      ["RELIANCE", "ONGC", "NTPC", "POWERGRID", "COALINDIA", "BPCL", "IOC", "TATAPOWER"],
   // Banks, NBFCs, insurers, AMCs, brokers, and capital-market infrastructure —
   // depositories (CDSL/NSDL), exchanges (BSE/MCX), and registrars/RTAs
   // (CAMS/KFINTECH) are all financials, not consumer.
   financials:  ["HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK", "AXISBANK", "BAJFINANCE",
-                "BAJAJFINSV", "INDUSINDBK", "SBILIFE", "HDFCLIFE", "ICICIPRULI", "ICICIGI",
+                "BAJAJFINSV", "INDUSINDBK", "SBILIFE", "HDFCLIFE", "ICICILIFE", "ICICIGI",
                 "HDFCAMC", "CAMS", "KFINTECH", "CDSL", "BSE", "MCX", "ANGELONE",
                 "MUTHOOTFIN", "CHOLAFIN", "SHRIRAMFIN", "PFC", "RECLTD"],
-  consumer:    ["HINDUNILVR", "ITC", "NESTLEIND", "TITAN", "MARUTI", "TATAMOTORS", "M&M", "BRITANNIA"],
-  industrials: ["LT", "ADANIPORTS", "SIEMENS", "BEL", "HAL", "ABB", "BHEL", "GRASIM"],
+  consumer:    ["HINDUNILVR", "ITC", "NESTLEIND", "TITAN", "MARUTI", "TMPV", "M&M", "BRITANNIA"],
+  industrials: ["LT", "ADANIPORTS", "SIEMENS", "BEL", "HAL", "ABB", "BHEL", "GRASIM", "TMCV"],
 };
 
 const INDIA_TICKER_TO_SECTOR: Record<string, Sector> = (() => {
