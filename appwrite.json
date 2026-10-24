@@ -779,6 +779,118 @@
             ]
         },
         {
+            "$id": "advisory_trades",
+            "databaseId": "meridian",
+            "name": "advisory_trades",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")"
+            ],
+            "attributes": [
+                {
+                    "key": "ticker",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "label",
+                    "type": "string",
+                    "size": 128,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "kind",
+                    "type": "string",
+                    "size": 8,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "side",
+                    "type": "string",
+                    "size": 4,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "qty",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "price",
+                    "type": "double",
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "amount",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "currency",
+                    "type": "string",
+                    "size": 3,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "broker",
+                    "type": "string",
+                    "size": 32,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "estimated",
+                    "type": "boolean",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "executed_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_market_executed",
+                    "type": "key",
+                    "attributes": [
+                        "market",
+                        "executed_at"
+                    ],
+                    "orders": [
+                        "ASC",
+                        "DESC"
+                    ]
+                }
+            ]
+        },
+        {
             "$id": "trades",
             "databaseId": "meridian",
             "name": "trades",

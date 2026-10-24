@@ -2,7 +2,7 @@
 
 import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type AuditLog, type AgentCommand, type AgentStatusDoc, type IbkrAccount, type QuantReport, type RiskReport, type ConstructionPlan, type Market, isFundPosition } from "./schema";
+import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type AdvisoryTrade, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type AuditLog, type AgentCommand, type AgentStatusDoc, type IbkrAccount, type QuantReport, type RiskReport, type ConstructionPlan, type Market, isFundPosition } from "./schema";
 
 /**
  * Market filter. When a desk is passed we constrain to that desk's rows.
@@ -116,6 +116,16 @@ export async function listAdvisoryPositions(limit = 25, market?: Market): Promis
     [...marketFilter(market), Query.orderDesc("market_value"), Query.limit(limit)],
   );
   return res.documents.map((p) => ({ ...p, book: "advisory" as const }));
+}
+
+/** The real book's trade log from Horizon, newest first. */
+export async function listAdvisoryTrades(limit = 50, market?: Market): Promise<AdvisoryTrade[]> {
+  const res = await databases.listDocuments<AdvisoryTrade & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.advisory_trades,
+    [...marketFilter(market), Query.orderDesc("executed_at"), Query.limit(limit)],
+  );
+  return res.documents;
 }
 
 /** Both books, largest first, each row tagged with its `book`. */

@@ -14,6 +14,7 @@ export const COLLECTIONS = {
   memos: "memos",
   positions: "positions",
   advisory_positions: "advisory_positions",
+  advisory_trades: "advisory_trades",
   trades: "trades",
   scenarios: "scenarios",
   governance_events: "governance_events",
@@ -142,6 +143,31 @@ export type Position = Base & {
  */
 export const isFundPosition = (p: Pick<Position, "ibkr_account_id" | "kite_account_id" | "horizon_source">) =>
   !p.ibkr_account_id && !p.kite_account_id && !p.horizon_source;
+
+/**
+ * A buy or sell on the operator's real book, as Horizon reports it
+ * (src/lib/horizon/trades.ts). Prices are in the trade's own `currency`,
+ * which for a holding abroad is often not the desk's (EUR at Trading 212).
+ */
+export type AdvisoryTrade = Base & {
+  /** Same naming as advisory_positions: exchange symbol, or "MF:…" for a fund. */
+  ticker: string;
+  /** Display name when the ticker alone doesn't say it — a fund's scheme name. */
+  label: string | null;
+  market: Market;
+  kind: "stock" | "fund";
+  side: "buy" | "sell";
+  qty: number;
+  /** Per share or unit; a fund order's NAV. */
+  price: number | null;
+  /** Gross cash of the trade, unsigned. */
+  amount: number;
+  currency: string;
+  broker: string;
+  /** Priced by Horizon off the day's close or NAV (a SIP or share-plan instalment), not reported by the broker. */
+  estimated: boolean;
+  executed_at: string;
+};
 
 export type Trade = Base & {
   ticker: string;

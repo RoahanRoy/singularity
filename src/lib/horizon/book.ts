@@ -16,7 +16,7 @@ export type BookRow = {
 };
 
 /** The Indian book is rupees; everything held abroad goes to the US desk. */
-function marketOf(h: HorizonHolding): Market {
+export function marketOf(h: Pick<HorizonHolding, "currency">): Market {
   return h.currency === "INR" ? "IN" : "US";
 }
 
@@ -27,7 +27,7 @@ function marketOf(h: HorizonHolding): Market {
  * falls back to a digest of its name, so the same fund held by two members
  * still lands on one row. "MF:" marks these for the agent loops to skip.
  */
-export function tickerOf(h: HorizonHolding, market: Market): string {
+export function tickerOf(h: Pick<HorizonHolding, "symbol" | "schemeCode" | "name">, market: Market): string {
   if (h.symbol) {
     const s = h.symbol.trim().toUpperCase();
     // Yahoo and EDGAR hyphenate a US share class ("BRK-B"); brokers write "BRK B" / "BRK.B".

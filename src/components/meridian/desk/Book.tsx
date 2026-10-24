@@ -6,8 +6,8 @@ import { useMarket } from "../MarketContext";
 import { FundMandatePanel } from "../FundMandate";
 import { HorizonSourcePanel, useHorizonStatus } from "../HorizonSource";
 import { IbkrAccountsPanel } from "../IbkrAccounts";
-import { latestRiskReport, listAdvisoryPositions, listFundSnapshots } from "@/lib/appwrite/queries";
-import type { FactorExposure, FundSnapshot, Position, RiskReport, RiskReportPayload } from "@/lib/appwrite/schema";
+import { latestRiskReport, listAdvisoryPositions, listAdvisoryTrades, listFundSnapshots } from "@/lib/appwrite/queries";
+import type { AdvisoryTrade, FactorExposure, FundSnapshot, Position, RiskReport, RiskReportPayload } from "@/lib/appwrite/schema";
 import type { Market } from "@/lib/meridian/format";
 import { DESK_INDEX } from "@/lib/market/indices";
 import { TRADING_DAYS } from "@/lib/quant/risk";
@@ -307,6 +307,8 @@ export function BookScreen() {
         ) : null}
       </section>
 
+      {book === "advisory" && <TradesSection market={market} nonce={nonce} />}
+
       {full && <FullDetail weighted={weighted} risk={risk} indexName={index.name} />}
 
       <div style={{ marginTop: 48 }}>
@@ -327,6 +329,99 @@ export function BookScreen() {
         <Sources market={market} horizon={horizon} onSynced={() => (refreshHorizon(), setNonce((n) => n + 1))} />
       )}
     </div>
+  );
+}
+
+const TRADES_SHOWN = 12;
+
+/** A trade in its own currency: a Trading 212 fill is in euros on the US desk. */
+function tradeMoney(v: number, ccy: string, dp = 2): string {
+  try {
+    return v.toLocaleString(ccy === "INR" ? "en-IN" : "en-US", {
+      style: "currency",
+      currency: ccy,
+      minimumFractionDigits: dp,
+      maximumFractionDigits: dp,
+    });
+  } catch {
+    return `${v.toFixed(dp)} ${ccy}`;
+  }
+}
+
+function tradeDate(iso: string): string {
+  const d = new Date(iso);
+  return Number.isFinite(d.getTime())
+    ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+    : "—";
+}
+
+function TradesSection({ market, nonce }: { market: Market; nonce: number }) {
+  const [all, setAll] = useState(false);
+  const trades = useLoad(() => listAdvisoryTrades(200, market), [market, nonce], [] as AdvisoryTrade[]);
+  const shown = trades ? (all ? trades : trades.slice(0, TRADES_SHOWN)) : [];
+  const cols = "minmax(96px,0.9fr) minmax(120px,1.6fr) 44px repeat(3,minmax(76px,1fr)) minmax(80px,0.9fr)";
+  return (
+    <section style={{ marginTop: 44 }}>
+      <div className="m-shead">
+        <h2 className="m-h2">Trades</h2>
+        <span className="m-meta">From Horizon · in each trade&apos;s own currency</span>
+      </div>
+      {trades == null ? (
+        <p className="m-empty">Loading…</p>
+      ) : trades.length === 0 ? (
+        <p className="m-empty">No trades synced yet: Sync now under Sources brings in Horizon&apos;s trade log.</p>
+      ) : (
+        <>
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ minWidth: 680 }}>
+              <div className="m-tr head" style={{ gridTemplateColumns: cols }}>
+                <span>Date</span>
+                <span>Name</span>
+                <span>Side</span>
+                <span className="r">Quantity</span>
+                <span className="r">Price</span>
+                <span className="r">Amount</span>
+                <span className="r">Broker</span>
+              </div>
+              {shown.map((t) => (
+                <div key={t.$id} className="m-tr" style={{ gridTemplateColumns: cols }}>
+                  <span className="m-ink2">{tradeDate(t.executed_at)}</span>
+                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {t.kind === "fund" && t.label ? (
+                      <span style={{ fontWeight: 600 }}>{t.label}</span>
+                    ) : (
+                      <>
+                        <span style={{ fontWeight: 600 }}>{t.ticker}</span> {t.label && <span className="m-meta">{t.label}</span>}
+                      </>
+                    )}
+                  </span>
+                  <span style={{ color: t.side === "buy" ? "var(--up)" : "var(--down)" }}>{t.side === "buy" ? "Buy" : "Sell"}</span>
+                  <span className="r">{t.qty.toLocaleString("en-US", { maximumFractionDigits: 4 })}</span>
+                  <span className="r m-ink2">{t.price == null ? "—" : tradeMoney(t.price, t.currency)}</span>
+                  <span className="r">
+                    {tradeMoney(t.amount, t.currency, 0)}
+                    {t.estimated && (
+                      <span className="m-meta" title="A SIP or share-plan instalment Horizon priced off the day's close or NAV, not a broker fill">
+                        {" "}
+                        est.
+                      </span>
+                    )}
+                  </span>
+                  <span className="r m-ink2">{t.broker}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          {trades.length > TRADES_SHOWN && (
+            <p className="m-note">
+              <button className="m-link" onClick={() => setAll((v) => !v)}>
+                {all ? "Show fewer" : `Show all ${trades.length}${trades.length === 200 ? " most recent" : ""}`}
+              </button>
+            </p>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 

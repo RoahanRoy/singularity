@@ -11,6 +11,14 @@ export type HorizonStatus = {
   error?: string;
 };
 
+type TradesResult = {
+  status: "synced" | "unauthorized" | "missing" | "error";
+  added: number;
+  removed: number;
+  total: number;
+  error?: string;
+};
+
 type SyncResult = {
   status: "synced" | "fresh" | "unauthorized" | "error";
   holdings: Record<Market, number>;
@@ -67,7 +75,7 @@ export function HorizonSourcePanel({
     setBanner(null);
     try {
       const res = await operatorFetch("/api/horizon/sync", { method: "POST" });
-      const j = (await res.json()) as { result?: SyncResult; error?: string };
+      const j = (await res.json()) as { result?: SyncResult; trades?: TradesResult | null; error?: string };
       const r = j.result;
       if (!res.ok || !r) {
         setBanner({
@@ -81,6 +89,12 @@ export function HorizonSourcePanel({
         const parts = [`${r.holdings.IN} India · ${r.holdings.US} US holdings`];
         if (r.superseded) parts.push(`${r.superseded} direct broker rows replaced`);
         if (r.skipped.length) parts.push(`${r.skipped.length} skipped (${r.skipped.map((s) => s.ticker).join(", ")})`);
+        const t = j.trades;
+        if (t?.status === "synced") {
+          parts.push(`${t.total} trades (${t.added} new${t.removed ? `, ${t.removed} removed` : ""})`);
+        } else if (t) {
+          parts.push(`trades not synced: ${t.status === "missing" ? "Horizon's deploy has no trades feed yet" : t.error || t.status}`);
+        }
         setBanner({ kind: "ok", text: `✓ Synced from Horizon — ${parts.join(" · ")}.` });
         onSynced();
       }
@@ -163,7 +177,7 @@ export function HorizonSourcePanel({
 
       <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 10.5, lineHeight: 1.6 }}>
         Horizon is the book of record: rupee holdings (Kite, Coin, Groww) land on the India desk,
-        everything held abroad on the US desk in USD. The direct IBKR link stands down while it is
+        everything held abroad on the US desk in USD. Syncing here also brings in its trade log. The direct IBKR link stands down while it is
         configured. Running desk loops re-pull it every 15 minutes.
       </div>
     </div>
