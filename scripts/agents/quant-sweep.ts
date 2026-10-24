@@ -6,9 +6,12 @@
  * stage (quant-nodes.ts) for every covered name — the held book plus the
  * sector universe (coverage.ts) — on today's data, independent of filings.
  *
- * Resumable: a name whose quant cycle finished within MAX_AGE is skipped, and
- * stale names go oldest-first, so repeated short runs (the cloud routine's
- * per-command limit) walk the whole list once a day. Each of the seven LLM
+ * Resumable: a name whose quant cycle finished on today's exchange date (its
+ * market's calendar, market-hours.ts) is skipped, and stale names go
+ * oldest-first, so repeated short runs (the cloud routine's per-command limit)
+ * walk the whole list once a trading day, whatever hour the run starts. A fixed
+ * 24h window skipped the whole day whenever yesterday's sweep had finished a
+ * little later than today's started. Each of the seven LLM
  * agents reuses its last report for a name while it is under a week old
  * (MERIDIAN_QUANT_LLM_MAX_AGE_H), so a daily sweep refreshes every number
  * without ~1,000 subscription calls a day.
@@ -21,7 +24,6 @@
  *
  * Env knobs:
  *   MERIDIAN_QUANT_SWEEP_MARKETS     "US,IN" (default) or one market
- *   MERIDIAN_QUANT_SWEEP_MAX_AGE_H   a name is fresh this long after its last cycle (default 24)
  *   MERIDIAN_QUANT_SWEEP_BUDGET_MS   stop starting names after this long (default: no limit)
  *   MERIDIAN_QUANT_SWEEP_LIMIT       at most this many names per run
  *   MERIDIAN_QUANT_LLM_MAX_AGE_H     LLM report reuse window (default here 168)
@@ -30,13 +32,13 @@ import { db, DB, Query, recountClusters, quotaCheck, flushQuota } from "./appwri
 import { coverageTickers, type Market } from "./coverage";
 import { bootstrapQuant, quantDesk, quantUsageLimitHit } from "./quant-nodes";
 import { sectorOf, indiaSectorOf } from "./universe";
+import { exchangeDate } from "./market-hours";
 import type { Ctx } from "./nodes";
 
 process.env.MERIDIAN_QUANT_LLM_MAX_AGE_H ||= "168";
 
 const MARKETS = (process.env.MERIDIAN_QUANT_SWEEP_MARKETS || "US,IN")
   .split(",").map((m) => m.trim().toUpperCase()).filter((m): m is Market => m === "US" || m === "IN");
-const MAX_AGE_MS = Number(process.env.MERIDIAN_QUANT_SWEEP_MAX_AGE_H || 24) * 3_600_000;
 const BUDGET_MS = Number(process.env.MERIDIAN_QUANT_SWEEP_BUDGET_MS || 0);
 const LIMIT = Number(process.env.MERIDIAN_QUANT_SWEEP_LIMIT || 0);
 
@@ -78,20 +80,23 @@ async function lastRuns(market: Market): Promise<Map<string, number>> {
 
 type Job = { market: Market; ticker: string; held: boolean; last: number };
 
-async function plan(): Promise<{ jobs: Job[]; fresh: number }> {
+async function plan(now: Date): Promise<{ jobs: Job[]; fresh: number; sessions: string[] }> {
   const jobs: Job[] = [];
+  const sessions: string[] = [];
   let fresh = 0;
   for (const market of MARKETS) {
+    const session = exchangeDate(market, now);
+    sessions.push(`${market} ${session}`);
     const [{ all, held }, runs] = await Promise.all([coverageTickers(market), lastRuns(market)]);
     for (const ticker of all) {
       const last = runs.get(ticker) ?? 0;
-      if (Date.now() - last < MAX_AGE_MS) fresh++;
+      if (last > 0 && exchangeDate(market, new Date(last)) === session) fresh++;
       else jobs.push({ market, ticker, held: held.has(ticker), last });
     }
   }
   // Never-run and oldest first; held names break ties.
   jobs.sort((a, b) => a.last - b.last || Number(b.held) - Number(a.held));
-  return { jobs, fresh };
+  return { jobs, fresh, sessions };
 }
 
 async function main(): Promise<number> {
@@ -105,8 +110,8 @@ async function main(): Promise<number> {
     console.log(`[quota] Appwrite usage limit reached (${quota.reason}): stop for today`);
     return 4;
   }
-  const { jobs, fresh } = await plan();
-  console.log(`[sweep] ${MARKETS.join("+")}: ${jobs.length} stale · ${fresh} fresh (< ${MAX_AGE_MS / 3_600_000}h)`);
+  const { jobs, fresh, sessions } = await plan(new Date(t0));
+  console.log(`[sweep] ${MARKETS.join("+")}: ${jobs.length} stale · ${fresh} fresh (run on ${sessions.join(", ")})`);
   if (!jobs.length) return 0;
 
   const ids: Partial<Record<Market, Record<string, string>>> = {};
