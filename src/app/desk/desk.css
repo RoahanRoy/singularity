@@ -217,11 +217,6 @@
   .m-body { padding-bottom: calc(120px + env(safe-area-inset-bottom)); }
 }
 
-/* Legacy screens still on the old panel layout render in a fixed-height box
-   with the old tokens until they're ported. */
-.m-legacy { height: calc(100dvh - 140px); min-height: 520px; display: flex; flex-direction: column; border-radius: 8px; overflow: hidden; box-shadow: var(--shadow); }
-.m-legacy > .main { flex: 1; min-height: 0; overflow: auto; }
-
 /* Legacy panels (mandate form, Horizon, IBKR) dropped into a v2 screen: their
    old token names resolve to the v2 palette, so they follow the theme. */
 .m-compat {
@@ -249,3 +244,21 @@
 }
 .m-prose { max-width: 68ch; display: flex; flex-direction: column; gap: 14px; font-family: var(--m-serif); font-size: 19px; line-height: 1.55; }
 .m-prose p { margin: 0; text-wrap: pretty; }
+
+/* console chat */
+.m-chat { min-width: 0; display: flex; flex-direction: column; height: 68vh; }
+@media (min-width: 1180px) { .m-chat { height: calc(100vh - 190px); } }
+.m-chat-feed { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 22px; padding-bottom: 16px; }
+.m-msg { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.m-msg.mine { align-items: flex-end; }
+.m-bubble { max-width: min(640px, 92%); padding: 0; border-radius: 10px; font-size: 15px; line-height: 1.55; white-space: pre-wrap; text-wrap: pretty; }
+.m-msg.mine .m-bubble { padding: 10px 14px; background: var(--sunk); }
+.m-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.m-chips > button { border: 1px solid var(--line-2); border-radius: 16px; padding: 5px 12px; min-height: 32px; background: transparent;
+  font-size: 12px; color: var(--ink-2); cursor: pointer; }
+.m-chips > button:hover:not(:disabled) { background: var(--sunk); }
+.m-chips > button:disabled { opacity: .5; cursor: default; }
+.m-ask { display: flex; gap: 8px; align-items: center; padding: 6px 6px 6px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--surface); }
+.m-ask:focus-within { outline: 2px solid var(--accent); outline-offset: 0; }
+.m-ask input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 15px; padding: 8px 0; outline: none; }
+.m-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

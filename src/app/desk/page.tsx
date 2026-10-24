@@ -1,6 +1,5 @@
 "use client";
 
-import type { ReactNode } from "react";
 import "./desk.css";
 import { Shell, useDesk, type ScreenId } from "@/components/meridian/Shell";
 import { AuthGate } from "@/components/meridian/AuthGate";
@@ -12,16 +11,7 @@ import { FilingsView } from "@/components/meridian/desk/Research";
 import { QuantView } from "@/components/meridian/desk/Quant";
 import { BookScreen } from "@/components/meridian/desk/Book";
 import { RiskScreen } from "@/components/meridian/desk/Risk";
-import { ConsoleScreen } from "@/components/meridian/screens/Console";
-
-// A screen not yet moved to the v2 layout keeps its own panel styles in a box.
-function Legacy({ children }: { children: ReactNode }) {
-  return (
-    <div className="meridian-root mx-desk m-legacy" data-theme="dark">
-      <div className="main">{children}</div>
-    </div>
-  );
-}
+import { ConsoleScreen } from "@/components/meridian/desk/Console";
 
 function ResearchTabs() {
   const { researchView, setResearchView } = useDesk();
@@ -53,7 +43,7 @@ function Screen({ id }: { id: ScreenId }) {
     case "agents":
       return <AgentsScreen />;
     case "console":
-      return <Legacy><ConsoleScreen /></Legacy>;
+      return <ConsoleScreen />;
     case "log":
       return <AuditLogScreen />;
   }
