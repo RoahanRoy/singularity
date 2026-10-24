@@ -100,19 +100,27 @@ export type RebalancePlan = {
 
 const DAY_MS = 86_400_000;
 
-export function planRebalance(input: RebalanceInput): RebalancePlan {
-  const now = input.now ?? Date.now();
-  const maxAge = (input.maxAgeDays ?? 7) * DAY_MS;
-  const minTrade = (input.minTradePct ?? 0.5) / 100;
-  const notes: string[] = [];
+/** How strongly a verdict points long: composite × confidence. Buys and ideas rank by it. */
+export const edgeOf = (v: Pick<Verdict, "composite" | "confidence">) => v.composite * v.confidence;
 
+/** The newest verdict per ticker among those run within `maxAgeMs` of `now`. */
+export function freshVerdicts(verdicts: readonly Verdict[], now: number, maxAgeMs: number): Map<string, Verdict> {
   const fresh = new Map<string, Verdict>();
-  for (const v of input.verdicts) {
+  for (const v of verdicts) {
     const t = Date.parse(v.runAt);
-    if (!Number.isFinite(t) || now - t > maxAge) continue;
+    if (!Number.isFinite(t) || now - t > maxAgeMs) continue;
     const prev = fresh.get(v.ticker);
     if (!prev || Date.parse(prev.runAt) < t) fresh.set(v.ticker, v);
   }
+  return fresh;
+}
+
+export function planRebalance(input: RebalanceInput): RebalancePlan {
+  const now = input.now ?? Date.now();
+  const minTrade = (input.minTradePct ?? 0.5) / 100;
+  const notes: string[] = [];
+
+  const fresh = freshVerdicts(input.verdicts, now, (input.maxAgeDays ?? 7) * DAY_MS);
 
   const bookValue = input.holdings.reduce((s, h) => s + Math.max(0, h.marketValue), 0);
   const cash = Math.max(0, input.cash);
@@ -194,7 +202,7 @@ export function planRebalance(input: RebalanceInput): RebalancePlan {
         value, shares, price, fromWeight: w(mv), toWeight: w(mv - value), reason,
       });
     } else if (target > mv) {
-      wants.push({ ticker: h.ticker, label: h.label, action: "add", from: mv, want: target - mv, price, reason, rank: v ? v.composite * v.confidence : 0 });
+      wants.push({ ticker: h.ticker, label: h.label, action: "add", from: mv, want: target - mv, price, reason, rank: v ? edgeOf(v) : 0 });
     }
   }
 
@@ -205,7 +213,7 @@ export function planRebalance(input: RebalanceInput): RebalancePlan {
   // Pass 2: new names, strongest first.
   const candidates = [...fresh.values()]
     .filter((v) => v.direction === "long" && !held.has(v.ticker))
-    .sort((a, b) => b.composite * b.confidence - a.composite * a.confidence);
+    .sort((a, b) => edgeOf(b) - edgeOf(a));
   let unpriced = 0;
   let unmeasured = 0;
   for (const v of candidates) {
@@ -216,7 +224,7 @@ export function planRebalance(input: RebalanceInput): RebalancePlan {
     wants.push({
       ticker: v.ticker, action: "buy", from: 0, want: cap.value * v.confidence, price,
       reason: `${describe(v)}: new position at ${pct(w(cap.value * v.confidence))}, under ${cap.text}`,
-      rank: v.composite * v.confidence,
+      rank: edgeOf(v),
     });
   }
   if (unpriced) notes.push(`${unpriced} unheld long${unpriced === 1 ? "" : "s"} skipped: no ${input.currency} price on the verdict.`);

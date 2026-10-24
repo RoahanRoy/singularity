@@ -382,7 +382,7 @@ function handOff(st: QuantState, cycleId: string): QuantCtx {
   };
 }
 
-const STORED_MAX_AGE_H = Number(process.env.MERIDIAN_QUANT_STORED_MAX_AGE_H ?? 36);
+export const STORED_MAX_AGE_H = Number(process.env.MERIDIAN_QUANT_STORED_MAX_AGE_H ?? 36);
 
 /**
  * The hand-off from the newest stored sweep of the name, for cycles that run

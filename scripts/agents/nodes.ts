@@ -172,6 +172,12 @@ export type Ctx = {
    * the rest of the chain instead of re-burning ~a dozen LLM calls on it.
    */
   needsAnalysis?: boolean;
+  /**
+   * Set by the desk when the name was picked as an idea (ideas.ts): research it
+   * even when its latest disclosure was summarized before, since the desk has
+   * never written a memo on it.
+   */
+  research?: boolean;
   /** Which desk this cycle belongs to. Defaults to "US". */
   market?: "US" | "IN";
   /**
@@ -338,15 +344,18 @@ export async function parser(ctx: Ctx): Promise<Ctx> {
 
   // Dedup: have we already seen and summarized this exact disclosure? If so,
   // reuse the stored summary — skip the LLM summarize call AND signal the
-  // orchestrator to skip the downstream analysis chain (nothing new to say).
+  // orchestrator to skip the downstream analysis chain (nothing new to say),
+  // unless the name is an idea the desk has yet to research.
   const prior = await findFiling(ticker, edgar.source_url);
   if (prior?.summary) {
-    await emit(id, "thought", `No new disclosure for ${ticker} — reusing indexed summary`);
+    await emit(id, "thought", ctx.research
+      ? `Researching idea ${ticker} on its indexed ${edgar.form_type} summary`
+      : `No new disclosure for ${ticker} — reusing indexed summary`);
     await setStatus(id, "idle");
     return {
       ...ctx,
       sector: sector ?? ctx.sector,
-      needsAnalysis: false,
+      needsAnalysis: !!ctx.research,
       filing: {
         id: prior.$id,
         form_type: edgar.form_type,

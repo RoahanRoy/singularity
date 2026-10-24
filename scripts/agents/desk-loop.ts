@@ -17,8 +17,10 @@
  *
  * Behavior: runs continuously. Each cycle first scans for fresh events (new
  * filings/news — see events.ts) and drains any into a priority queue; the
- * ticker for the cycle is the next queued event, or, when the queue is empty, a
- * round-robin pick over the held book (falling back to the static universe).
+ * ticker for the cycle is the next queued event, or, when the queue is empty,
+ * the strongest unresearched idea from the daily quant sweep (ideas.ts), or,
+ * when none is left, a round-robin pick over the held book (falling back to the
+ * static universe).
  * That ticker runs through the agent chain, and every step is written to
  * Appwrite so the Swarm / Research / Portfolio screens tick live. A SIGTERM
  * (what the Console "stop" button sends) finishes the current cycle, then exits
@@ -30,6 +32,7 @@
  *   <PREFIX>_ERROR_BACKOFF_MS  pause after a failed cycle (default 15000)
  *   <PREFIX>_EVENT_SCAN=0      disable event-driven selection (round-robin only)
  *   <PREFIX>_EVENT_BATCH       names probed for new filings per cycle (default 10)
+ *   <PREFIX>_IDEAS=0           don't research ideas from the quant sweep
  *   MERIDIAN_SYNC_BASE         base URL of the running app for the sync route
  *                              (default http://localhost:3000)
  *   CRON_SECRET                bearer for that sync route (must match the app's)
@@ -50,6 +53,7 @@ import { markFundNav } from "./fund-nav";
 import { reportRisk } from "./portfolio-risk";
 import { marketState } from "./market-hours";
 import { collectEvents, type EventHit, type LatestFilingKey } from "./events";
+import { nextIdea } from "./ideas";
 
 export type DeskConfig = {
   /** Short tag used for log lines and env-var prefixing (e.g. "tech", "india"). */
@@ -93,6 +97,8 @@ export async function runDesk(config: DeskConfig): Promise<void> {
   // fallback, so a scan outage never stalls the loop.
   const EVENT_SCAN = process.env[`${envPrefix}_EVENT_SCAN`] !== "0" && !!config.universe;
   const EVENT_BATCH = Number(process.env[`${envPrefix}_EVENT_BATCH`] || config.eventScanBatch || 10);
+  // Ideas: the sweep's strongest unheld longs, each researched once (ideas.ts).
+  const IDEAS = process.env[`${envPrefix}_IDEAS`] !== "0" && !!config.universe;
 
   let stopping = false;
   function requestStop(sig: string) {
@@ -221,12 +227,13 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     await measureRisk();
     const held = await heldTickers();
 
-    // React to fresh disclosures first; fall back to round-robin to keep cold
-    // names covered and the loop warm when nothing new has landed.
+    // React to fresh disclosures first, then research the next idea; fall back
+    // to round-robin to keep cold names covered and the loop warm.
     await scanEvents(held);
     const evt = eventQueue.shift();
     let ticker: string;
     let via: string;
+    let research = false;
     if (evt) {
       queued.delete(evt.ticker);
       ticker = evt.ticker;
@@ -244,13 +251,37 @@ export async function runDesk(config: DeskConfig): Promise<void> {
         /* feed emit is non-fatal — the cycle proceeds regardless */
       }
     } else {
-      ticker = await config.nextTicker(held);
-      via = "round-robin";
+      let pick: Awaited<ReturnType<typeof nextIdea>> = null;
+      if (IDEAS) {
+        try {
+          pick = await nextIdea(market, config.universe ?? [], held);
+        } catch (err) {
+          console.warn(`[${key}] idea queue failed (falling back to round-robin): ${(err as Error).message}`);
+        }
+      }
+      if (pick) {
+        const { idea } = pick;
+        ticker = idea.ticker;
+        research = true;
+        const up = idea.upsidePct == null ? "" : `, valuation upside ${idea.upsidePct > 0 ? "+" : ""}${idea.upsidePct.toFixed(1)}%`;
+        const why = `composite +${Math.round(idea.composite)} × confidence ${idea.confidence.toFixed(2)}${up}`;
+        via = `idea #${pick.rank} of ${pick.of} (${why}; ${pick.covered} above it already covered)`;
+        try {
+          await emit(agentIds.parser, "thought", `Researching idea ${ticker}: #${pick.rank} of ${pick.of} sweep longs, ${why}`, {
+            via: "idea", ticker, rank: pick.rank, of: pick.of, composite: idea.composite, confidence: idea.confidence, upside_pct: idea.upsidePct,
+          });
+        } catch {
+          /* feed emit is non-fatal */
+        }
+      } else {
+        ticker = await config.nextTicker(held);
+        via = "round-robin";
+      }
     }
     const sector = config.sectorOf(ticker);
     console.log(`\n=== ${config.label} — ${ticker} (${sector}) · ${via} · book=${held.length} names ===\n`);
 
-    let ctx: Ctx = { ticker, agentIds, market };
+    let ctx: Ctx = { ticker, agentIds, market, research };
     ctx = await parser(ctx);
     if (!ctx.needsAnalysis) {
       console.log(`\n=== ${ticker}: no new disclosure — reused prior summary, skipping analysis ===`);
