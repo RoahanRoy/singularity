@@ -7,13 +7,12 @@ import { AuthGate } from "@/components/meridian/AuthGate";
 import { MarketProvider } from "@/components/meridian/MarketContext";
 import { TodayScreen } from "@/components/meridian/desk/Today";
 import { AuditLogScreen } from "@/components/meridian/desk/AuditLog";
-import { SwarmScreen } from "@/components/meridian/screens/Swarm";
+import { AgentsScreen } from "@/components/meridian/desk/Agents";
 import { FilingsView } from "@/components/meridian/desk/Research";
 import { QuantView } from "@/components/meridian/desk/Quant";
 import { BookScreen } from "@/components/meridian/desk/Book";
 import { RiskScreen } from "@/components/meridian/desk/Risk";
 import { ConsoleScreen } from "@/components/meridian/screens/Console";
-import { ComputeScreen } from "@/components/meridian/screens/Compute";
 
 // A screen not yet moved to the v2 layout keeps its own panel styles in a box.
 function Legacy({ children }: { children: ReactNode }) {
@@ -52,13 +51,7 @@ function Screen({ id }: { id: ScreenId }) {
     case "research":
       return <ResearchTabs />;
     case "agents":
-      return (
-        <>
-          <Legacy><SwarmScreen /></Legacy>
-          <div style={{ height: 24 }} />
-          <Legacy><ComputeScreen /></Legacy>
-        </>
-      );
+      return <AgentsScreen />;
     case "console":
       return <Legacy><ConsoleScreen /></Legacy>;
     case "log":

@@ -238,6 +238,16 @@ export async function listBudgetLedger(limit = 50): Promise<BudgetLedger[]> {
   return res.documents;
 }
 
+/** Ledger rows since a stamp, newest first; `total` says whether the page covers them all. */
+export async function listBudgetSince(since: string, limit = 500): Promise<{ rows: BudgetLedger[]; total: number }> {
+  const res = await databases.listDocuments<BudgetLedger & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.budget_ledger,
+    [Query.greaterThanEqual("occurred_at", since), Query.orderDesc("occurred_at"), Query.limit(limit)],
+  );
+  return { rows: res.documents, total: res.total };
+}
+
 export async function listScenarios(limit = 12, market?: Market): Promise<Scenario[]> {
   const res = await databases.listDocuments<Scenario & Models.Document>(
     DATABASE_ID,
