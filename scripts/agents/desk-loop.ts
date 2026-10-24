@@ -47,6 +47,7 @@ import {
 import { quantDesk } from "./quant-nodes";
 import { heldTickers as heldOnBooks } from "./coverage";
 import { markFundNav } from "./fund-nav";
+import { reportRisk } from "./portfolio-risk";
 import { marketState } from "./market-hours";
 import { collectEvents, type EventHit, type LatestFilingKey } from "./events";
 
@@ -148,6 +149,24 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     }
   }
 
+  // The portfolio risk report for both books (portfolio-risk.ts). It runs on
+  // daily history, so an hourly refresh only picks up new fills and marks.
+  const RISK_EVERY_MS = 60 * 60_000;
+  let lastRiskReport = 0;
+  async function measureRisk(): Promise<void> {
+    if (Date.now() - lastRiskReport < RISK_EVERY_MS) return;
+    lastRiskReport = Date.now();
+    for (const book of ["fund", "advisory"] as const) {
+      try {
+        const r = await reportRisk(market, book);
+        if (r.status === "reported") console.log(`[${key}] ${book} risk ${r.session}: VaR95 ${(r.report.var95.parametric * 100).toFixed(2)}%, beta ${r.report.beta.toFixed(2)}, TE ${(r.report.tracking_error * 100).toFixed(1)}%`);
+        else console.log(`[${key}] ${book} risk skipped (${r.reason})`);
+      } catch (err) {
+        console.warn(`[${key}] ${book} risk report failed (continuing): ${(err as Error).message}`);
+      }
+    }
+  }
+
   /** Current held tickers for this desk's market, on the fund and advisory books. */
   async function heldTickers(): Promise<string[]> {
     try {
@@ -199,6 +218,7 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     const executed = await sweepApprovedMemos(market, agentIds);
     if (executed > 0) console.log(`[${key}] executed ${executed} operator-approved trade(s)`);
     await markNav();
+    await measureRisk();
     const held = await heldTickers();
 
     // React to fresh disclosures first; fall back to round-robin to keep cold
