@@ -9,7 +9,9 @@ import { IbkrAccountsPanel } from "../IbkrAccounts";
 import { latestRiskReport, listAdvisoryPositions, listAdvisoryTrades, listFundSnapshots } from "@/lib/appwrite/queries";
 import type { AdvisoryTrade, FactorExposure, FundSnapshot, Position, RiskReport, RiskReportPayload } from "@/lib/appwrite/schema";
 import type { Market } from "@/lib/meridian/format";
+import type { Bar } from "@/lib/fund/benchmark";
 import { DESK_INDEX } from "@/lib/market/indices";
+import { operatorFetch } from "@/lib/auth/operator-fetch";
 import { TRADING_DAYS } from "@/lib/quant/risk";
 import { LineChart, shortDate } from "./Chart";
 import { PlanSection } from "./Plan";
@@ -82,11 +84,27 @@ function std(xs: number[]): number {
 }
 
 /**
+ * The index's daily close on or before each mark's date: the last session the
+ * mark had seen. Null for marks older than the closes Yahoo returned.
+ * Marks and bars both run oldest first.
+ */
+function indexOnMarks(snaps: FundSnapshot[], bars: Bar[] | null): (number | null)[] {
+  let k = 0;
+  let last: number | null = null;
+  return snaps.map((s) => {
+    const day = s.captured_at.slice(0, 10);
+    while (bars && k < bars.length && bars[k].date <= day) last = bars[k++].close;
+    return last;
+  });
+}
+
+/**
  * Range metrics from the stored marks. The advisory book's NAV moves with the
  * operator's deposits, so its returns come from the flow-free book_index when
- * every mark carries one.
+ * every mark carries one. The index return comes from its daily closes on the
+ * marks, or else the level each mark recorded.
  */
-function metrics(snaps: FundSnapshot[], book: Book) {
+function metrics(snaps: FundSnapshot[], book: Book, closes: (number | null)[]) {
   const flowFree = book === "advisory" && snaps.length > 0 && snaps.every((s) => s.book_index != null);
   const level = snaps.map((s) => (flowFree ? (s.book_index as number) : s.nav_usd));
   const rets: number[] = [];
@@ -102,8 +120,14 @@ function metrics(snaps: FundSnapshot[], book: Book) {
   const mean = rets.length ? rets.reduce((s, x) => s + x, 0) / rets.length : 0;
   const first = snaps[0];
   const last = snaps[snaps.length - 1];
+  const c0 = closes[0];
+  const cN = closes[closes.length - 1];
   const idx =
-    first?.index_level && last?.index_level ? last.index_level / first.index_level - 1 : null;
+    c0 && cN
+      ? cN / c0 - 1
+      : first?.index_level && last?.index_level
+        ? last.index_level / first.index_level - 1
+        : null;
   return {
     ret: level.length >= 2 && level[0] ? level[level.length - 1] / level[0] - 1 : null,
     idx,
@@ -143,6 +167,15 @@ export function BookScreen() {
   );
   const risk = riskGot?.hit ?? null;
   const { status: horizon, refresh: refreshHorizon } = useHorizonStatus();
+  // A year of the index's daily closes (no tickers: the index alone).
+  const indexBars = useLoad<Bar[] | null>(
+    () =>
+      operatorFetch(`/api/market/benchmark?market=${market}`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j: { index?: { bars?: Bar[] } } | null) => j?.index?.bars ?? null),
+    [market],
+    null,
+  );
 
   const positions = (book === "fund" ? fund?.positions : advisory?.[0]) ?? [];
   const snapshots = (book === "fund" ? fund?.snapshots : advisory?.[1]) ?? [];
@@ -159,8 +192,22 @@ export function BookScreen() {
 
   const from = rangeStart(range, new Date());
   const inRange = snapshots.filter((s) => Date.parse(s.captured_at) >= from);
-  const m = metrics(inRange, book);
+  const closes = indexOnMarks(inRange, indexBars);
+  const m = metrics(inRange, book, closes);
   const index = DESK_INDEX[market];
+  // The index rebased onto the book's value where its closes start, so the two
+  // lines leave together and the gap between them is the excess.
+  const anchor = closes.findIndex((c) => c != null);
+  const compare =
+    anchor >= 0 && anchor < inRange.length - 1
+      ? {
+          name: anchor === 0 ? index.name : `${index.name} · from ${shortDate(inRange[anchor].captured_at)}`,
+          color: "var(--ink-3)",
+          values: closes.map((c, i) =>
+            c == null || i < anchor ? null : (inRange[anchor].nav_usd * c) / (closes[anchor] as number),
+          ),
+        }
+      : undefined;
 
   const sorted = [...positions].sort((a, b) => (b.market_value || 0) - (a.market_value || 0));
   const weighted = sorted.map((p) => ({ p, w: denom > 0 ? (p.market_value || 0) / denom : 0 }));
@@ -225,9 +272,14 @@ export function BookScreen() {
           <LineChart
             points={inRange.map((s) => ({ t: s.captured_at, v: s.nav_usd }))}
             color={toneOf((m.ret ?? 0) || 1)}
-            label={(p, first) => (
+            name={book === "fund" ? "Fund" : "Holdings"}
+            compare={compare}
+            label={(p, first, i) => (
               <>
                 {shortDate(p.t)} · {fullMoney(p.v, market)} · {pct(first.v ? p.v / first.v - 1 : null, 2, true)} in range
+                {compare && closes[i] != null && i >= anchor
+                  ? ` · ${index.name} ${pct((closes[i] as number) / (closes[anchor] as number) - 1, 2, true)}`
+                  : ""}
               </>
             )}
           />
