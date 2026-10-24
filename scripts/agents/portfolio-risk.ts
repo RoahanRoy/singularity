@@ -22,6 +22,7 @@ import { fetchHistory, ySym } from "./market-data";
 import { DESK_INDEX } from "../../src/lib/market/indices";
 import { TRADING_DAYS } from "../../src/lib/quant/risk";
 import { portfolioRisk, type PortfolioRisk, type RiskHolding } from "../../src/lib/quant/portfolio-risk";
+import type { Bar } from "../../src/lib/quant/types";
 
 type Market = "US" | "IN";
 export type RiskBook = "fund" | "advisory";
@@ -31,7 +32,7 @@ const STRESS_YEARS = [2020, 2022];
 const HISTORY_CONCURRENCY = 6;
 const REPORT_JSON_MAX = 65_535;
 
-type Holding = { ticker: string; qty: number; price: number };
+export type Holding = { ticker: string; qty: number; price: number };
 
 async function mapPool<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length);
@@ -67,6 +68,21 @@ async function bookHoldings(market: Market, book: RiskBook, now: Date): Promise<
   };
 }
 
+/** Holdings with their daily history, and the desk index's; null without the index. */
+export async function withHistory(market: Market, holdings: readonly Holding[]): Promise<{ index: Bar[]; holdings: RiskHolding[] } | null> {
+  const [index, histories] = await Promise.all([
+    fetchHistory(DESK_INDEX[market].symbol),
+    mapPool([...holdings], HISTORY_CONCURRENCY, (h) => fetchHistory(ySym(h.ticker, market))),
+  ]);
+  if (!index) return null;
+  return { index: index.bars, holdings: holdings.map((h, i) => ({ ...h, bars: histories[i]?.bars ?? [] })) };
+}
+
+/** The desk's risk report for a book: a one-year window, 20-session ADV, the 2020 and 2022 replays. */
+export function measure(nav: number, holdings: readonly RiskHolding[], index: readonly Bar[]): PortfolioRisk | null {
+  return portfolioRisk({ nav, holdings, index, window: TRADING_DAYS, advWindow: ADV_WINDOW, stressYears: STRESS_YEARS });
+}
+
 const r6 = (x: number) => (Number.isFinite(x) ? Number(x.toFixed(6)) : null);
 
 /** The report as stored: numbers rounded, non-finite as null. */
@@ -82,20 +98,9 @@ export async function reportRisk(market: Market, book: RiskBook, now: Date = new
   const inputs = await bookHoldings(market, book, now);
   if ("skip" in inputs) return { status: "skipped", market, book, reason: inputs.skip };
 
-  const [index, histories] = await Promise.all([
-    fetchHistory(DESK_INDEX[market].symbol),
-    mapPool(inputs.holdings, HISTORY_CONCURRENCY, (h) => fetchHistory(ySym(h.ticker, market))),
-  ]);
-  if (!index) return { status: "skipped", market, book, reason: `no ${DESK_INDEX[market].symbol} history` };
-  const holdings: RiskHolding[] = inputs.holdings.map((h, i) => ({ ...h, bars: histories[i]?.bars ?? [] }));
-  const report = portfolioRisk({
-    nav: inputs.nav,
-    holdings,
-    index: index.bars,
-    window: TRADING_DAYS,
-    advWindow: ADV_WINDOW,
-    stressYears: STRESS_YEARS,
-  });
+  const hist = await withHistory(market, inputs.holdings);
+  if (!hist) return { status: "skipped", market, book, reason: `no ${DESK_INDEX[market].symbol} history` };
+  const report = measure(inputs.nav, hist.holdings, hist.index);
   if (!report) return { status: "skipped", market, book, reason: `NAV ${inputs.nav} or under ${TRADING_DAYS + 1} index sessions` };
 
   const session = exchangeDate(market, now);

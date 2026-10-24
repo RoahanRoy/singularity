@@ -31,6 +31,7 @@ export const COLLECTIONS = {
   news: "news",
   quant_reports: "quant_reports",
   risk_reports: "risk_reports",
+  risk_budgets: "risk_budgets",
 } as const;
 
 type Base = { $id: string; $createdAt: string; $updatedAt: string };
@@ -366,6 +367,19 @@ export type RiskReport = Base & {
   tracking_error: number | null;
   unmeasured_weight: number | null;
   report_json: string;
+};
+
+/**
+ * The operator's risk budget for a desk: a target annual tracking error
+ * against the desk index, as a fraction. Append-only; the latest `set_at`
+ * applies (lib/fund/risk-budget.ts derives every trading limit from it).
+ */
+export type RiskBudget = Base & {
+  market: Market;
+  target_te: number;
+  set_at: string;
+  set_by: string;
+  note: string | null;
 };
 
 /**

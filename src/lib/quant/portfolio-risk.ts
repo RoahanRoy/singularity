@@ -54,6 +54,8 @@ export type NameRisk = {
   /** Share of NAV. */
   weight: number;
   vol_annual: number;
+  /** Annualised vol of the name's return less the index's: its active risk per unit weight. */
+  active_vol: number;
   beta: number;
   /** Share of portfolio variance (sums to 1 over names). */
   risk_share: number;
@@ -236,6 +238,7 @@ export function portfolioRisk(input: RiskInput): PortfolioRisk | null {
       ticker: m.h.ticker,
       weight: m.w,
       vol_annual: std(m.r) * Math.sqrt(TRADING_DAYS),
+      active_vol: std(m.r.map((x, t) => x - idx[t])) * Math.sqrt(TRADING_DAYS),
       beta: iVar > 0 ? covariance(m.r, idx) / iVar : 0,
       risk_share: pVar > 0 ? (m.w * Sw[i]) / pVar : 0,
       te_share: aVar > 0 ? (m.w * covariance(m.r, active)) / aVar : 0,
