@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import { Shell, type ScreenId } from "@/components/meridian/Shell";
+import type { ReactNode } from "react";
+import "./desk.css";
+import { Shell, useDesk, type ScreenId } from "@/components/meridian/Shell";
 import { AuthGate } from "@/components/meridian/AuthGate";
 import { MarketProvider } from "@/components/meridian/MarketContext";
+import { TodayScreen } from "@/components/meridian/desk/Today";
+import { AuditLogScreen } from "@/components/meridian/desk/AuditLog";
 import { SwarmScreen } from "@/components/meridian/screens/Swarm";
 import { ResearchScreen } from "@/components/meridian/screens/Research";
 import { QuantScreen } from "@/components/meridian/screens/Quant";
@@ -12,25 +15,62 @@ import { RiskScreen } from "@/components/meridian/screens/Risk";
 import { ConsoleScreen } from "@/components/meridian/screens/Console";
 import { ComputeScreen } from "@/components/meridian/screens/Compute";
 
-const SCREENS = {
-  swarm: SwarmScreen,
-  research: ResearchScreen,
-  quant: QuantScreen,
-  portfolio: PortfolioScreen,
-  risk: RiskScreen,
-  console: ConsoleScreen,
-  compute: ComputeScreen,
-} as const;
+// A screen not yet moved to the v2 layout keeps its own panel styles in a box.
+function Legacy({ children }: { children: ReactNode }) {
+  return (
+    <div className="meridian-root mx-desk m-legacy" data-theme="dark">
+      <div className="main">{children}</div>
+    </div>
+  );
+}
+
+function ResearchTabs() {
+  const { researchView, setResearchView } = useDesk();
+  return (
+    <>
+      <div className="m-seg sm" role="group" aria-label="Research view" style={{ marginBottom: 16 }}>
+        <button aria-pressed={researchView === "filings"} onClick={() => setResearchView("filings")}>
+          Filings &amp; memos
+        </button>
+        <button aria-pressed={researchView === "quant"} onClick={() => setResearchView("quant")}>
+          Quant
+        </button>
+      </div>
+      <Legacy>{researchView === "quant" ? <QuantScreen /> : <ResearchScreen />}</Legacy>
+    </>
+  );
+}
+
+function Screen({ id }: { id: ScreenId }) {
+  switch (id) {
+    case "today":
+      return <TodayScreen />;
+    case "book":
+      return <Legacy><PortfolioScreen /></Legacy>;
+    case "risk":
+      return <Legacy><RiskScreen /></Legacy>;
+    case "research":
+      return <ResearchTabs />;
+    case "agents":
+      return (
+        <>
+          <Legacy><SwarmScreen /></Legacy>
+          <div style={{ height: 24 }} />
+          <Legacy><ComputeScreen /></Legacy>
+        </>
+      );
+    case "console":
+      return <Legacy><ConsoleScreen /></Legacy>;
+    case "log":
+      return <AuditLogScreen />;
+  }
+}
 
 export default function Desk() {
-  const [active, setActive] = useState<ScreenId>("portfolio");
-  const Screen = SCREENS[active];
   return (
     <AuthGate>
       <MarketProvider>
-        <Shell active={active} setActive={setActive}>
-          <Screen />
-        </Shell>
+        <Shell>{(screen) => <Screen id={screen} />}</Shell>
       </MarketProvider>
     </AuthGate>
   );

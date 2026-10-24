@@ -1,96 +1,93 @@
 "use client";
 
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, createContext, useCallback, useContext, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { MarketTicker, ExchangeClock, exchangeStatus, type ExchangeStatus } from "./primitives";
+import { exchangeStatus, type ExchangeStatus } from "./primitives";
 import { useOperator } from "./AuthGate";
 import { useMarket } from "./MarketContext";
 import { signOutOperator } from "@/lib/auth/operator";
-import { listAdvisoryPositions, listIbkrAccounts, listFundSnapshots } from "@/lib/appwrite/queries";
-import type { Position } from "@/lib/appwrite/schema";
-import { fmtFullMoney, type Market } from "@/lib/meridian/format";
+import { listHeldMemos, subscribeMemos } from "@/lib/appwrite/queries";
+import type { Memo } from "@/lib/appwrite/schema";
+import type { Market } from "@/lib/meridian/format";
 import { useTheme } from "@/lib/meridian/theme";
 
-export type ScreenId = "swarm" | "research" | "quant" | "portfolio" | "risk" | "console" | "compute";
+export type ScreenId = "today" | "book" | "risk" | "research" | "agents" | "console" | "log";
+export type ResearchView = "filings" | "quant";
 
-// id, label, crumb, Material Symbols glyph
-const SCREENS: { id: ScreenId; label: string; crumb: string; icon: string }[] = [
-  { id: "portfolio", label: "Portfolio", crumb: "Capital", icon: "pie_chart" },
-  { id: "risk", label: "Risk", crumb: "Capital", icon: "shield" },
-  { id: "swarm", label: "Swarm", crumb: "Intelligence", icon: "hub" },
-  { id: "research", label: "Research", crumb: "Intelligence", icon: "description" },
-  { id: "quant", label: "Quant", crumb: "Intelligence", icon: "functions" },
-  { id: "console", label: "Console", crumb: "Operator", icon: "forum" },
-  { id: "compute", label: "Compute", crumb: "System", icon: "memory" },
+// group, then [id, label, Material Symbols glyph]
+const NAV: [string, [ScreenId, string, string][]][] = [
+  ["Monitor", [["today", "Today", "today"], ["book", "Book", "account_balance"], ["risk", "Risk", "shield"]]],
+  ["Decide", [["research", "Research", "description"]]],
+  ["Operate", [["agents", "Agents", "hub"], ["console", "Console", "forum"]]],
+  ["Record", [["log", "Audit log", "history"]]],
+];
+// Old screen ids (and links that still use them) land on their new home.
+const ALIAS: Record<string, ScreenId> = { portfolio: "book", swarm: "agents", compute: "agents", quant: "research" };
+const TABS: [ScreenId, string, string][] = [
+  ["today", "Today", "today"],
+  ["book", "Book", "account_balance"],
+  ["research", "Research", "description"],
+  ["agents", "Agents", "hub"],
+];
+const MORE: [ScreenId, string, string][] = [
+  ["risk", "Risk", "shield"],
+  ["console", "Console", "forum"],
+  ["log", "Audit log", "history"],
 ];
 
-type Posture = {
-  nav: number;
-  cash: number;
-  leverage: number;
-  cashPct: number;
-  var99: number | null;
-  connected: boolean;
-};
+const SCREEN_KEY = "meridian-desk-screen-v3";
+const DETAIL_KEY = "meridian-desk-detail";
 
-type Book = { positions: Position[]; posture: Posture | null };
-
-/**
- * The advisory book behind the sidebar — the operator's real holdings for the
- * active desk (not the fund's own paper book, which Portfolio shows) — and,
- * on the US desk, posture derived from the real IBKR account — NAV/cash from
- * the connected account, leverage & cash% from the positions, and a 99%/1d
- * historical VaR from the fund's NAV return series (— until there's history).
- */
-function useBook(market: Market): Book | null {
-  const [book, setBook] = useState<Book | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    const load = async (): Promise<Book> => {
-      if (market !== "US") return { positions: await listAdvisoryPositions(50, market), posture: null };
-      const [pos, accts, snaps] = await Promise.all([
-        listAdvisoryPositions(50, "US"),
-        listIbkrAccounts(10),
-        listFundSnapshots(200, "US"),
-      ]);
-      const cash = accts.reduce((s, a) => s + (a.equity_cash || 0), 0);
-      const grossMV = pos.reduce((s, p) => s + Math.abs(p.market_value || 0), 0);
-      const netMV = pos.reduce((s, p) => s + (p.market_value || 0), 0);
-      const nav = netMV + cash;
-      const navs = snaps.map((s) => s.nav_usd);
-      const rets: number[] = [];
-      for (let i = 1; i < navs.length; i++) if (navs[i - 1]) rets.push(navs[i] / navs[i - 1] - 1);
-      let var99: number | null = null;
-      if (rets.length >= 2) {
-        const sorted = [...rets].sort((a, b) => a - b);
-        var99 = Math.abs(sorted[Math.floor(0.01 * sorted.length)] ?? sorted[0]);
-      }
-      return {
-        positions: pos,
-        posture: {
-          nav,
-          cash,
-          leverage: nav ? grossMV / nav : 0,
-          cashPct: nav ? cash / nav : 0,
-          var99,
-          connected: accts.some((a) => a.ibkr_account_id),
-        },
-      };
-    };
-    load()
-      .then((b) => !cancelled && setBook(b))
-      .catch(() => !cancelled && setBook(null));
-    return () => {
-      cancelled = true;
-    };
-  }, [market]);
-  return book;
+export function resolveScreen(raw: string | null | undefined): ScreenId | null {
+  if (!raw) return null;
+  const id = ALIAS[raw] ?? raw;
+  return NAV.some(([, items]) => items.some(([s]) => s === id)) ? (id as ScreenId) : null;
 }
 
-function Icon({ name, fill = 0, size = 19 }: { name: string; fill?: number; size?: number }) {
+type DeskState = {
+  screen: ScreenId;
+  /** Navigate; accepts old ids too (`quant` opens Research on the Quant tab). */
+  go: (raw: string) => void;
+  full: boolean;
+  showFull: () => void;
+  researchView: ResearchView;
+  setResearchView: (v: ResearchView) => void;
+  /** Memos holding an order: awaiting a decision (`review`) or approved and not yet executed. */
+  held: Memo[] | null;
+  reloadHeld: () => void;
+};
+
+const DeskCtx = createContext<DeskState | null>(null);
+
+export function useDesk(): DeskState {
+  const v = useContext(DeskCtx);
+  if (!v) throw new Error("useDesk outside the desk shell");
+  return v;
+}
+
+function read(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function write(key: string, v: string) {
+  try {
+    window.localStorage.setItem(key, v);
+  } catch {
+    /* storage blocked: the choice just doesn't persist */
+  }
+}
+
+export function Icon({ name, size, fill }: { name: string; size?: number; fill?: boolean }) {
   return (
-    <span className="msr" aria-hidden style={{ fontSize: size, fontVariationSettings: `'FILL' ${fill}` }}>
+    <span
+      className="m-icon"
+      aria-hidden
+      style={{ fontSize: size, fontVariationSettings: fill ? "'FILL' 1, 'wght' 300" : undefined }}
+    >
       {name}
     </span>
   );
@@ -99,9 +96,9 @@ function Icon({ name, fill = 0, size = 19 }: { name: string; fill?: number; size
 function MarketSeg() {
   const { market, setMarket } = useMarket();
   return (
-    <div className="v2-seg" role="group" aria-label="Market">
+    <div className="m-seg" role="group" aria-label="Desk">
       {(["US", "IN"] as const).map((m) => (
-        <button key={m} className={market === m ? "on" : ""} aria-pressed={market === m} onClick={() => setMarket(m)}>
+        <button key={m} aria-pressed={market === m} onClick={() => setMarket(m)}>
           {m === "US" ? "US" : "India"}
         </button>
       ))}
@@ -109,69 +106,39 @@ function MarketSeg() {
   );
 }
 
-function Holdings({ book, market }: { book: Book | null; market: Market }) {
-  const rows = [...(book?.positions ?? [])].sort((a, b) => Math.abs(b.market_value) - Math.abs(a.market_value));
-  const locale = market === "IN" ? "en-IN" : "en-US";
-  return (
-    <>
-      <div className="v2-hold-head">
-        <span>Holdings</span>
-        <span className="meta">{market === "IN" ? "India · Advisory · Horizon" : "US · Advisory · IBKR"}</span>
-      </div>
-      <div className="v2-hold">
-        {book && rows.length === 0 && (
-          <div className="v2-empty">
-            No positions yet. {market === "IN" ? "Sync Horizon" : "Connect IBKR"} from Portfolio.
-          </div>
-        )}
-        {rows.map((p) => {
-          const cost = p.market_value - p.unrealized_pnl;
-          const pct = cost ? (p.unrealized_pnl / Math.abs(cost)) * 100 : 0;
-          const px = p.qty ? p.market_value / p.qty : 0;
-          const tone = pct >= 0 ? "up" : "down";
-          return (
-            <div key={p.$id} className="v2-hold-row" title="Unrealised P&L vs. average cost">
-              <div className="who">
-                <div className="sym">{p.ticker}</div>
-                <div className="sub">
-                  {p.qty.toLocaleString(locale)} sh · {(p.weight * 100).toFixed(1)}%
-                </div>
-              </div>
-              <div className="px">
-                <div>{px.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <span className={"chg " + tone}>
-                  {(pct >= 0 ? "+" : "−") + Math.abs(pct).toFixed(2)}%
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
+const STATUS: Record<ExchangeStatus, [string, string]> = {
+  open: ["Market open", "var(--up)"],
+  pre: ["Pre-open", "var(--warn)"],
+  after: ["After hours", "var(--warn)"],
+  closed: ["Market closed", "var(--ink-3)"],
+};
+
+/** Local exchange time: ET for NYSE, IST for NSE (NYSE taken as EDT, like exchangeStatus). */
+function exchangeClock(market: Market, now: Date): string {
+  const l = new Date(now.getTime() + (market === "IN" ? 330 : -240) * 60_000);
+  const z = (n: number) => String(n).padStart(2, "0");
+  return `${z(l.getUTCHours())}:${z(l.getUTCMinutes())}:${z(l.getUTCSeconds())} ${market === "IN" ? "IST" : "ET"}`;
 }
 
-function PostureLine({ posture }: { posture: Posture | null }) {
-  if (!posture?.connected) return null;
+function MarketStatus({ market }: { market: Market }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const [label, dot] = STATUS[exchangeStatus(market, now)];
   return (
-    <div className="v2-posture">
+    <div className="m-status">
+      <span className="m-dot" style={{ background: dot }} />
       <span>
-        NAV <b>{fmtFullMoney(posture.nav, "US")}</b>
+        {label} · {market === "IN" ? "NSE" : "NYSE"}
       </span>
-      <span>
-        Lev <b>{posture.leverage.toFixed(2)}×</b>
-      </span>
-      <span>
-        VaR <b>{posture.var99 != null ? (posture.var99 * 100).toFixed(2) + "%" : "—"}</b>
-      </span>
-      <span>
-        Cash <b>{(posture.cashPct * 100).toFixed(1)}%</b>
-      </span>
+      <span className="m-mono m-ink3">{exchangeClock(market, now)}</span>
     </div>
   );
 }
 
-function Operator() {
+function Footer({ theme, toggleTheme }: { theme: string; toggleTheme: () => void }) {
   const op = useOperator();
   const router = useRouter();
   const initials =
@@ -181,148 +148,176 @@ function Operator() {
       .slice(0, 2)
       .map((s) => s[0]?.toUpperCase() || "")
       .join("") || "OP";
-
-  async function handleSignOut() {
+  async function signOut() {
     await signOutOperator();
     router.replace("/sign-in");
   }
-
   return (
-    <div className="v2-foot">
-      <div className="avatar">{initials}</div>
+    <div className="m-foot">
+      <span className="m-avatar">{initials}</span>
       <div className="who">
-        <div className="name">{op?.name || op?.email || "Operator"}</div>
-        <Link href="/guided" className="role">
-          Guided tour
-        </Link>
+        <div>{op?.name || op?.email || "Operator"}</div>
+        <button className="m-link" onClick={signOut}>
+          Sign out
+        </button>
       </div>
-      <button onClick={handleSignOut} className="out">
-        Sign out
-      </button>
+      <ThemeButton theme={theme} toggle={toggleTheme} />
     </div>
   );
 }
 
-const STATUS_LABEL: Record<ExchangeStatus, string> = {
-  open: "Market open",
-  pre: "Pre-open",
-  after: "After hours",
-  closed: "Market closed",
-};
-
-function MarketStatus({ market }: { market: Market }) {
-  // Recompute on the client every 30s so the status flips as sessions open/close.
-  // SSR renders nothing; the effect hydrates the real status.
-  const [status, setStatus] = useState<ExchangeStatus | null>(null);
-  useEffect(() => {
-    const tick = () => setStatus(exchangeStatus(market));
-    tick();
-    const id = setInterval(tick, 30_000);
-    return () => clearInterval(id);
-  }, [market]);
-  if (!status) return null;
-  const label = `${STATUS_LABEL[status]} · ${market === "IN" ? "NSE" : "NYSE"}`;
+function ThemeButton({ theme, toggle }: { theme: string; toggle: () => void }) {
   return (
-    <span className={"v2-status " + status} title={label}>
-      <span className="ping" aria-hidden />
-      <span className="lbl">{label}</span>
-    </span>
+    <button className="m-sq" onClick={toggle} aria-label={theme === "dark" ? "Switch to light" : "Switch to dark"}>
+      <Icon name={theme === "dark" ? "light_mode" : "dark_mode"} />
+    </button>
   );
 }
 
-export function Shell({
-  active,
-  setActive,
-  children,
-}: {
-  active: ScreenId;
-  setActive: (id: ScreenId) => void;
-  children: ReactNode;
-}) {
-  const { market, setMarket } = useMarket();
-  const [theme, toggleTheme] = useTheme("dark");
-  const book = useBook(market);
-  const cur = SCREENS.find((s) => s.id === active)!;
+/** Held orders for the active desk, kept live off the memos channel. */
+function useHeld(market: Market): [Memo[] | null, () => void] {
+  const [held, setHeld] = useState<Memo[] | null>(null);
+  const [nonce, setNonce] = useState(0);
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+  useEffect(() => {
+    let cancelled = false;
+    listHeldMemos(25, market)
+      .then((m) => !cancelled && setHeld(m))
+      .catch(() => !cancelled && setHeld([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [market, nonce]);
+  useEffect(() => subscribeMemos(() => reload()), [reload]);
+  return [held, reload];
+}
+
+export function Shell({ children }: { children: (screen: ScreenId) => ReactNode }) {
+  const { market } = useMarket();
+  const [theme, toggleTheme] = useTheme("light");
+  // AuthGate mounts the shell only on the client, so the last screen and
+  // detail level can be read straight from storage (a `?screen=` link wins).
+  const [initial] = useState(() => new URLSearchParams(window.location.search).get("screen") ?? read(SCREEN_KEY));
+  const [screen, setScreen] = useState<ScreenId>(() => resolveScreen(initial) ?? "today");
+  const [full, setFull] = useState(() => read(DETAIL_KEY) === "full");
+  const [researchView, setResearchView] = useState<ResearchView>(initial === "quant" ? "quant" : "filings");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [held, reloadHeld] = useHeld(market);
+
+  const go = useCallback((raw: string) => {
+    const id = resolveScreen(raw);
+    if (!id) return;
+    if (raw === "quant") setResearchView("quant");
+    setScreen(id);
+    setMoreOpen(false);
+    write(SCREEN_KEY, id);
+    window.scrollTo(0, 0);
+  }, []);
+  const setDetail = (f: boolean) => {
+    setFull(f);
+    write(DETAIL_KEY, f ? "full" : "essentials");
+  };
+
+  const pending = (held ?? []).filter((m) => m.status === "review").length;
+  const [crumb, items] = NAV.find(([, it]) => it.some(([s]) => s === screen))!;
+  const title = items.find(([s]) => s === screen)![1];
+  const moreOn = MORE.some(([s]) => s === screen);
+
+  const ctx: DeskState = {
+    screen,
+    go,
+    full,
+    showFull: () => setDetail(true),
+    researchView,
+    setResearchView,
+    held,
+    reloadHeld,
+  };
 
   return (
-    <div className="meridian-root mx-desk" data-theme={theme}>
-      <div className="app v2">
-        <aside className="v2-side mx-glass">
-          <div className="v2-brand">
-            <span className="mark" aria-hidden>
-              <span />
-            </span>
-            <Link href="/" className="name">
-              Meridian
-            </Link>
-            <button className="v2-round" onClick={toggleTheme} aria-label="Toggle appearance">
-              <Icon name={theme === "dark" ? "light_mode" : "dark_mode"} size={18} />
-            </button>
+    <DeskCtx.Provider value={ctx}>
+      <div className="mx" data-theme={theme}>
+        <aside className="m-side">
+          <div className="m-brand">
+            <span className="m-mark" aria-hidden />
+            <Link href="/">Meridian</Link>
           </div>
           <MarketSeg />
-          <nav className="v2-nav">
-            {SCREENS.map((s) => (
-              <button
-                key={s.id}
-                className={active === s.id ? "on" : ""}
-                aria-current={active === s.id ? "page" : undefined}
-                onClick={() => setActive(s.id)}
-              >
-                <Icon name={s.icon} fill={active === s.id ? 1 : 0} />
-                {s.label}
-              </button>
+          <nav className="m-nav" aria-label="Desk sections">
+            {NAV.map(([label, its]) => (
+              <div className="grp" key={label}>
+                <div className="m-label">{label}</div>
+                {its.map(([id, lab, icon]) => (
+                  <button key={id} onClick={() => go(id)} aria-current={screen === id ? "page" : undefined}>
+                    <Icon name={icon} />
+                    <span style={{ flex: 1 }}>{lab}</span>
+                    {id === "today" && pending > 0 && <span className="m-badge">{pending}</span>}
+                  </button>
+                ))}
+              </div>
             ))}
           </nav>
-          <Holdings book={book} market={market} />
-          <PostureLine posture={market === "US" ? (book?.posture ?? null) : null} />
-          <Operator />
+          <Footer theme={theme} toggleTheme={toggleTheme} />
         </aside>
 
-        <header className="v2-head mx-glass">
-          <div className="row">
-            {/* Narrow screens hide the sidebar, so the brand, market and theme controls move up here. */}
-            <span className="mark mob" aria-hidden>
-              <span />
-            </span>
-            <span className="title">{cur.label}</span>
-            <span className="crumb">{cur.crumb}</span>
-            <div className="right">
+        <div className="m-top">
+          <span className="name">Meridian</span>
+          <MarketSeg />
+          <ThemeButton theme={theme} toggle={toggleTheme} />
+        </div>
+
+        <main className="m-main">
+          <header className="m-head">
+            <div className="m-head-in">
+              <div style={{ minWidth: 0, marginRight: "auto" }}>
+                <div className="m-meta">{crumb}</div>
+                <h1>{title}</h1>
+              </div>
               <MarketStatus market={market} />
-              <span className="clock">
-                <ExchangeClock market={market} />
-              </span>
-              <button
-                className="v2-pill mob"
-                onClick={() => setMarket(market === "IN" ? "US" : "IN")}
-                aria-label={`Switch to ${market === "IN" ? "US" : "India"} desk`}
-              >
-                {market === "IN" ? "🇮🇳 IN" : "🇺🇸 US"}
-              </button>
-              <button className="v2-round mob" onClick={toggleTheme} aria-label="Toggle appearance">
-                <Icon name={theme === "dark" ? "light_mode" : "dark_mode"} size={18} />
-              </button>
+              <div className="m-seg" role="group" aria-label="Detail level">
+                <button aria-pressed={!full} onClick={() => setDetail(false)}>
+                  Essentials
+                </button>
+                <button aria-pressed={full} onClick={() => setDetail(true)}>
+                  Full detail
+                </button>
+              </div>
             </div>
-          </div>
-          <MarketTicker />
-        </header>
+          </header>
+          <div className="m-body">{children(screen)}</div>
+        </main>
 
-        <main className="main">{children}</main>
-
-        <nav className="v2-tabs mx-glass" aria-label="Screens">
-          {SCREENS.map((s) => (
-            <button key={s.id} className={active === s.id ? "on" : ""} onClick={() => setActive(s.id)}>
-              <Icon name={s.icon} fill={active === s.id ? 1 : 0} size={26} />
-              <span>{s.label}</span>
+        {moreOpen && (
+          <>
+            <button className="m-more-bg" aria-label="Close menu" onClick={() => setMoreOpen(false)} />
+            <div className="m-more" role="menu">
+              {MORE.map(([id, label, icon]) => (
+                <button key={id} role="menuitem" onClick={() => go(id)}>
+                  <Icon name={icon} />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        <nav className="m-tabbar" aria-label="Desk sections">
+          {TABS.map(([id, label, icon]) => (
+            <button key={id} onClick={() => go(id)} aria-current={screen === id ? "page" : undefined}>
+              <Icon name={icon} />
+              <span>{label}</span>
+              {id === "today" && pending > 0 && <span className="m-badge">{pending}</span>}
             </button>
           ))}
+          <button
+            onClick={() => setMoreOpen((o) => !o)}
+            aria-current={moreOn ? "page" : undefined}
+            aria-expanded={moreOpen}
+          >
+            <Icon name="more_horiz" />
+            <span>More</span>
+          </button>
         </nav>
       </div>
-    </div>
+    </DeskCtx.Provider>
   );
-}
-
-export { SCREENS };
-
-export function useScreenState(initial: ScreenId = "portfolio") {
-  return useState<ScreenId>(initial);
 }
