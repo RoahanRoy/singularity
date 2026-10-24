@@ -28,19 +28,22 @@ export function ThemeButton({ theme, toggle }: { theme: Theme; toggle: () => voi
   );
 }
 
-/** Sticky top bar: brand, an optional middle slot, then theme + `end`. */
+/** Sticky top bar: brand, an optional middle slot, then theme + `end`.
+ *  `children` render under the bar, inside the sticky header. */
 export function SiteNav({
   theme,
   toggle,
   middle,
   end,
   wide,
+  children,
 }: {
   theme: Theme;
   toggle: () => void;
   middle?: ReactNode;
   end?: ReactNode;
   wide?: boolean;
+  children?: ReactNode;
 }) {
   return (
     <header className="s-nav">
@@ -52,6 +55,7 @@ export function SiteNav({
           {end}
         </div>
       </div>
+      {children}
     </header>
   );
 }

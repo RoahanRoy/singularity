@@ -1,0 +1,17 @@
+/* The sample desk embedded in a public page: the real desk shell (desk.css)
+   pinned to its 1280×800 desktop layout whatever the viewport, since the frame
+   scales it down rather than reflowing it. `.mx.m-embed …` outranks desk.css's
+   media queries. */
+
+.mx.m-embed { height: 100%; min-height: 0; overflow: hidden; flex-direction: row; --m-padx: 40px; }
+.mx.m-embed .m-side { display: flex; height: 100%; position: static; }
+.mx.m-embed .m-main { height: 100%; overflow-y: auto; }
+.mx.m-embed .m-top,
+.mx.m-embed .m-tabbar { display: none; }
+.mx.m-embed .m-head { top: 0; }
+.mx.m-embed .m-body { padding-bottom: 72px; }
+.mx.m-embed .m-cols2 { grid-template-columns: minmax(0, 1fr) 320px; }
+.mx.m-embed .m-aside { position: static; }
+.mx.m-embed .m-split { grid-template-columns: 300px minmax(0, 1fr); }
+.mx.m-embed .m-chat { height: 600px; }
+.mx.m-embed .m-sample { margin-left: 6px; }

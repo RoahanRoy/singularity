@@ -66,6 +66,15 @@ export const glossary: Record<string, GlossaryEntry> = {
   "liquidity": { title: "Liquidity", body: "How easily you can buy or sell something without moving the price. Cash = perfectly liquid; private equity = not." },
   "quiet period": { title: "Quiet Period", body: "A regulated window before earnings during which companies can't discuss financials publicly. Violations are a big deal." },
   "macro": { title: "Macro", body: "Top-down trading driven by economic forces — rates, growth, inflation, currencies — rather than individual companies." },
+  "tracking error": { title: "Tracking Error", body: "How far the fund's return is expected to stray from its index over a year. A 4% target means the book may differ from the S&P 500 by about 4% a year, in either direction." },
+  "active risk": { title: "Active Risk", body: "The part of a position's risk that comes from differing from the index, rather than from simply holding the market." },
+  "risk budget": { title: "Risk Budget", body: "The tracking error you allow the fund, split across its positions. A trade that would spend more than is left is blocked." },
+  "red team": { title: "Red Team", body: "An agent whose job is to attack a memo before it reaches the PM. It can pass it, send it back once for revision, or reject it." },
+  "memo": { title: "Research Memo", body: "An analyst's written case on a name: what changed, why it matters, and whether to trade." },
+  "paper fund": { title: "Paper Fund", body: "A fund that trades with simulated money at live prices, so you can judge the desk before risking capital." },
+  "twap": { title: "TWAP", body: "Time-weighted average price: an order sliced evenly over a window, so it doesn't land on the market all at once." },
+  "vwap": { title: "VWAP", body: "Volume-weighted average price: an order sliced in step with the day's trading volume." },
+  "mandate": { title: "Mandate", body: "The fund's standing instructions: its capital, the index it's measured against and how much tracking error it may take." },
 };
 
 export function lookup(term: string): GlossaryEntry | undefined {
