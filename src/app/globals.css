@@ -499,6 +499,38 @@
 .meridian-root .gov .rule.on .sw::after { background: var(--md-accent); left: 11px; }
 
 /* Compute */
+/* Risk */
+.meridian-root .risk { display: grid; grid-template-columns: 1fr 1.2fr 1fr; grid-template-rows: 1fr 1fr; width: 100%; height: 100%; }
+.meridian-root .risk > .panel { border-radius: 0; }
+.meridian-root .risk .span-row-2 { grid-row: span 2; }
+.meridian-root .risk .span-col-3 { grid-column: span 3; }
+.meridian-root .risk .panel-head .title { display: flex; align-items: center; gap: 10px; }
+.meridian-root .risk .risk-seg { margin: 0; min-width: 150px; }
+.meridian-root .risk .risk-seg button { padding: 3px 10px; font-size: 12px; }
+.meridian-root .risk .risk-stats { padding: 0 18px; }
+.meridian-root .risk .risk-pad { padding: 0 12px 12px; }
+.meridian-root .risk .bigstat .spark { width: 100%; margin-top: 4px; }
+.meridian-root .risk-row, .meridian-root .risk-liq { display: grid; align-items: center; gap: 10px; padding: 6px 12px; font-family: var(--mono); font-size: 11px; border-bottom: 1px solid var(--line-soft); }
+.meridian-root .risk-row { grid-template-columns: 72px 52px minmax(40px, 1fr) 52px 52px 44px; }
+.meridian-root .risk-liq { grid-template-columns: 72px 84px minmax(0, 1fr); }
+.meridian-root :is(.risk-row, .risk-liq) > span:not(.t):not(.b):not(.why) { text-align: right; }
+.meridian-root :is(.risk-row, .risk-liq).head { color: var(--ink-3); font-size: 10px; letter-spacing: 0.06em; }
+.meridian-root :is(.risk-row, .risk-liq) .t { color: var(--ink-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meridian-root .risk-liq .why { overflow-wrap: anywhere; }
+.meridian-root .risk-row .b { height: 6px; background: var(--bg-3); position: relative; }
+.meridian-root .risk-row .b > i { position: absolute; top: 0; bottom: 0; left: 0; background: var(--md-accent); }
+.meridian-root .risk-row .b > i.neg { background: var(--green); }
+.meridian-root .risk-sub { padding: 14px 12px 6px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--md-accent); border-bottom: 1px solid var(--line-soft); }
+.meridian-root .risk-stress { display: grid; gap: 14px; }
+.meridian-root .risk-replay .lbl { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+.meridian-root .risk-replay .lbl .dim { font-family: var(--mono); font-size: 10.5px; }
+.meridian-root .risk-replay .q-stats { margin-top: 6px; }
+@media (max-width: 1199px) {
+  .meridian-root .risk { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; height: auto; }
+  .meridian-root .risk .span-row-2 { grid-row: auto; }
+  .meridian-root .risk .span-col-3 { grid-column: auto; }
+}
+
 .meridian-root .compute { display: grid; grid-template-columns: 1.2fr 1fr 1fr; grid-template-rows: 1fr 1fr; width: 100%; height: 100%; }
 .meridian-root .compute > .panel { border-radius: 0; }
 .meridian-root .compute .span-row-2 { grid-row: span 2; }
@@ -686,8 +718,8 @@
 /* Heads stay opaque: some screen grids overlap panels and rely on the head to cover it. */
 .meridian-root.mx-desk .panel-head { background: var(--group); border-bottom: 1px solid var(--line); box-shadow: none; padding: 0 16px; }
 .meridian-root.mx-desk .panel-head .title { font-family: var(--f-text); font-size: 14px; font-weight: 700; letter-spacing: -0.02em; text-transform: none; color: var(--ink); }
-.meridian-root.mx-desk :is(.swarm, .research, .quant, .portfolio, .console-grid, .compute) { gap: 10px; padding: 10px; }
-.meridian-root.mx-desk :is(.swarm, .research, .quant, .portfolio, .console-grid, .compute) > .panel { border: 0; border-radius: 14px; }
+.meridian-root.mx-desk :is(.swarm, .research, .quant, .portfolio, .risk, .console-grid, .compute) { gap: 10px; padding: 10px; }
+.meridian-root.mx-desk :is(.swarm, .research, .quant, .portfolio, .risk, .console-grid, .compute) > .panel { border: 0; border-radius: 14px; }
 .meridian-root.mx-desk .panel-head .meta { font-family: var(--f-text); font-size: 12px; letter-spacing: 0; }
 .meridian-root.mx-desk .action-card .btn.primary { background: var(--tint); border-color: var(--tint); color: #fff; box-shadow: none; }
 .meridian-root.mx-desk .tag.green { border-color: color-mix(in oklch, var(--up) 50%, transparent); }

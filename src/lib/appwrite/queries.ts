@@ -2,7 +2,7 @@
 
 import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc, type IbkrAccount, type QuantReport, type Market, isFundPosition } from "./schema";
+import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc, type IbkrAccount, type QuantReport, type RiskReport, type Market, isFundPosition } from "./schema";
 
 /**
  * Market filter. When a desk is passed we constrain to that desk's rows.
@@ -422,4 +422,30 @@ export function subscribeQuantReports(onCreate: (r: QuantReport) => void) {
       onCreate(msg.payload);
     }
   });
+}
+
+/** The latest portfolio risk report for one desk and book, or null before the first. */
+export async function latestRiskReport(market: Market, book: RiskReport["book"]): Promise<RiskReport | null> {
+  const res = await databases.listDocuments<RiskReport & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.risk_reports,
+    [Query.equal("market", market), Query.equal("book", book), Query.orderDesc("captured_at"), Query.limit(1)],
+  );
+  return res.documents[0] ?? null;
+}
+
+/** One desk and book's headline risk by session, oldest first (no report body). */
+export async function listRiskHistory(market: Market, book: RiskReport["book"], limit = 60): Promise<RiskReport[]> {
+  const res = await databases.listDocuments<RiskReport & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.risk_reports,
+    [
+      Query.equal("market", market),
+      Query.equal("book", book),
+      Query.select(["$id", "session", "captured_at", "nav", "vol_annual", "var95", "es95", "var99", "beta", "tracking_error", "unmeasured_weight"]),
+      Query.orderDesc("captured_at"),
+      Query.limit(limit),
+    ],
+  );
+  return res.documents.slice().reverse();
 }

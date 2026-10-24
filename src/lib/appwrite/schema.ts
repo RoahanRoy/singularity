@@ -3,6 +3,8 @@
  * Mirrors appwrite.json — keep in sync.
  */
 
+import type { PortfolioRisk } from "../quant/portfolio-risk";
+
 export const COLLECTIONS = {
   agents: "agents",
   clusters: "clusters",
@@ -28,6 +30,7 @@ export const COLLECTIONS = {
   ibkr_accounts: "ibkr_accounts",
   news: "news",
   quant_reports: "quant_reports",
+  risk_reports: "risk_reports",
 } as const;
 
 type Base = { $id: string; $createdAt: string; $updatedAt: string };
@@ -343,6 +346,43 @@ export type QuantReport = Base & {
   run_at: string;
   cycle_id: string;
 };
+
+/**
+ * The desk's portfolio risk report for one book, one row per exchange session
+ * (scripts/agents/portfolio-risk.ts). The headline columns are the parametric
+ * figures; `report_json` holds the whole report.
+ */
+export type RiskReport = Base & {
+  market: Market;
+  book: "fund" | "advisory";
+  session: string;
+  captured_at: string;
+  nav: number;
+  vol_annual: number | null;
+  var95: number | null;
+  es95: number | null;
+  var99: number | null;
+  beta: number | null;
+  tracking_error: number | null;
+  unmeasured_weight: number | null;
+  report_json: string;
+};
+
+/**
+ * Parsed `RiskReport.report_json`: lib/quant/portfolio-risk.ts's report with
+ * numbers rounded and non-finite ones stored as null, plus where the marks
+ * came from and the index it is measured against.
+ */
+export type RiskReportPayload = Nullable<PortfolioRisk> & { marks: string; index: string };
+
+/** Numbers in a stored report may be null (non-finite when measured). */
+type Nullable<T> = T extends number
+  ? number | null
+  : T extends string | boolean | null
+    ? T
+    : T extends readonly (infer U)[]
+      ? Nullable<U>[]
+      : { [K in keyof T]: Nullable<T[K]> };
 
 /** Parsed `QuantReport.payload_json`. */
 export type QuantReportPayload = {
