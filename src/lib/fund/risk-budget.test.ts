@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dayLossLimit, gateTrade, lagLimit, largestAdd, Z99 } from "./risk-budget";
+import { dayLossLimit, gateTrade, lagLimit, lagSince, largestAdd, Z99 } from "./risk-budget";
 
 const close = (a: number, b: number, tol: number, msg?: string) =>
   assert.ok(Math.abs(a - b) <= tol, `${msg ?? ""} expected ${b}, got ${a}`);
@@ -50,4 +50,20 @@ test("a size computed at the one-name cap clears the gate", () => {
   const target = 0.06, vol = 0.1504; // (0.06 / 0.1504) * 0.1504 > 0.06 in floating point
   const add = largestAdd(() => 0.1, { target, teBefore: 0.1367, nameWeightBefore: 0, nameActiveVol: vol, wMax: 1 });
   assert.deepEqual(gateTrade({ target, teBefore: 0.1367, teAfter: 0.1, nameWeightAfter: add, nameActiveVol: vol }), []);
+});
+
+test("lagSince: book vs index since the first row with both levels", () => {
+  assert.equal(lagSince([]), null);
+  assert.equal(lagSince([{ captured_at: "2026-10-01", book_index: 100, index_level: null }]), null);
+  const r = lagSince([
+    { captured_at: "2026-10-01", book_index: 100, index_level: null },
+    { captured_at: "2026-10-02", book_index: 100, index_level: 5000 },
+    { captured_at: "2026-10-03", book_index: 99, index_level: null },
+    { captured_at: "2026-10-04", book_index: 98, index_level: 5100 },
+    { captured_at: "2026-10-05", book_index: 97, index_level: null },
+  ])!;
+  close(r.lag, Math.log(0.98) - Math.log(1.02), 1e-12);
+  assert.equal(r.sessions, 2);
+  assert.equal(r.from, "2026-10-02");
+  assert.equal(r.to, "2026-10-04");
 });

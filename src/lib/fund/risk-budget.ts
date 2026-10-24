@@ -85,3 +85,26 @@ export function largestAdd(
   }
   return lo;
 }
+
+export type LagPoint = { captured_at: string; book_index?: number | null; index_level?: number | null };
+
+/**
+ * The fund's flow-free lag behind the index since its first mark, as a log
+ * return (negative = behind), from the daily fund_snapshots rows (one per
+ * session, oldest first), and the sessions it spans. Null until a row carries
+ * both levels.
+ */
+export function lagSince(points: readonly LagPoint[]): { lag: number; sessions: number; from: string; to: string } | null {
+  const ok = (p: LagPoint) => Number(p.book_index) > 0 && Number(p.index_level) > 0;
+  const first = points.findIndex(ok);
+  if (first < 0) return null;
+  let last = first;
+  for (let i = points.length - 1; i > first; i--) if (ok(points[i])) { last = i; break; }
+  const a = points[first], b = points[last];
+  return {
+    lag: Math.log(Number(b.book_index) / Number(a.book_index)) - Math.log(Number(b.index_level) / Number(a.index_level)),
+    sessions: last - first,
+    from: a.captured_at,
+    to: b.captured_at,
+  };
+}

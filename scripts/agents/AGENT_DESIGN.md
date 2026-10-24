@@ -73,11 +73,13 @@ Anthropic's "stop and surface for review" pattern. Treat the env var as the
 operator's standing approval for the session; never make it the default.
 
 Separately, `circuit-breaker.ts` gates **every** fill — auto-executed or
-operator-approved — inside `fillPaperTrade`. It halts new buys when the paper
-book's day loss breaches `MERIDIAN_MAX_DAILY_LOSS_PCT` (default 3%), when a
-mandate desk's equity is `MERIDIAN_MAX_DRAWDOWN_PCT` (default 10%) below its
-capital base, or when the book can't be marked (fails closed). No LLM in that
-path. A trip latches for the session and writes an audit row, a governance
+operator-approved — inside `fillPaperTrade`. Its limits come from the desk's
+risk budget (`risk_budgets`: the operator's target tracking error vs the
+index; `lib/fund/risk-budget.ts`). It halts new buys when the fund book's day
+loss is beyond z99 · (index vol + target) / √252, when the fund trails the
+index since its first mark by more than z99 · target · √(sessions / 252), or
+when any held name has no live quote, or the book, budget or index history
+can't be read (fails closed). No LLM in that path. A trip latches for the session and writes an audit row, a governance
 block and a live-feed alert; held and approved trades return to `review`.
 
 ## 5. Trust tiers (implemented for the filing pipeline)
@@ -186,7 +188,7 @@ in `universe.ts`. Each analyst is a distinct row in the `agents` collection.
 | `indexFiling` (in `nodes.ts`) | persistence-only, no LLM | ✅ live |
 | `red-team-critic` | adversarial review | ✅ live |
 | `portfolio-manager` | sizing | ✅ live |
-| `risk-officer` | pre-trade VaR | ✅ live |
+| `risk-officer` | pre-trade risk-budget gate (tracking error, one-name active risk) | ✅ live |
 | `compliance` | pre-trade rules | ✅ live |
 
 ### Quant desk (38 agents, live)
@@ -212,9 +214,9 @@ workflow order after the filing is parsed and before the analyst writes:
 Every agent returns a score (−100…100), a one-line summary and, where it can
 be tested, out-of-sample evidence. The `ensemble-combiner` weights each score
 by that evidence and blends the valuation models into one fair-value band.
-Downstream, the quant-researcher signal, the PM's share count and the risk
-officer's VaR are computed from these numbers in code. The LLM versions of
-those three steps remain as fallbacks for when the desk did not run.
+Downstream, the quant-researcher signal and the PM's share count are computed
+from these numbers in code; the risk officer measures the fund book itself.
+The LLM versions of those steps remain as fallbacks for when the desk did not run.
 
 Env knobs:
 
