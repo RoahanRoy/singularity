@@ -8,8 +8,8 @@ import { MarketProvider } from "@/components/meridian/MarketContext";
 import { TodayScreen } from "@/components/meridian/desk/Today";
 import { AuditLogScreen } from "@/components/meridian/desk/AuditLog";
 import { SwarmScreen } from "@/components/meridian/screens/Swarm";
-import { ResearchScreen } from "@/components/meridian/screens/Research";
-import { QuantScreen } from "@/components/meridian/screens/Quant";
+import { FilingsView } from "@/components/meridian/desk/Research";
+import { QuantView } from "@/components/meridian/desk/Quant";
 import { BookScreen } from "@/components/meridian/desk/Book";
 import { RiskScreen } from "@/components/meridian/desk/Risk";
 import { ConsoleScreen } from "@/components/meridian/screens/Console";
@@ -28,15 +28,15 @@ function ResearchTabs() {
   const { researchView, setResearchView } = useDesk();
   return (
     <>
-      <div className="m-seg sm" role="group" aria-label="Research view" style={{ marginBottom: 16 }}>
-        <button aria-pressed={researchView === "filings"} onClick={() => setResearchView("filings")}>
+      <div className="m-tabs" role="tablist" aria-label="Research views" style={{ margin: "-8px 0 28px" }}>
+        <button role="tab" aria-selected={researchView === "filings"} onClick={() => setResearchView("filings")}>
           Filings &amp; memos
         </button>
-        <button aria-pressed={researchView === "quant"} onClick={() => setResearchView("quant")}>
+        <button role="tab" aria-selected={researchView === "quant"} onClick={() => setResearchView("quant")}>
           Quant
         </button>
       </div>
-      <Legacy>{researchView === "quant" ? <QuantScreen /> : <ResearchScreen />}</Legacy>
+      {researchView === "quant" ? <QuantView /> : <FilingsView />}
     </>
   );
 }

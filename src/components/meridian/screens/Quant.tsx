@@ -17,7 +17,7 @@ import { QUANT_AGENTS, STAGES, type AgentSpec, type Stage } from "@/lib/quant/ro
 
 // ── Payload accessors (payload_json is untyped JSON) ─────────────────────────
 
-function parsePayload(r: QuantReport): QuantReportPayload {
+export function parsePayload(r: QuantReport): QuantReportPayload {
   if (!r.payload_json) return {};
   try {
     const v: unknown = JSON.parse(r.payload_json);
@@ -35,7 +35,7 @@ const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 
 type Contribution = { agent: string; label: string; score: number | null; weight: number; contribution: number; basis: string; validated: boolean };
 type Blend = { low: number; high: number; mid: number; upsidePct: number; verdict: string; method: string };
-type EnsembleView = {
+export type EnsembleView = {
   composite: number;
   direction: string;
   confidence: number | null;
@@ -50,7 +50,7 @@ type EnsembleView = {
   dailyVar: { value: number; source: string } | null;
 };
 
-function ensembleView(r: QuantReport | undefined): EnsembleView | null {
+export function ensembleView(r: QuantReport | undefined): EnsembleView | null {
   if (!r) return null;
   const d = parsePayload(r).data;
   const composite = num(field(d, "composite")) ?? r.score;
@@ -89,7 +89,7 @@ function ensembleView(r: QuantReport | undefined): EnsembleView | null {
 
 // ── Cycles ────────────────────────────────────────────────────────────────────
 
-type Status = "done" | "stopped" | "running" | "incomplete";
+export type Status = "done" | "stopped" | "running" | "incomplete";
 export type Head = { ticker: string; cycleId: string; lastAt: string; composite: number | null; direction: string | null; status: Status };
 
 const RUNNING_WINDOW_MS = 20 * 60 * 1000;
@@ -124,7 +124,7 @@ export function groupHeads(rows: QuantReport[], now: number): Head[] {
     .sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1));
 }
 
-function mergeById(a: QuantReport[], b: QuantReport[]): QuantReport[] {
+export function mergeById(a: QuantReport[], b: QuantReport[]): QuantReport[] {
   const m = new Map<string, QuantReport>();
   for (const r of [...a, ...b]) m.set(r.$id, r);
   return [...m.values()];
@@ -313,7 +313,8 @@ function Verdict({ ens, head, now }: { ens: EnsembleView | null; head: Head | nu
 
 // ── Screen ───────────────────────────────────────────────────────────────────
 
-export function QuantScreen() {
+/** The quant desk's live state: the measured names, the selected one, and its newest cycle's reports. */
+export function useQuantDesk() {
   const { market } = useMarket();
   const [heads, setHeads] = useState<QuantReport[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -360,7 +361,11 @@ export function QuantScreen() {
     return m;
   }, [rows, cycleId]);
 
-  return <QuantView market={market} loaded={loaded} list={list} head={head} byAgent={byAgent} now={now} onSelect={setSel} />;
+  return { market, loaded, list, head, byAgent, now, onSelect: setSel };
+}
+
+export function QuantScreen() {
+  return <QuantView {...useQuantDesk()} />;
 }
 
 /** The screen's render, kept free of data loading. */

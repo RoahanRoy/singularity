@@ -233,3 +233,19 @@
 .m-compat .mono { font-family: var(--m-mono); }
 .m-compat .dim { color: var(--ink-3); }
 .m-compat input, .m-compat select, .m-compat textarea { font: inherit; color: var(--ink); background: var(--surface); }
+
+/* pick lists (research inbox, quant names) and the split layouts they sit in */
+.m-pick { width: 100%; display: block; text-align: left; border: 0; cursor: pointer; border-radius: 6px; padding: 10px 12px; margin: 1px 0;
+  background: transparent; color: inherit; transition: background-color 150ms ease; }
+.m-pick:hover, .m-pick[aria-current="true"] { background: var(--sunk); }
+.m-split, .m-split3 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px; align-items: start; }
+@media (min-width: 980px) {
+  .m-split { grid-template-columns: 300px minmax(0, 1fr); }
+  .m-split3 { grid-template-columns: 260px minmax(0, 1fr); }
+}
+@media (min-width: 1280px) {
+  .m-split3 { grid-template-columns: 240px minmax(0, 1fr) 300px; }
+  .m-split3 > aside { position: sticky; top: 110px; }
+}
+.m-prose { max-width: 68ch; display: flex; flex-direction: column; gap: 14px; font-family: var(--m-serif); font-size: 19px; line-height: 1.55; }
+.m-prose p { margin: 0; text-wrap: pretty; }

@@ -53,6 +53,9 @@ type DeskState = {
   showFull: () => void;
   researchView: ResearchView;
   setResearchView: (v: ResearchView) => void;
+  /** A memo to open on Research (set from a Today decision's thesis link). */
+  focusMemo: Memo | null;
+  setFocusMemo: (m: Memo | null) => void;
   /** Memos holding an order: awaiting a decision (`review`) or approved and not yet executed. */
   held: Memo[] | null;
   reloadHeld: () => void;
@@ -201,6 +204,7 @@ export function Shell({ children }: { children: (screen: ScreenId) => ReactNode 
   const [screen, setScreen] = useState<ScreenId>(() => resolveScreen(initial) ?? "today");
   const [full, setFull] = useState(() => read(DETAIL_KEY) === "full");
   const [researchView, setResearchView] = useState<ResearchView>(initial === "quant" ? "quant" : "filings");
+  const [focusMemo, setFocusMemo] = useState<Memo | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [held, reloadHeld] = useHeld(market);
 
@@ -230,6 +234,8 @@ export function Shell({ children }: { children: (screen: ScreenId) => ReactNode 
     showFull: () => setDetail(true),
     researchView,
     setResearchView,
+    focusMemo,
+    setFocusMemo,
     held,
     reloadHeld,
   };

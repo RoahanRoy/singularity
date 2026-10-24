@@ -312,13 +312,14 @@ function Decisions({ held }: { held: Memo[] | null }) {
 }
 
 function ThesisLink({ memo }: { memo: Memo }) {
-  const { go, setResearchView } = useDesk();
+  const { go, setResearchView, setFocusMemo } = useDesk();
   return (
     <button
       className="m-link"
       style={{ alignSelf: "flex-start", textAlign: "left" }}
       onClick={() => {
         setResearchView("filings");
+        setFocusMemo(memo);
         go("research");
       }}
     >
