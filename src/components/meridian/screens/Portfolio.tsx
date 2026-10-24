@@ -16,10 +16,8 @@ import {
   subscribeMemos,
   listFundSnapshots,
   listScenarios,
-  listEnsembleVerdicts,
-  latestRiskReport,
+  latestConstructionPlan,
 } from "@/lib/appwrite/queries";
-import { planRebalance, verdictOf, type RebalanceAction, type Verdict } from "@/lib/fund/rebalance";
 import type {
   Position,
   Memo,
@@ -28,8 +26,8 @@ import type {
   FactorExposure,
   ScenarioBranch,
   Market,
-  RiskReport,
-  RiskReportPayload,
+  ConstructionPlan,
+  ConstructionPlanPayload,
 } from "@/lib/appwrite/schema";
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -440,160 +438,139 @@ function PositionsList({ rows, loaded, market, empty = "No positions on the book
   );
 }
 
-// ── Rebalance (advisory, from the quant desk's ensemble verdicts) ─────────────
+// ── Construction plan (the desk's stored plan per book) ───────────────────────
 
 type MandateCash = { cash: number };
 
-// Measured active vol by ticker from the desk's latest risk reports: the
-// advisory book's, then the fund's for names only it holds.
-function activeVols(...rows: (RiskReport | null)[]): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const row of rows) {
-    if (!row) continue;
-    let payload: RiskReportPayload;
-    try {
-      payload = JSON.parse(row.report_json) as RiskReportPayload;
-    } catch {
-      continue;
-    }
-    for (const n of payload.names ?? []) {
-      if (n.ticker && !(n.ticker in out) && n.active_vol != null && n.active_vol > 0) out[n.ticker] = n.active_vol;
-    }
-  }
-  return out;
-}
+type PlanRow = { row: ConstructionPlan; payload: ConstructionPlanPayload | null };
 
-const ACTION_COLOR: Record<RebalanceAction, string> = {
-  trim: "var(--red)",
-  add: "var(--green)",
-  buy: "var(--green)",
+const pctOf = (x: number | null | undefined, d = 1) => (x == null ? "—" : `${(x * 100).toFixed(d)}%`);
+const BINDING: Record<ConstructionPlan["binding"], string> = {
+  target: "at target TE",
+  bounds: "inside target · bounds bind",
+  floor: "above target · floor binds",
 };
 
-function RebalancePanel({ positions, targetTe, market }: { positions: Position[]; targetTe: number | null; market: Market }) {
-  // `positions` is the advisory book. The desk's risk budget sizes the name
-  // caps (target ÷ measured active vol); the mandate's cash is the fund's, not
-  // the operator's, so the plan adds no new money. Tagged with the desk they
-  // were read for, so a market switch shows "reading" until that desk's inputs
-  // land instead of planning against the other desk's.
-  const [loaded, setLoaded] = useState<{ market: Market; verdicts: Verdict[]; activeVol: Record<string, number> } | null>(null);
-  const [showUnrated, setShowUnrated] = useState(false);
-  const inputs = loaded?.market === market ? loaded : null;
+function PlanPanel({ market, book, targetTe }: { market: Market; book: ConstructionPlan["book"]; targetTe: number | null }) {
+  // The desk writes one plan per book and exchange session (construct step);
+  // the screen only reads it. Tagged with the desk it was read for, so a
+  // market switch shows "reading" until that desk's row lands.
+  const [loaded, setLoaded] = useState<{ market: Market; plan: PlanRow | null } | null>(null);
+  const [open, setOpen] = useState<"fixed" | "skipped" | null>(null);
+  const current = loaded?.market === market ? loaded : null;
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      listEnsembleVerdicts(market).catch(() => []),
-      latestRiskReport(market, "advisory").catch(() => null),
-      latestRiskReport(market, "fund").catch(() => null),
-    ]).then(([rows, advisoryRisk, fundRisk]) => {
-      if (cancelled) return;
-      setLoaded({
-        market,
-        verdicts: rows.map(verdictOf).filter((v): v is Verdict => v !== null),
-        activeVol: activeVols(advisoryRisk, fundRisk),
+    latestConstructionPlan(market, book)
+      .catch(() => null)
+      .then((row) => {
+        if (cancelled) return;
+        let payload: ConstructionPlanPayload | null = null;
+        try {
+          payload = row ? (JSON.parse(row.plan_json) as ConstructionPlanPayload) : null;
+        } catch {
+          payload = null;
+        }
+        setLoaded({ market, plan: row ? { row, payload } : null });
       });
-    });
     return () => { cancelled = true; };
-  }, [market]);
-
-  const plan = useMemo(() => {
-    if (!inputs || targetTe == null) return null;
-    return planRebalance({
-      holdings: positions.map((p) => ({
-        ticker: p.ticker,
-        label: p.label,
-        marketValue: p.market_value || 0,
-        qty: p.qty,
-        isFund: p.ticker.startsWith("MF:"),
-      })),
-      verdicts: inputs.verdicts,
-      cash: 0,
-      targetTe,
-      activeVol: inputs.activeVol,
-      currency: market === "IN" ? "INR" : "USD",
-      wholeShares: market === "IN",
-    });
-  }, [positions, targetTe, inputs, market]);
+  }, [market, book]);
 
   const mono = { fontFamily: "var(--mono)", fontSize: 11 } as const;
-  if (targetTe == null) {
+  if (!current) return <div className="dim" style={{ ...mono, padding: "12px 16px" }}>Reading the {book} construction plan…</div>;
+  if (!current.plan) {
     return (
       <div className="dim" style={{ ...mono, padding: "12px 16px", lineHeight: 1.5 }}>
-        No {market} risk budget set: name caps derive from its target tracking error. Set one in the fund mandate panel.
+        {targetTe == null
+          ? `No ${market} risk budget set: the plan is sized to its target tracking error. Set one in the fund mandate panel.`
+          : `No ${market} ${book} plan stored yet: the desk's construct step writes one each session.`}
       </div>
     );
   }
-  if (!plan) {
-    return <div className="dim" style={{ ...mono, padding: "12px 16px" }}>Reading quant verdicts…</div>;
-  }
 
-  const stat = (k: string, v: string, color = "var(--ink-0)") => (
+  const { row, payload } = current.plan;
+  const lines = (payload?.lines ?? []).filter((l) => l.shares != null && l.shares !== 0);
+  const fixed = payload?.fixed ?? [];
+  const skipped = payload?.skipped ?? [];
+  const skippedCount = payload?.skipped_count ?? skipped.length;
+  const buy = lines.filter((l) => (l.value ?? 0) > 0).reduce((s, l) => s + (l.value ?? 0), 0);
+  const sell = lines.filter((l) => (l.value ?? 0) < 0).reduce((s, l) => s - (l.value ?? 0), 0);
+  const shares = (n: number) => Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: market === "IN" ? 0 : 2 });
+  const beta = (x: number | null) => (x == null ? "—" : x.toFixed(2));
+
+  // `from` → `to` for a before/after figure; `to` alone otherwise.
+  const stat = (k: string, from: string | null, to: string, sub?: string) => (
     <div style={{ padding: "8px 12px", borderRight: "1px solid var(--line-soft)" }}>
       <div style={{ fontSize: 9.5, color: "var(--ink-3)", letterSpacing: "0.12em", textTransform: "uppercase" }}>{k}</div>
-      <div style={{ color, marginTop: 2 }}>{v}</div>
+      <div style={{ color: "var(--ink-0)", marginTop: 2 }}>
+        {from != null && <><span style={{ color: "var(--ink-2)" }}>{from}</span> → </>}{to}
+      </div>
+      {sub && <div className="dim" style={{ fontSize: 9.5, marginTop: 2 }}>{sub}</div>}
     </div>
   );
-  const shares = (n: number | null) =>
-    n == null ? "—" : n.toLocaleString(undefined, { maximumFractionDigits: market === "IN" ? 0 : 2 });
+  const toggle = (key: "fixed" | "skipped", label: string, items: { ticker: string; reason: string; label?: string | null }[]) => (
+    <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)" }}>
+      <button type="button" onClick={() => setOpen((o) => (o === key ? null : key))} style={{ all: "unset", cursor: "pointer", color: "var(--ink-2)" }}>
+        {open === key ? "▾" : "▸"} {label}
+      </button>
+      {open === key && items.map((u) => (
+        <div key={u.ticker} className="dim" style={{ fontSize: 10, marginTop: 4 }} title={u.label ?? undefined}>
+          {u.ticker}{u.label ? ` · ${u.label}` : ""} — {u.reason}
+        </div>
+      ))}
+    </div>
+  );
 
   return (
     <div style={mono}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", borderBottom: "1px solid var(--line-soft)" }}>
-        {stat("Capital", fmtMoney(plan.capital, market))}
-        {stat("Sell", fmtMoney(plan.sellProceeds, market), "var(--red)")}
-        {stat("Buy", fmtMoney(plan.buyCost, market), "var(--green)")}
-        {stat("Cash after", fmtMoney(plan.cashAfter, market))}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderBottom: "1px solid var(--line-soft)" }}>
+        {stat("Tracking error", pctOf(row.te_before), pctOf(row.te_after), `target ${pctOf(row.target_te)} · ${BINDING[row.binding] ?? row.binding}`)}
+        {stat("Beta", beta(row.beta_before), beta(row.beta_after), payload?.index ? `vs ${payload.index}` : undefined)}
+        {stat("VaR 95 · 1d", pctOf(row.var95_before, 2), pctOf(row.var95_after, 2),
+          row.var95_after == null ? undefined : `${fmtMoney(row.var95_after * row.nav, market)} of ${fmtMoney(row.nav, market)}`)}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderBottom: "1px solid var(--line-soft)" }}>
+        {stat("Sell", null, fmtMoney(sell, market))}
+        {stat("Buy", null, fmtMoney(buy, market))}
+        {stat("Expected α", null, pctOf(row.alpha, 2), "confidence × upside, weighted")}
       </div>
 
-      {plan.trades.length === 0 && (
+      {lines.length === 0 && (
         <div className="dim" style={{ padding: "12px 16px" }}>
-          Nothing to change: no held name is shorted or over its cap, and no fresh long fits the book.
+          {fixed.length && !(payload?.lines ?? []).length
+            ? "No trades: the plan holds every name as it is (why below)."
+            : "No trades: the book already sits at the plan's weights."}
         </div>
       )}
-      {plan.trades.map((t) => (
-        <div key={t.ticker} style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)" }}>
+      {lines.map((l) => (
+        <div key={l.ticker} style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)" }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 44px 70px 80px 92px", gap: 8, alignItems: "baseline" }}>
-            <span style={{ color: "var(--ink-0)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={t.label ?? undefined}>
-              {t.ticker}
+            <span style={{ color: "var(--ink-0)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.label ?? undefined}>
+              {l.ticker}{l.role === "core" ? " · core" : ""}
             </span>
-            <span style={{ color: ACTION_COLOR[t.action], letterSpacing: "0.12em", textTransform: "uppercase" }}>{t.action}</span>
-            <span style={{ color: "var(--ink-2)", textAlign: "right" }}>{shares(t.shares)} sh</span>
-            <span style={{ color: "var(--ink-1)", textAlign: "right" }}>{fmtMoney(t.value, market)}</span>
+            <span style={{ color: (l.shares ?? 0) > 0 ? "var(--green)" : "var(--red)", letterSpacing: "0.12em", textTransform: "uppercase" }}>
+              {(l.shares ?? 0) > 0 ? "buy" : "sell"}
+            </span>
+            <span style={{ color: "var(--ink-2)", textAlign: "right" }}>{shares(l.shares ?? 0)} sh</span>
+            <span style={{ color: "var(--ink-1)", textAlign: "right" }}>{fmtMoney(Math.abs(l.value ?? 0), market)}</span>
             <span style={{ color: "var(--ink-3)", textAlign: "right" }}>
-              {(t.fromWeight * 100).toFixed(1)}→{(t.toWeight * 100).toFixed(1)}%
+              {pctOf(l.from)}→{pctOf(l.toRounded)}
             </span>
           </div>
-          <div className="dim" style={{ fontSize: 10, marginTop: 3, lineHeight: 1.4 }}>{t.reason}</div>
+          <div className="dim" style={{ fontSize: 10, marginTop: 3, lineHeight: 1.4 }}>{l.why}</div>
         </div>
       ))}
 
-      {plan.notes.map((n) => (
-        <div key={n} style={{ padding: "8px 12px", color: "var(--md-accent)", borderBottom: "1px solid var(--line-soft)", lineHeight: 1.5 }}>
-          {n}
-        </div>
-      ))}
-
-      {plan.unrated.length > 0 && (
-        <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)" }}>
-          <button
-            type="button"
-            onClick={() => setShowUnrated((s) => !s)}
-            style={{ all: "unset", cursor: "pointer", color: "var(--ink-2)" }}
-          >
-            {showUnrated ? "▾" : "▸"} {plan.unrated.length} held without a quant view
-          </button>
-          {showUnrated && plan.unrated.map((u) => (
-            <div key={u.ticker} className="dim" style={{ fontSize: 10, marginTop: 4 }} title={u.label ?? undefined}>
-              {u.ticker}{u.label ? ` · ${u.label}` : ""} — {u.reason}
-            </div>
-          ))}
-        </div>
-      )}
+      {fixed.length > 0 && toggle("fixed", `${fixed.length} held as they are`, fixed.map((f) => ({ ...f, reason: `${pctOf(f.weight)} · ${f.reason}` })))}
+      {skippedCount > 0 && (skipped.length
+        ? toggle("skipped", `${skippedCount} left out`, skipped)
+        : <div className="dim" style={{ padding: "8px 12px", borderBottom: "1px solid var(--line-soft)" }}>{skippedCount} left out (reasons not stored)</div>)}
 
       <div className="dim" style={{ padding: "8px 12px", fontSize: 10, lineHeight: 1.5 }}>
-        Advisory only: nothing is sent to a broker. Shorts trim by half; each name is capped at the{" "}
-        {(targetTe * 100).toFixed(1)}% target tracking error ÷ its measured active vol (latest risk report); no
-        new money (the mandate&apos;s cash is the fund&apos;s).
+        Session {row.session} · {new Date(row.captured_at).toLocaleString()}{payload?.marks ? ` · marks: ${payload.marks}` : ""}.{" "}
+        {book === "fund"
+          ? `The PM sizes each buy to its line; the broker trades the ${payload?.core ?? "index"} core to the plan once a session.`
+          : "Advisory only: nothing is sent to a broker."}
       </div>
     </div>
   );
@@ -832,6 +809,10 @@ export function PortfolioScreen() {
         />
       </Panel>
 
+      <Panel title="Construction Plan · Fund" meta="this session's target book · Δ risk" bodyClassName="tight">
+        <PlanPanel market={market} book="fund" targetTe={targetTe} />
+      </Panel>
+
       <Panel title="Held Orders · Awaiting Approval" meta="broker · operator gate" bodyClassName="tight">
         <HeldOrders market={market} />
       </Panel>
@@ -873,8 +854,8 @@ export function PortfolioScreen() {
         <PositionsList rows={advisory} loaded={posLoaded} market={market} empty="No holdings synced from Horizon or IBKR." />
       </Panel>
 
-      <Panel title="Rebalance · Advisory" meta="quant verdicts · operator's holdings" bodyClassName="tight">
-        <RebalancePanel positions={advisory} targetTe={targetTe} market={market} />
+      <Panel title="Rebalance · Advisory" meta="the desk's construction plan · operator's holdings" bodyClassName="tight">
+        <PlanPanel market={market} book="advisory" targetTe={targetTe} />
       </Panel>
 
       {/* Horizon, when configured, supersedes the direct brokerage links. */}
