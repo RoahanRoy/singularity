@@ -3,12 +3,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { operatorFetch } from "@/lib/auth/operator-fetch";
 import {
-  BENCHMARK_RANGES, compareToIndex, windowStart,
+  BENCHMARK_RANGES, compareToIndex, rescaleTo, windowStart,
   type Bar, type BenchmarkRange, type BenchmarkResult, type HoldingVsIndex,
 } from "@/lib/fund/benchmark";
 import type { Market, Position } from "@/lib/appwrite/schema";
 
-type Payload = { index: { symbol: string; name: string; bars: Bar[] }; bars: Record<string, Bar[]> };
+/** Where a holding's prices came from, when not its own listing in the desk's currency. */
+type Source = { symbol: string; currency?: string; proxy?: string };
+type Payload = {
+  index: { symbol: string; name: string; bars: Bar[] };
+  bars: Record<string, Bar[]>;
+  sources?: Record<string, Source>;
+};
 
 const BOOK = "var(--md-accent)";
 const INDEX = "var(--ink-2)";
@@ -63,7 +69,12 @@ export function BenchmarkPanel({ positions, market }: { positions: Position[]; m
     if (!bars.length) return null;
     const from = windowStart(bars[bars.length - 1].date, range);
     return compareToIndex(
-      listed.map((p) => ({ ticker: p.ticker, label: p.label, qty: p.qty, bars: payload.bars[p.ticker] ?? [] })),
+      listed.map((p) => {
+        const own = payload.bars[p.ticker] ?? [];
+        // A stand-in moves like the holding but sits at its own price level.
+        const bars = payload.sources?.[p.ticker]?.proxy ? rescaleTo(own, p.market_value / p.qty) : own;
+        return { ticker: p.ticker, label: p.label, qty: p.qty, bars };
+      }),
       bars,
       from,
     );
@@ -75,18 +86,24 @@ export function BenchmarkPanel({ positions, market }: { positions: Position[]; m
   if (loaded?.key === key && loaded.error) return <Empty>Couldn&apos;t load price history: {loaded.error}</Empty>;
   if (!payload) return <Empty>Loading a year of closes for {listed.length} holdings and the {indexName}…</Empty>;
   if (!result) return <Empty>No overlapping price history for the book and the {indexName}.</Empty>;
-  return <BenchmarkView result={result} indexName={indexName} range={range} onRange={setRange} funds={funds} />;
+  return (
+    <BenchmarkView result={result} indexName={indexName} range={range} onRange={setRange} funds={funds} sources={payload.sources} />
+  );
 }
 
 /** The comparison itself, given a computed result: no fetching, so it renders anywhere. */
-export function BenchmarkView({ result, indexName, range, onRange, funds }: {
+export function BenchmarkView({ result, indexName, range, onRange, funds, sources = {} }: {
   result: BenchmarkResult;
   indexName: string;
   range: BenchmarkRange;
   onRange: (r: BenchmarkRange) => void;
   funds: number;
+  sources?: Record<string, Source>;
 }) {
   const beating = result.excess >= 0;
+  const held = new Set(result.holdings.map((h) => h.ticker));
+  const abroad = Object.entries(sources).filter(([t, s]) => held.has(t) && !s.proxy);
+  const proxied = Object.entries(sources).filter(([t, s]) => held.has(t) && s.proxy);
   return (
     <div style={{ display: "grid", gap: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 14px 6px", flexWrap: "wrap" }}>
@@ -135,6 +152,8 @@ export function BenchmarkView({ result, indexName, range, onRange, funds }: {
 
       <div className="dim" style={{ padding: "8px 14px 12px", fontFamily: "var(--mono)", fontSize: 10.5, lineHeight: 1.6, color: "var(--ink-3)" }}>
         Today&apos;s share counts held over the window (price return, no cash or trades), against the {indexName} price index.
+        {abroad.length > 0 && ` Priced from listings abroad, converted daily: ${abroad.map(([t, s]) => `${t} (${s.symbol}${s.currency ? `, ${s.currency}` : ""})`).join(", ")}.`}
+        {proxied.length > 0 && ` Stand-ins: ${proxied.map(([t, s]) => `${t} (${s.proxy})`).join(", ")}.`}
         {result.missing.length > 0 && ` No history for ${result.missing.join(", ")}.`}
         {funds > 0 && ` ${funds} fund${funds === 1 ? "" : "s"} left out.`}
         {" "}Capture above 100 / below 100 is the shape that beats the index with less risk.

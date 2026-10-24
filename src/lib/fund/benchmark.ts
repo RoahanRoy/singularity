@@ -160,6 +160,18 @@ export function maxDrawdown(xs: number[]): number {
   return dd;
 }
 
+/**
+ * A stand-in's history moved to the level of the holding it stands for: same
+ * daily returns, last close equal to `price`. Without this a gold ETF at ₹117
+ * standing in for a ₹14,000 gold bond would weigh a hundredth of what it should.
+ */
+export function rescaleTo(bars: Bar[], price: number): Bar[] {
+  const last = bars.reduce<Bar | null>((m, b) => (b.close > 0 && (!m || b.date > m.date) ? b : m), null);
+  if (!last || !(price > 0)) return bars;
+  const k = price / last.close;
+  return bars.map((b) => ({ date: b.date, close: b.close * k }));
+}
+
 /** First date of a trailing window ending at `last` (YYYY-MM-DD). */
 export function windowStart(last: string, range: BenchmarkRange): string {
   const d = new Date(`${last}T00:00:00Z`);

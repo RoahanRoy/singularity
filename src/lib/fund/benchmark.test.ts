@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compareToIndex, maxDrawdown, windowStart, type Bar } from "./benchmark";
+import { compareToIndex, maxDrawdown, rescaleTo, windowStart, type Bar } from "./benchmark";
 
 const close = (a: number, b: number, tol: number, msg?: string) =>
   assert.ok(Math.abs(a - b) <= tol, `${msg ?? ""} expected ${b}, got ${a}`);
@@ -65,4 +65,11 @@ test("drawdown and window starts", () => {
   assert.equal(windowStart("2026-10-23", "3M"), "2026-07-23");
   assert.equal(windowStart("2026-10-23", "YTD"), "2026-01-01");
   assert.equal(windowStart("2026-10-23", "1Y"), "2025-10-23");
+});
+
+test("a stand-in is moved to the holding's price level, keeping its returns", () => {
+  const scaled = rescaleTo(series([100, 110, 121]), 14000);
+  close(scaled.at(-1)!.close, 14000, 1e-9);
+  close(scaled[1].close / scaled[0].close, 1.1, 1e-12);
+  assert.deepEqual(rescaleTo(series([1, 2]), 0), series([1, 2]), "no price, no change");
 });
