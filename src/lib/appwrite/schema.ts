@@ -181,16 +181,6 @@ export type Trade = Base & {
   market?: Market | null;
 };
 
-export type Scenario = Base & {
-  name: string;
-  description: string;
-  shocks_json: string;
-  nav_delta: number;
-  worst_position: string | null;
-  run_at: string;
-  market?: Market | null;
-};
-
 export type GovernanceEvent = Base & {
   kind: "approval" | "block" | "override" | "policy_change";
   actor: string;
@@ -501,10 +491,3 @@ export type FactorExposure = {
   beta: number;
 };
 
-/** A scenario branch stored inside a scenario's shocks_json. */
-export type ScenarioBranch = {
-  label: string;
-  prob: number;
-  delta: number;
-  hedged_delta?: number;
-};

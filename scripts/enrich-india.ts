@@ -1,7 +1,7 @@
 /**
  * One-shot India book enrichment from free Yahoo Finance history, so the
  * Portfolio screen's India desk shows real numbers (factor betas, NAV series /
- * KPIs, stress scenarios) instead of empty / zero panels.
+ * KPIs) instead of empty / zero panels.
  *
  * The implementation lives in src/lib/india/enrich.ts and is shared with the
  * weekly Vercel cron route (/api/cron/enrich-india). This wrapper just supplies

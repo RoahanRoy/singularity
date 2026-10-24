@@ -4,8 +4,8 @@
  * Framework-free (no `server-only`, no `next/*`, no `@/` alias) so it runs from
  * both the Vercel cron routes and the one-shot CLIs. Callers pass a node-appwrite
  * `Databases` instance + database id and a per-market EnrichConfig; the generic
- * machinery (Yahoo history, univariate betas, NAV reconstruction, pnl fix,
- * scenario seeding) is identical across markets.
+ * machinery (Yahoo history, univariate betas, NAV reconstruction, pnl fix) is
+ * identical across markets.
  *
  * For each position in the config's market — on the advisory book
  * (`advisory_positions`) and the fund's own book (fund rows of `positions`) — it:
@@ -14,11 +14,10 @@
  *   3. reconstructs the advisory book's NAV series over the window where ALL its
  *      holdings have history (qty held constant) and appends the missing daily
  *      snapshots,
- *   4. corrects the latest snapshot's pnl_daily to a real day-over-day delta,
- *   5. seeds the market's stress scenarios if none exist.
+ *   4. corrects the latest snapshot's pnl_daily to a real day-over-day delta.
  *
  * All writes are additive/idempotent: betas update in place, snapshots append
- * only for missing dates, scenarios seed only when none exist for the market.
+ * only for missing dates.
  */
 import { type Databases, Query, ID } from "node-appwrite";
 
@@ -29,19 +28,9 @@ const ADVISORY_SNAPSHOT = Query.or([Query.equal("book", "advisory"), Query.isNul
 
 export type FactorProxy = { key: string; symbol: string };
 
-export type ScenarioBranch = { label: string; prob: number; delta: number; hedged_delta: number };
-export type ScenarioSpec = {
-  name: string;
-  description: string;
-  nav_delta: number;
-  worst_position: string;
-  branches: ScenarioBranch[];
-};
-
 export type EnrichConfig = {
   market: "US" | "IN";
   factors: FactorProxy[];
-  scenarios: ScenarioSpec[];
   /** Map a bare desk ticker to its Yahoo symbol (e.g. `${t}.NS` for NSE). */
   yahooSymbol: (ticker: string) => string;
   /** UTC time appended to a snapshot's date, approximating the session close. */
@@ -56,7 +45,6 @@ export type EnrichSummary = {
   snapshotsAdded: number;
   sessions: number;
   windowStart: string | null;
-  scenariosSeeded: number;
   pnlCorrected: boolean;
 };
 
@@ -145,7 +133,7 @@ export async function runEnrichment(
 ): Promise<EnrichSummary> {
   const summary: EnrichSummary = {
     holdings: 0, betasWritten: 0, snapshotsAdded: 0, sessions: 0,
-    windowStart: null, scenariosSeeded: 0, pnlCorrected: false,
+    windowStart: null, pnlCorrected: false,
   };
 
   const [advRes, fundRes] = await Promise.all([
@@ -167,7 +155,6 @@ export async function runEnrichment(
 
   if (positions.length === 0) {
     log(cfg.emptyBookHint);
-    summary.scenariosSeeded = await seedScenariosIfEmpty(databases, dbId, cfg, log);
     return summary;
   }
   log(`${cfg.market} holdings: ${positions.length}`);
@@ -214,9 +201,6 @@ export async function runEnrichment(
 
   // 4) Correct the latest snapshot's pnl_daily to a real session delta.
   summary.pnlCorrected = await correctLatestPnl(databases, dbId, cfg, log);
-
-  // 5) Stress scenarios.
-  summary.scenariosSeeded = await seedScenariosIfEmpty(databases, dbId, cfg, log);
 
   return summary;
 }
@@ -290,24 +274,4 @@ async function correctLatestPnl(databases: Databases, dbId: string, cfg: EnrichC
   await databases.updateDocument(dbId, "fund_snapshots", latest.$id, { pnl_daily: realDaily });
   log(`corrected latest pnl_daily: ${latest.pnl_daily} → ${realDaily}`);
   return true;
-}
-
-async function seedScenariosIfEmpty(databases: Databases, dbId: string, cfg: EnrichConfig, log: (msg: string) => void): Promise<number> {
-  const existing = await databases.listDocuments(dbId, "scenarios", [Query.equal("market", cfg.market), Query.limit(1)]);
-  if (existing.total > 0) { log(`scenarios(${cfg.market}) already present (${existing.total}+)`); return 0; }
-  const now = Date.now();
-  for (let i = 0; i < cfg.scenarios.length; i++) {
-    const s = cfg.scenarios[i];
-    await databases.createDocument(dbId, "scenarios", ID.unique(), {
-      name: s.name,
-      description: s.description,
-      shocks_json: JSON.stringify(s.branches),
-      nav_delta: s.nav_delta,
-      worst_position: s.worst_position,
-      run_at: new Date(now - i * 60_000).toISOString(),
-      market: cfg.market,
-    });
-  }
-  log(`scenarios(${cfg.market}) + ${cfg.scenarios.length}`);
-  return cfg.scenarios.length;
 }

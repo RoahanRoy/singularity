@@ -2,7 +2,7 @@
 
 import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type AdvisoryTrade, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type AuditLog, type AgentCommand, type AgentStatusDoc, type IbkrAccount, type QuantReport, type RiskReport, type ConstructionPlan, type Market, isFundPosition } from "./schema";
+import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type AdvisoryTrade, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type FundSnapshot, type AuditLog, type AgentCommand, type AgentStatusDoc, type IbkrAccount, type QuantReport, type RiskReport, type ConstructionPlan, type Market, isFundPosition } from "./schema";
 
 /**
  * Market filter. When a desk is passed we constrain to that desk's rows.
@@ -256,15 +256,6 @@ export async function listBudgetSince(since: string, limit = 500): Promise<{ row
     [Query.greaterThanEqual("occurred_at", since), Query.orderDesc("occurred_at"), Query.limit(limit)],
   );
   return { rows: res.documents, total: res.total };
-}
-
-export async function listScenarios(limit = 12, market?: Market): Promise<Scenario[]> {
-  const res = await databases.listDocuments<Scenario & Models.Document>(
-    DATABASE_ID,
-    COLLECTIONS.scenarios,
-    [...marketFilter(market), Query.orderDesc("run_at"), Query.limit(limit)],
-  );
-  return res.documents;
 }
 
 /**
