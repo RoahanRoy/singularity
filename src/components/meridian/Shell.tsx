@@ -3,7 +3,7 @@
 import { ReactNode, createContext, useCallback, useContext, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { exchangeStatus, type ExchangeStatus } from "./primitives";
+import { exchangeStatus, type ExchangeStatus } from "@/lib/meridian/exchange";
 import { useOperator } from "./AuthGate";
 import { useMarket } from "./MarketContext";
 import { signOutOperator } from "@/lib/auth/operator";

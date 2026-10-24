@@ -1,14 +1,14 @@
 "use client";
 
 import { useDesk } from "../Shell";
-import { ensembleView, parsePayload, useQuantDesk, type EnsembleView, type Head, type Status } from "../screens/Quant";
+import { ensembleView, parsePayload, useQuantDesk, type EnsembleView, type Head, type Status } from "./quantData";
 import type { QuantReport } from "@/lib/appwrite/schema";
 import { QUANT_AGENTS, STAGES, type Stage } from "@/lib/quant/roster";
 
 /**
  * The quant desk on the v2 layout: measured names, every agent's report for
  * the selected name's newest cycle by stage, and the ensemble verdict. Data
- * and parsing are shared with the legacy screen (screens/Quant.tsx).
+ * and parsing live in quantData.ts.
  */
 
 const STATUS: Record<Status, [string, string]> = {
