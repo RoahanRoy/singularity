@@ -117,7 +117,7 @@ Provision the database, then run the app:
 
 ```bash
 node scripts/restore-schema.mjs     # create DB + 17 collections from appwrite.json (idempotent, additive)
-npx tsx --env-file=.env.local scripts/seed.ts   # populate every collection (idempotent)
+                                    # nothing seeds rows: syncs, agents and the operator fill them
 npm run dev
 ```
 
@@ -181,7 +181,6 @@ src/
     auth/operator.ts        # operator-email allowlist helper
 
 scripts/
-  seed.ts                   # idempotent seed for every collection
   restore-schema.mjs        # headless collection creation from appwrite.json
   agents/                   # orchestrator, nodes, EDGAR reader, LLM client,
                             # prompts/*.md (one system prompt per agent)
