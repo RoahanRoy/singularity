@@ -21,7 +21,7 @@ import { fetchTranscript } from "./transcript";
 import { getQuote } from "./quotes";
 import { fetchRiskFree } from "./market-data";
 import { indexDoc, recallPrior, formatRecall } from "./recall";
-import { getMandate, deployableThisCycle, debitCash } from "../../src/lib/fund/mandate";
+import { getMandate, deployableCash, debitCash } from "../../src/lib/fund/mandate";
 import { checkCircuitBreaker } from "./circuit-breaker";
 import { markFundBook, fundRows, isFundRow, type FundRow } from "./fund-book";
 import { measureTrade } from "./risk-budget";
@@ -139,7 +139,7 @@ export type Ctx = {
     funding_source: "cash";
     /** Notional at the arrival quote, in the desk's currency. */
     notional: number;
-    /** Cash deployable this cycle (mandate cash within the pacing cap). */
+    /** Cash the trade can draw on: the mandate's undeployed balance. */
     deployable: number;
     /** Annual opportunity cost of the cash at the measured short rate; null when the rate is unmeasured. */
     est_financing_bps: number | null;
@@ -856,8 +856,8 @@ Price: ${price} (live quote)`,
 // 4b. Treasury / Financing --------------------------------------------------
 //
 // In code. The fund is long-only and funded from the mandate's cash: no margin,
-// no borrow. Treasury checks the sized trade against the cash it can deploy
-// this cycle and prices the cash at the measured short rate (its opportunity
+// no borrow. Treasury checks the sized trade against the mandate's undeployed
+// cash and prices the cash at the measured short rate (its opportunity
 // cost). No mandate, a paused mandate, or too little cash for one share blocks
 // here, before risk and execution see it. No view on the thesis.
 export async function treasury(ctx: Ctx): Promise<Ctx> {
@@ -873,7 +873,7 @@ export async function treasury(ctx: Ctx): Promise<Ctx> {
   ]);
   const price = ctx.size.arrival?.price ?? 0;
   const notional = Number((ctx.size.qty * price).toFixed(2));
-  const deployable = Number(deployableThisCycle(mandate).toFixed(2));
+  const deployable = Number(deployableCash(mandate).toFixed(2));
   // An unmeasured rate (FRED down, env/default stand-in) is not a cost of cash.
   const bps = rf && !rf.assumption ? Math.round(rf.value * 10_000 * 10) / 10 : null;
   const rate = bps == null ? `short rate unmeasured${rf ? ` (${rf.source})` : ""}` : `${bps}bps/yr at ${rf!.source}`;
@@ -885,7 +885,7 @@ export async function treasury(ctx: Ctx): Promise<Ctx> {
   else if (deployable < price) block = `deployable cash ${deployable} is below one share (${price})`;
 
   const capped = !block && notional > deployable
-    ? ` Fill will be capped to ${Math.floor(deployable / price)} sh by cash/pacing.`
+    ? ` Fill will be capped to ${Math.floor(deployable / price)} sh by cash.`
     : "";
   const f: NonNullable<Ctx["financing"]> = {
     approved: !block,
@@ -1175,9 +1175,8 @@ async function bookPaperBuy(ticker: string, qty: number, price: number, market: 
  * execution path so both fill identically.
  *
  * When the desk has a from-scratch fund mandate, this is where its capital base
- * bites: the requested qty is capped to what the mandate can deploy this cycle
- * (min of undeployed cash and the per-cycle pacing cap), and the notional is
- * debited from the mandate's cash on fill. `filled_qty === 0` means the fund is
+ * bites: the requested qty is capped to what the mandate's undeployed cash
+ * buys, and the notional is debited from the mandate's cash on fill. `filled_qty === 0` means the fund is
  * out of deployable cash — no trade is booked and the caller should hold the
  * order for a later cycle.
  *
@@ -1208,8 +1207,8 @@ async function fillPaperTrade(
   const price = Number(quoted.toFixed(2));
   const venue = input.venue ? `paper-${input.venue}` : "paper-IBKR";
 
-  // Mandate deployment gate. Cap the fill to affordable whole shares within the
-  // desk's deployable budget for this cycle. No mandate → no cash → no fill.
+  // Mandate deployment gate. Cap the fill to the whole shares the mandate's
+  // undeployed cash buys. No mandate → no cash → no fill.
   const mandate = await getMandate(db, DB, market).catch(() => null);
   if (!mandate) {
     const reason = `no ${market} fund mandate to fill against`;
@@ -1219,8 +1218,7 @@ async function fillPaperTrade(
   }
   let qty = input.qty;
   let capped = false;
-  const budget = deployableThisCycle(mandate);
-  const affordable = Math.max(0, Math.floor(budget / price));
+  const affordable = Math.max(0, Math.floor(deployableCash(mandate) / price));
   if (affordable < qty) { qty = affordable; capped = true; }
   if (qty <= 0) {
     return { id: null, fill_price: price, filled_qty: 0, capped: true, halted: null, unquoted: false };
@@ -1295,7 +1293,7 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
   const f = await fillPaperTrade({ ticker: ctx.ticker, qty, market, venue: ctx.route?.venue, agentId: id });
 
   // No fill — the circuit breaker halted the desk, there was no live quote, or
-  // the mandate ran out of deployable cash this cycle. Hold the order for review
+  // the mandate is out of undeployed cash. Hold the order for review
   // so a human (or a later cycle) can fill it. No trade.
   if (!f.id || f.filled_qty === 0) {
     if (ctx.memoId) {
@@ -1309,7 +1307,7 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
         ? `HOLD BUY ${qty} ${ctx.ticker} — ${f.halted}`
         : f.unquoted
           ? `HOLD BUY ${qty} ${ctx.ticker} — no live quote, nothing filled`
-          : `HOLD BUY ${qty} ${ctx.ticker} — fund out of deployable cash this cycle`,
+          : `HOLD BUY ${qty} ${ctx.ticker} — fund out of undeployed cash`,
       { memo_id: ctx.memoId, halted: f.halted });
     await setStatus(id, "idle");
     return ctx;
@@ -1321,7 +1319,7 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
   await writeAudit("broker", "auto_execution", ctx.ticker, "allow",
     `Auto-approved fill: BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price}${f.capped ? ` (capped from ${qty})` : ""}`);
   await emit(id, "trade",
-    `FILL BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price.toFixed(2)}${f.capped ? ` (capped from ${qty} by mandate pacing)` : ""} via ${ctx.route?.algo ?? "default"}`,
+    `FILL BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price.toFixed(2)}${f.capped ? ` (capped from ${qty} by mandate cash)` : ""} via ${ctx.route?.algo ?? "default"}`,
     { trade_id: f.id, route: ctx.route, filled_qty: f.filled_qty, requested_qty: qty });
   await setStatus(id, "idle");
   return { ...ctx, trade: { id: f.id, status: "filled", fill_price: f.fill_price } };

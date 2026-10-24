@@ -17,6 +17,7 @@ import {
   listFundSnapshots,
   listScenarios,
   listEnsembleVerdicts,
+  latestRiskReport,
 } from "@/lib/appwrite/queries";
 import { planRebalance, verdictOf, type RebalanceAction, type Verdict } from "@/lib/fund/rebalance";
 import type {
@@ -27,6 +28,8 @@ import type {
   FactorExposure,
   ScenarioBranch,
   Market,
+  RiskReport,
+  RiskReportPayload,
 } from "@/lib/appwrite/schema";
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -439,11 +442,26 @@ function PositionsList({ rows, loaded, market, empty = "No positions on the book
 
 // ── Rebalance (advisory, from the quant desk's ensemble verdicts) ─────────────
 
-type MandateCaps = { cash: number; max_names: number; max_name_weight_pct: number };
+type MandateCash = { cash: number };
 
-// Desks without an onboarded mandate plan against the balanced posture's caps
-// (POSTURE_CAPS in src/lib/fund/mandate.ts, which is server-side only).
-const DEFAULT_CAPS: MandateCaps = { cash: 0, max_names: 20, max_name_weight_pct: 9 };
+// Measured active vol by ticker from the desk's latest risk reports: the
+// advisory book's, then the fund's for names only it holds.
+function activeVols(...rows: (RiskReport | null)[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const row of rows) {
+    if (!row) continue;
+    let payload: RiskReportPayload;
+    try {
+      payload = JSON.parse(row.report_json) as RiskReportPayload;
+    } catch {
+      continue;
+    }
+    for (const n of payload.names ?? []) {
+      if (n.ticker && !(n.ticker in out) && n.active_vol != null && n.active_vol > 0) out[n.ticker] = n.active_vol;
+    }
+  }
+  return out;
+}
 
 const ACTION_COLOR: Record<RebalanceAction, string> = {
   trim: "var(--red)",
@@ -451,28 +469,35 @@ const ACTION_COLOR: Record<RebalanceAction, string> = {
   buy: "var(--green)",
 };
 
-function RebalancePanel({ positions, mandate, market }: { positions: Position[]; mandate: MandateCaps | null; market: Market }) {
-  // `positions` is the advisory book. The mandate lends its name caps only:
-  // its cash is the fund's, not the operator's, so the plan adds no new money.
-  // Tagged with the desk they were read for, so a market switch shows "reading"
-  // until that desk's verdicts land instead of planning against the other desk's.
-  const [loaded, setLoaded] = useState<{ market: Market; verdicts: Verdict[] } | null>(null);
+function RebalancePanel({ positions, targetTe, market }: { positions: Position[]; targetTe: number | null; market: Market }) {
+  // `positions` is the advisory book. The desk's risk budget sizes the name
+  // caps (target ÷ measured active vol); the mandate's cash is the fund's, not
+  // the operator's, so the plan adds no new money. Tagged with the desk they
+  // were read for, so a market switch shows "reading" until that desk's inputs
+  // land instead of planning against the other desk's.
+  const [loaded, setLoaded] = useState<{ market: Market; verdicts: Verdict[]; activeVol: Record<string, number> } | null>(null);
   const [showUnrated, setShowUnrated] = useState(false);
-  const verdicts = loaded?.market === market ? loaded.verdicts : null;
+  const inputs = loaded?.market === market ? loaded : null;
 
   useEffect(() => {
     let cancelled = false;
-    listEnsembleVerdicts(market)
-      .then((rows) => {
-        if (!cancelled) setLoaded({ market, verdicts: rows.map(verdictOf).filter((v): v is Verdict => v !== null) });
-      })
-      .catch(() => { if (!cancelled) setLoaded({ market, verdicts: [] }); });
+    Promise.all([
+      listEnsembleVerdicts(market).catch(() => []),
+      latestRiskReport(market, "advisory").catch(() => null),
+      latestRiskReport(market, "fund").catch(() => null),
+    ]).then(([rows, advisoryRisk, fundRisk]) => {
+      if (cancelled) return;
+      setLoaded({
+        market,
+        verdicts: rows.map(verdictOf).filter((v): v is Verdict => v !== null),
+        activeVol: activeVols(advisoryRisk, fundRisk),
+      });
+    });
     return () => { cancelled = true; };
   }, [market]);
 
   const plan = useMemo(() => {
-    if (!verdicts) return null;
-    const caps = mandate ?? DEFAULT_CAPS;
+    if (!inputs || targetTe == null) return null;
     return planRebalance({
       holdings: positions.map((p) => ({
         ticker: p.ticker,
@@ -481,16 +506,23 @@ function RebalancePanel({ positions, mandate, market }: { positions: Position[];
         qty: p.qty,
         isFund: p.ticker.startsWith("MF:"),
       })),
-      verdicts,
+      verdicts: inputs.verdicts,
       cash: 0,
-      maxNames: caps.max_names,
-      maxNameWeightPct: caps.max_name_weight_pct,
+      targetTe,
+      activeVol: inputs.activeVol,
       currency: market === "IN" ? "INR" : "USD",
       wholeShares: market === "IN",
     });
-  }, [positions, mandate, verdicts, market]);
+  }, [positions, targetTe, inputs, market]);
 
   const mono = { fontFamily: "var(--mono)", fontSize: 11 } as const;
+  if (targetTe == null) {
+    return (
+      <div className="dim" style={{ ...mono, padding: "12px 16px", lineHeight: 1.5 }}>
+        No {market} risk budget set: name caps derive from its target tracking error. Set one in the fund mandate panel.
+      </div>
+    );
+  }
   if (!plan) {
     return <div className="dim" style={{ ...mono, padding: "12px 16px" }}>Reading quant verdicts…</div>;
   }
@@ -559,9 +591,9 @@ function RebalancePanel({ positions, mandate, market }: { positions: Position[];
       )}
 
       <div className="dim" style={{ padding: "8px 12px", fontSize: 10, lineHeight: 1.5 }}>
-        Advisory only: nothing is sent to a broker. Shorts trim by half, no name above{" "}
-        {(mandate ?? DEFAULT_CAPS).max_name_weight_pct}%, new longs fill open slots under{" "}
-        {(mandate ?? DEFAULT_CAPS).max_names} names, no new money (the mandate&apos;s cash is the fund&apos;s).
+        Advisory only: nothing is sent to a broker. Shorts trim by half; each name is capped at the{" "}
+        {(targetTe * 100).toFixed(1)}% target tracking error ÷ its measured active vol (latest risk report); no
+        new money (the mandate&apos;s cash is the fund&apos;s).
       </div>
     </div>
   );
@@ -651,8 +683,10 @@ export function PortfolioScreen() {
   const [posLoaded, setPosLoaded] = useState(false);
   // The fund mandate's undeployed cash (null with no mandate: no fund). Part
   // of fund NAV, so a fresh fund shows its capital base before it deploys.
-  const [mandate, setMandate] = useState<MandateCaps | null>(null);
+  const [mandate, setMandate] = useState<MandateCash | null>(null);
   const mandateCash = mandate?.cash ?? null;
+  // The desk's target tracking error (risk_budgets), null until the operator sets one.
+  const [targetTe, setTargetTe] = useState<number | null>(null);
   // Bumped after a Horizon sync so the book re-reads without a market switch.
   const [reloadKey, setReloadKey] = useState(0);
   const { status: horizon, refresh: refreshHorizon } = useHorizonStatus();
@@ -666,6 +700,7 @@ export function PortfolioScreen() {
     setAdvisorySnaps([]);
     setScenarios([]);
     setMandate(null);
+    setTargetTe(null);
     Promise.allSettled([listFundPositions(200, market), listAdvisoryPositions(200, market)]).then(([f, a]) => {
       if (cancelled) return;
       if (f.status === "fulfilled") setPositions(f.value);
@@ -683,8 +718,10 @@ export function PortfolioScreen() {
       .catch(() => {});
     operatorFetch("/api/fund/onboard", { cache: "no-store" })
       .then((r) => r.json())
-      .then((j: { mandates?: Record<string, MandateCaps | null> }) => {
-        if (!cancelled) setMandate(j.mandates?.[market] ?? null);
+      .then((j: { mandates?: Record<string, MandateCash | null>; budgets?: Record<string, { target_te: number } | null> }) => {
+        if (cancelled) return;
+        setMandate(j.mandates?.[market] ?? null);
+        setTargetTe(j.budgets?.[market]?.target_te ?? null);
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -801,7 +838,7 @@ export function PortfolioScreen() {
 
       <Panel
         title="Fund Mandate · From Scratch"
-        meta="capital base · risk posture · deployment"
+        meta="capital base · risk budget · deployment"
         bodyClassName="tight"
       >
         <FundMandatePanel market={market} />
@@ -837,7 +874,7 @@ export function PortfolioScreen() {
       </Panel>
 
       <Panel title="Rebalance · Advisory" meta="quant verdicts · operator's holdings" bodyClassName="tight">
-        <RebalancePanel positions={advisory} mandate={mandate} market={market} />
+        <RebalancePanel positions={advisory} targetTe={targetTe} market={market} />
       </Panel>
 
       {/* Horizon, when configured, supersedes the direct brokerage links. */}

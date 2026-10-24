@@ -14,10 +14,14 @@
  *    name cap below): there is no quant view to act on.
  *  - A short verdict trims the position by half; neutral holds; a long tops the
  *    name up toward cap × confidence (never selling a long down to it).
- *  - No listed name may exceed max_name_weight_pct of the capital; the excess is
- *    trimmed whatever the verdict.
+ *  - Each name's cap is the desk's one-name risk limit (risk-budget.ts): the
+ *    weight at which its own active risk, weight × active vol, uses the whole
+ *    target tracking error — target ÷ active vol, the vol measured by the
+ *    latest risk report. A listed name over its cap is trimmed whatever the
+ *    verdict. A name with no measured active vol has no cap: held, it is left
+ *    as it is (a short still trims); unheld, it isn't bought.
  *  - New buys come from the strongest unheld longs (composite × confidence),
- *    one per open slot under max_names, each sized at cap × confidence.
+ *    each sized at its cap × confidence.
  *  - Buys are paid for by the cash plus sell proceeds and scaled down pro rata
  *    when they would cost more, so the plan never spends money it doesn't have.
  *  - Trades smaller than minTradePct of the capital are dropped as noise.
@@ -53,8 +57,10 @@ export type RebalanceInput = {
   verdicts: Verdict[];
   /** Undeployed mandate cash, added as new money. */
   cash: number;
-  maxNames: number;
-  maxNameWeightPct: number;
+  /** The desk's target tracking error (annual fraction) from its risk budget. */
+  targetTe: number;
+  /** Measured annual active vol (return less the index's) by ticker. */
+  activeVol: Record<string, number>;
   /** Desk currency ("USD" | "INR"): a verdict priced in anything else can't size a new buy. */
   currency: string;
   /** Indian exchanges trade whole shares; US brokers take fractions. */
@@ -89,10 +95,6 @@ export type RebalancePlan = {
   sellProceeds: number;
   buyCost: number;
   cashAfter: number;
-  listedNames: number;
-  openSlots: number;
-  /** Fresh unheld longs that got no slot because the book is at its name limit. */
-  longsBlocked: number;
   notes: string[];
 };
 
@@ -116,15 +118,19 @@ export function planRebalance(input: RebalanceInput): RebalancePlan {
   const cash = Math.max(0, input.cash);
   const capital = bookValue + cash;
   const empty: RebalancePlan = {
-    capital, trades: [], unrated: [], sellProceeds: 0, buyCost: 0, cashAfter: cash,
-    listedNames: 0, openSlots: 0, longsBlocked: 0, notes,
+    capital, trades: [], unrated: [], sellProceeds: 0, buyCost: 0, cashAfter: cash, notes,
   };
-  if (capital <= 0) return empty;
+  if (capital <= 0 || !(input.targetTe > 0)) return empty;
 
-  const capPct = input.maxNameWeightPct;
-  const cap = (capPct / 100) * capital;
   const w = (x: number) => x / capital;
   const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+  // The name's cap in currency and how it was derived; null without a measured active vol.
+  const capOf = (ticker: string) => {
+    const av = input.activeVol[ticker];
+    if (!(av > 0)) return null;
+    const weight = Math.min(1, input.targetTe / av);
+    return { value: weight * capital, text: `the ${pct(weight)} name cap (${pct(input.targetTe)} target ÷ ${pct(av)} active vol)` };
+  };
   const roundShares = (s: number) => (input.wholeShares ? Math.floor(s) : Math.floor(s * 100) / 100);
   const priceFor = (v: Verdict | undefined) =>
     v && v.price != null && v.price > 0 && v.currency === input.currency ? v.price : null;
@@ -138,8 +144,8 @@ export function planRebalance(input: RebalanceInput): RebalancePlan {
   type Want = { ticker: string; label?: string | null; action: "add" | "buy"; from: number; want: number; price: number | null; reason: string; rank: number };
   const wants: Want[] = [];
   const held = new Set<string>();
-  let listedNames = 0;
   let sellProceeds = 0;
+  let uncapped = 0;
 
   for (const h of input.holdings) {
     held.add(h.ticker);
@@ -148,28 +154,30 @@ export function planRebalance(input: RebalanceInput): RebalancePlan {
       unrated.push({ ticker: h.ticker, label: h.label, reason: "fund · no quant coverage" });
       continue;
     }
-    listedNames++;
     const v = fresh.get(h.ticker);
     const price = h.qty > 0 && mv > 0 ? mv / h.qty : priceFor(v);
+    const cap = capOf(h.ticker);
+    if (!cap) uncapped++;
 
     let target = mv;
-    let reason: string;
+    let reason = cap ? `over ${cap.text}` : "";
     if (!v) {
-      reason = `over the ${capPct}% name cap`;
       unrated.push({ ticker: h.ticker, label: h.label, reason: "no quant verdict in the last week" });
     } else if (v.direction === "short") {
       target = mv / 2;
       reason = `${describe(v)}: trim by half`;
     } else if (v.direction === "long") {
-      target = Math.max(mv, cap * v.confidence);
-      reason = `${describe(v)}: size toward ${pct(w(cap * v.confidence))}`;
-    } else {
-      reason = `over the ${capPct}% name cap`;
+      if (!cap) {
+        unrated.push({ ticker: h.ticker, label: h.label, reason: `${describe(v)} · no measured active vol to size against` });
+        continue;
+      }
+      target = Math.max(mv, cap.value * v.confidence);
+      reason = `${describe(v)}: size toward ${pct(w(cap.value * v.confidence))}`;
     }
-    if (target > cap) {
-      target = cap;
-      if (v?.direction !== "short") reason = `${v ? describe(v) + " · " : ""}over the ${capPct}% name cap`;
-      else reason += `, then down to the ${capPct}% name cap`;
+    if (cap && target > cap.value) {
+      target = cap.value;
+      if (v?.direction !== "short") reason = `${v ? describe(v) + " · " : ""}over ${cap.text}`;
+      else reason += `, then down to ${cap.text}`;
     }
 
     if (target < mv) {
@@ -190,31 +198,29 @@ export function planRebalance(input: RebalanceInput): RebalancePlan {
     }
   }
 
-  // Pass 2: new names, one per open slot, strongest first.
-  const openSlots = Math.max(0, input.maxNames - listedNames);
+  if (uncapped) {
+    notes.push(`${uncapped} held name${uncapped === 1 ? " has" : "s have"} no measured active vol: no cap is checked on ${uncapped === 1 ? "it" : "them"}.`);
+  }
+
+  // Pass 2: new names, strongest first.
   const candidates = [...fresh.values()]
     .filter((v) => v.direction === "long" && !held.has(v.ticker))
     .sort((a, b) => b.composite * b.confidence - a.composite * a.confidence);
-  let longsBlocked = 0;
   let unpriced = 0;
-  let slots = openSlots;
+  let unmeasured = 0;
   for (const v of candidates) {
     const price = priceFor(v);
     if (!price) { unpriced++; continue; }
-    if (slots === 0) { longsBlocked++; continue; }
-    slots--;
+    const cap = capOf(v.ticker);
+    if (!cap) { unmeasured++; continue; }
     wants.push({
-      ticker: v.ticker, action: "buy", from: 0, want: Math.min(cap, cap * v.confidence), price,
-      reason: `${describe(v)}: new position at ${pct(w(Math.min(cap, cap * v.confidence)))}`,
+      ticker: v.ticker, action: "buy", from: 0, want: cap.value * v.confidence, price,
+      reason: `${describe(v)}: new position at ${pct(w(cap.value * v.confidence))}, under ${cap.text}`,
       rank: v.composite * v.confidence,
     });
   }
   if (unpriced) notes.push(`${unpriced} unheld long${unpriced === 1 ? "" : "s"} skipped: no ${input.currency} price on the verdict.`);
-  if (longsBlocked) {
-    notes.push(
-      `${longsBlocked} unheld long${longsBlocked === 1 ? "" : "s"} left out: the book holds ${listedNames} listed names against a ${input.maxNames}-name limit.`,
-    );
-  }
+  if (unmeasured) notes.push(`${unmeasured} unheld long${unmeasured === 1 ? "" : "s"} skipped: no measured active vol to size against.`);
 
   // Pass 3: fund the buys from cash plus proceeds, scaled down if they'd overspend.
   const budget = cash + sellProceeds;
@@ -242,8 +248,7 @@ export function planRebalance(input: RebalanceInput): RebalancePlan {
   trades.sort((a, b) => order[a.action] - order[b.action] || b.value - a.value);
 
   return {
-    capital, trades, unrated, sellProceeds, buyCost, cashAfter: cash + sellProceeds - buyCost,
-    listedNames, openSlots, longsBlocked, notes,
+    capital, trades, unrated, sellProceeds, buyCost, cashAfter: cash + sellProceeds - buyCost, notes,
   };
 }
 

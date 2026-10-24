@@ -205,10 +205,11 @@ export type FundSnapshot = Base & {
 
 /**
  * A from-scratch paper fund for one desk. Created by onboarding (no brokerage
- * attached): the operator sets a capital base and a risk posture, and the desk
- * loop deploys that capital into names as convictions clear. `cash` is the
- * undeployed balance (starts equal to capital_base and is debited as paper buys
- * fill); the posture caps steer sizing and pace. One row per market (unique).
+ * attached): the operator sets a capital base, and the desk loop deploys that
+ * capital into names as convictions clear. `cash` is the undeployed balance
+ * (starts equal to capital_base and is debited as paper buys fill). Sizing and
+ * halts derive from the desk's risk budget (`risk_budgets`), not from here.
+ * One row per market (unique).
  */
 export type RiskPosture = "conservative" | "balanced" | "aggressive";
 
@@ -217,11 +218,15 @@ export type FundMandate = Base & {
   currency: string; // "USD" | "INR" — display only
   capital_base: number;
   cash: number;
-  risk_posture: RiskPosture;
-  max_names: number;
-  max_name_weight_pct: number;
-  max_gross_pct: number;
-  deploy_cap_pct_per_cycle: number;
+  /**
+   * Legacy: the posture and the caps it set before the risk budget replaced
+   * them. Kept on rows onboarded earlier; nothing reads them.
+   */
+  risk_posture?: RiskPosture | null;
+  max_names?: number | null;
+  max_name_weight_pct?: number | null;
+  max_gross_pct?: number | null;
+  deploy_cap_pct_per_cycle?: number | null;
   status: "active" | "paused";
   seeded_at: string;
   note?: string | null;

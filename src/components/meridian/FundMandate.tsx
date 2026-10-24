@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { fmtMoney } from "@/lib/meridian/format";
-import type { FundMandate, Market, RiskPosture } from "@/lib/appwrite/schema";
+import type { FundMandate, Market } from "@/lib/appwrite/schema";
+import type { RiskBudgetRow } from "@/lib/fund/budget-store";
+import { lagLimit, Z99 } from "@/lib/fund/risk-budget";
+import { TRADING_DAYS } from "@/lib/quant/risk";
+import { DESK_INDEX } from "@/lib/market/indices";
 import { operatorFetch } from "@/lib/auth/operator-fetch";
-
-const POSTURES: RiskPosture[] = ["conservative", "balanced", "aggressive"];
 
 const btn: React.CSSProperties = {
   fontFamily: "var(--mono)",
@@ -43,23 +45,28 @@ const label: React.CSSProperties = {
 /** Onboarding + live status for a desk's from-scratch paper fund. */
 export function FundMandatePanel({ market }: { market: Market }) {
   const [mandate, setMandate] = useState<FundMandate | null>(null);
+  const [budget, setBudget] = useState<RiskBudgetRow | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [capital, setCapital] = useState("1000000");
   const [cash, setCash] = useState("");
-  const [posture, setPosture] = useState<RiskPosture>("balanced");
+  const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
       const res = await operatorFetch("/api/fund/onboard", { cache: "no-store" });
-      const j = (await res.json()) as { mandates?: Record<Market, FundMandate | null> };
+      const j = (await res.json()) as { mandates?: Record<Market, FundMandate | null>; budgets?: Record<Market, RiskBudgetRow | null> };
       const m = j.mandates?.[market] ?? null;
+      const b = j.budgets?.[market] ?? null;
       setMandate(m);
-      if (m) { setCapital(String(m.capital_base)); setCash(String(m.cash)); setPosture(m.risk_posture); }
+      setBudget(b);
+      if (m) { setCapital(String(m.capital_base)); setCash(String(m.cash)); }
+      setTarget(b ? String(Number((b.target_te * 100).toFixed(4))) : "");
     } catch {
       setMandate(null);
+      setBudget(null);
     } finally {
       setLoaded(true);
     }
@@ -83,6 +90,11 @@ export function FundMandatePanel({ market }: { market: Market }) {
       setBanner({ kind: "err", text: "Enter a positive capital base." });
       return;
     }
+    const te = Number(target);
+    if (!(te > 0 && te < 100)) {
+      setBanner({ kind: "err", text: "Enter a target tracking error between 0 and 100%." });
+      return;
+    }
     // Undeployed cash is only editable when adjusting an existing mandate; a
     // fresh fund always seeds cash = capital base (nothing deployed yet).
     let cashOverride: number | undefined;
@@ -104,7 +116,7 @@ export function FundMandatePanel({ market }: { market: Market }) {
       const res = await operatorFetch("/api/fund/onboard", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ market, capital_base: cap, risk_posture: posture, ...(cashOverride !== undefined ? { cash: cashOverride } : {}) }),
+        body: JSON.stringify({ market, capital_base: cap, target_te_pct: te, ...(cashOverride !== undefined ? { cash: cashOverride } : {}) }),
       });
       const j = (await res.json()) as { created?: boolean; error?: string };
       if (!res.ok) {
@@ -154,23 +166,10 @@ export function FundMandatePanel({ market }: { market: Market }) {
         );
       })()}
       <div>
-        <label style={label}>Risk posture</label>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
-          {POSTURES.map((p) => (
-            <button
-              key={p}
-              onClick={() => setPosture(p)}
-              style={{
-                fontFamily: "var(--mono)", fontSize: 10.5, letterSpacing: "0.04em",
-                padding: "7px 6px", borderRadius: 5, cursor: "pointer", textTransform: "capitalize",
-                border: `1px solid ${posture === p ? "var(--md-accent)" : "var(--line-soft)"}`,
-                background: posture === p ? "color-mix(in srgb, var(--md-accent) 16%, transparent)" : "transparent",
-                color: posture === p ? "var(--md-accent)" : "var(--ink-2)",
-              }}
-            >
-              {p}
-            </button>
-          ))}
+        <label style={label}>Target tracking error vs the {DESK_INDEX[market].name} (%/yr)</label>
+        <input style={field} inputMode="decimal" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="annual %" />
+        <div className="mono" style={{ fontSize: 10, color: "var(--ink-3)", marginTop: 4 }}>
+          every limit derives from it: the trade gate, the size cap, the day-loss and lag halts
         </div>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
@@ -210,31 +209,37 @@ export function FundMandatePanel({ market }: { market: Market }) {
         <>
           {!mandate && (
             <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11, lineHeight: 1.6 }}>
-              No {market} fund yet. Name a capital base and a risk posture — the swarm builds the book
+              No {market} fund yet. Name a capital base and a target tracking error — the swarm builds the book
               from scratch, deploying into names as convictions clear. No brokerage required.
             </div>
           )}
           {form}
         </>
       ) : (
-        <MandateStatus mandate={mandate} market={market} ccy={ccy} onEdit={() => setEditing(true)} />
+        <MandateStatus mandate={mandate} budget={budget} market={market} ccy={ccy} onEdit={() => setEditing(true)} />
       )}
     </div>
   );
 }
 
+const pct = (x: number) => `${(x * 100).toFixed(2)}%`;
+
 function MandateStatus({
-  mandate, market, ccy, onEdit,
-}: { mandate: FundMandate; market: Market; ccy: string; onEdit: () => void }) {
+  mandate, budget, market, ccy, onEdit,
+}: { mandate: FundMandate; budget: RiskBudgetRow | null; market: Market; ccy: string; onEdit: () => void }) {
   const deployed = Math.max(0, mandate.capital_base - mandate.cash);
   const deployedPct = mandate.capital_base ? (deployed / mandate.capital_base) * 100 : 0;
   const rows: Array<[string, string]> = [
     ["Capital base", fmtMoney(mandate.capital_base, market)],
     ["Deployed", `${fmtMoney(deployed, market)} · ${deployedPct.toFixed(1)}%`],
     ["Cash undeployed", fmtMoney(mandate.cash, market)],
-    ["Posture", mandate.risk_posture],
-    ["Caps", `≤${mandate.max_name_weight_pct}%/name · ≤${mandate.max_gross_pct}% gross · ${mandate.max_names} names`],
-    ["Pacing", `${mandate.deploy_cap_pct_per_cycle}% of base per cycle`],
+    ...(budget
+      ? ([
+          ["Target TE", `${pct(budget.target_te)}/yr · set ${budget.set_at.slice(0, 10)}`],
+          ["Lag halt", `${pct(lagLimit(budget.target_te, 21))} after a month · ${pct(lagLimit(budget.target_te, TRADING_DAYS))} after a year`],
+          ["Day-loss halt", `${Z99.toFixed(2)} × (index vol + ${pct(budget.target_te)}) / √${TRADING_DAYS}`],
+        ] as Array<[string, string]>)
+      : ([["Target TE", "not set — the desk stages every trade"]] as Array<[string, string]>)),
   ];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -264,7 +269,7 @@ function MandateStatus({
             }}
           >
             <span style={{ color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 10 }}>{k}</span>
-            <span style={{ color: "var(--ink-1)", textTransform: k === "Posture" ? "capitalize" : "none" }}>{v}</span>
+            <span style={{ color: "var(--ink-1)" }}>{v}</span>
           </div>
         ))}
       </div>

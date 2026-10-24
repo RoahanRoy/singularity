@@ -10,30 +10,23 @@
  * no budget, a held name without a live quote, a held or traded name without a
  * full window of history, no index history.
  */
-import { db, DB, ID, Query } from "./appwrite";
+import { db, DB } from "./appwrite";
 import { markFundBook } from "./fund-book";
 import { measure, withHistory } from "./portfolio-risk";
 import { DESK_INDEX } from "../../src/lib/market/indices";
+import { appendRiskBudget, getRiskBudget, type RiskBudgetRow } from "../../src/lib/fund/budget-store";
 import type { PortfolioRisk } from "../../src/lib/quant/portfolio-risk";
 
 type Market = "US" | "IN";
 
-export type RiskBudget = { market: Market; target_te: number; set_at: string; set_by: string; note: string | null };
+export type RiskBudget = RiskBudgetRow;
 
 /** The desk's current risk budget, or null before the operator has set one. */
-export async function loadBudget(market: Market): Promise<RiskBudget | null> {
-  const res = await db.listDocuments(DB, "risk_budgets", [Query.equal("market", market), Query.orderDesc("set_at"), Query.limit(1)]);
-  const row = res.documents[0] as unknown as RiskBudget | undefined;
-  return row && Number.isFinite(row.target_te) && row.target_te > 0 ? row : null;
-}
+export const loadBudget = (market: Market) => getRiskBudget(db, DB, market);
 
 /** Record a new budget for the desk. Appends; the prior rows stay as history. */
-export async function setBudget(market: Market, targetTe: number, setBy: string, note?: string): Promise<RiskBudget> {
-  if (!(targetTe > 0 && targetTe < 1)) throw new Error(`target tracking error ${targetTe} is not a fraction in (0, 1)`);
-  const row = { market, target_te: targetTe, set_at: new Date().toISOString(), set_by: setBy, note: note ?? null };
-  await db.createDocument(DB, "risk_budgets", ID.unique(), row);
-  return row;
-}
+export const setBudget = (market: Market, targetTe: number, setBy: string, note?: string) =>
+  appendRiskBudget(db, DB, market, targetTe, setBy, note);
 
 export type TradeRisk =
   | { ok: false; reason: string }
