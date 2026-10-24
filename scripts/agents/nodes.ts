@@ -18,7 +18,7 @@ import { db, DB, ID, Query, emit, setStatus, ensureAgent, recountClusters, write
 import { fetchLatestFiling, type EdgarFiling } from "./edgar";
 import { fetchLatestIndiaFiling } from "./india";
 import { fetchTranscript } from "./transcript";
-import { getQuote, stubPrice } from "./quotes";
+import { getQuote } from "./quotes";
 import { indexDoc, recallPrior, formatRecall } from "./recall";
 import { getMandate, deployableThisCycle, debitCash } from "../../src/lib/fund/mandate";
 import { checkCircuitBreaker } from "./circuit-breaker";
@@ -86,7 +86,13 @@ export type Ctx = {
     /** Reviewer's read on how well the computed models fit this business (computed band only). */
     model_fit?: "good" | "fair" | "poor";
   };
-  size?: { qty: number; weight_pct: number; reasoning: string };
+  size?: {
+    qty: number;
+    weight_pct: number;
+    reasoning: string;
+    /** The live quote the PM sized against: TCA's arrival benchmark. */
+    arrival?: { price: number; at: string };
+  };
   risk?: { approved: boolean; var_pct: number; notes: string };
   compliance?: { approved: boolean; flags: string[] };
   route?: {
@@ -146,6 +152,8 @@ export type Ctx = {
     next_check_minutes: number;
   };
   preTrade?: { allowed: boolean; breaches: string[] };
+  /** Set when a node stopped the chain on missing data; the memo is back in review. */
+  staged?: string;
   memoId?: string;
   reviseCount?: number;
   agentIds: Record<string, string>;
@@ -631,6 +639,18 @@ export const ACTION_FLOOR = 0.25;
 /** Conviction × critic score at which the PM sizes to the full name cap. */
 export const FULL_SIZE_AT = 0.6;
 
+/**
+ * Stop the chain because a number it needs was not measured. The memo goes back
+ * to review with the reason; nothing downstream substitutes a guess.
+ */
+async function stage(ctx: Ctx, agentId: string, reason: string): Promise<Ctx> {
+  await emit(agentId, "alert", `STAGED ${ctx.ticker} — ${reason}`.slice(0, 200));
+  await writeAudit("desk", "staged", ctx.ticker, "block", reason);
+  if (ctx.memoId) await db.updateDocument(DB, "memos", ctx.memoId, { status: "review" });
+  await setStatus(agentId, "idle");
+  return { ...ctx, staged: reason };
+}
+
 // Review gate: kills a critic-rejected thesis and stages a low-conviction one,
 // but a thesis that clears the bar now PROCEEDS through full sizing/analysis.
 // Whether the sized trade auto-executes or holds for operator approval is
@@ -806,7 +826,10 @@ export async function pm(ctx: Ctx): Promise<Ctx> {
   // catalyst carried the vote, the price limits how much the fund risks on it.
   const rich = ctx.valuation?.verdict === "rich";
   const cap = Math.min(5, mandate?.max_name_weight_pct ?? 5) / (rich ? 2 : 1);
-  const price = ctx.quant?.price ?? (await getQuote(ctx.ticker, market).catch(() => null));
+  // Size against a live quote, never a stored or estimated price: no quote, no trade.
+  const price = await getQuote(ctx.ticker, market);
+  if (price == null) return stage(ctx, id, `no live quote for ${ctx.ticker}, nothing to size against`);
+  const arrival = { price, at: new Date().toISOString() };
   const raw = await ask({
     model: prompt.meta.model,
     system: prompt.body,
@@ -818,15 +841,16 @@ IC decision: approve (conviction ${ctx.ic?.conviction ?? "n/a"}, soft weight cei
 NAV: ${nav}${mandate ? " (fund mandate capital base)" : " (no mandate: default)"}
 Name weight cap: ${cap}%${rich ? " (half the usual cap: valuation rich)" : ""}
 Action floor: ${ACTION_FLOOR} · full size at: ${FULL_SIZE_AT}
-Price: ${price ?? "n/a"}${ctx.quant?.priceSource ? ` (${ctx.quant.priceSource})` : ""}`,
+Price: ${price} (live quote)`,
     label: `pm:${ctx.ticker}`,
   });
   const out = extractJson<NonNullable<Ctx["size"]>>(raw);
   const weight = Math.max(0, Math.min(cap, Number(out.weight_pct) || 0));
   const size: NonNullable<Ctx["size"]> = {
     weight_pct: Math.round(weight * 100) / 100,
-    qty: price && price > 0 ? Math.floor((nav * weight) / 100 / price) : Math.max(0, Math.floor(Number(out.qty) || 0)),
+    qty: Math.floor((nav * weight) / 100 / price),
     reasoning: out.reasoning,
+    arrival,
   };
   await emit(id, "thought", `Sizing ${ctx.ticker} at ${size.weight_pct?.toFixed(2)}% (${size.qty} sh)`, size);
   await setStatus(id, "idle");
@@ -1038,8 +1062,8 @@ export async function smartRouter(ctx: Ctx): Promise<Ctx> {
 
 // 7. Paper Broker -----------------------------------------------------------
 //
-// Fills a compliance-cleared BUY at a real quote (falling back to a
-// deterministic stub if the provider is down) and books it into the PAPER
+// Fills a compliance-cleared BUY at a real quote (no quote, no fill: the order
+// is held for a later cycle or the operator) and books it into the PAPER
 // positions book — rows with no brokerage account id and no horizon_source, so
 // a live IBKR/Kite/Horizon sync (which only replaces real-holdings rows) never
 // clobbers them and the two coexist as one combined book.
@@ -1114,8 +1138,9 @@ async function bookPaperBuy(ticker: string, qty: number, price: number, market: 
 }
 
 /**
- * Record a paper BUY fill: real quote (stub fallback), a trades row, and the
- * paper-book update. Shared by the auto-execute path and the operator-approved
+ * Record a paper BUY fill: a live quote, a trades row, and the paper-book
+ * update. Without a live quote nothing fills (`unquoted`), so the caller holds
+ * the order rather than booking it at a made-up price. Shared by the auto-execute path and the operator-approved
  * execution path so both fill identically.
  *
  * When the desk has a from-scratch fund mandate, this is where its capital base
@@ -1132,7 +1157,7 @@ async function bookPaperBuy(ticker: string, qty: number, price: number, market: 
  */
 async function fillPaperTrade(
   input: { ticker: string; qty: number; market: "US" | "IN"; venue?: string | null; agentId: string },
-): Promise<{ id: string | null; fill_price: number; quoted: boolean; filled_qty: number; capped: boolean; halted: string | null }> {
+): Promise<{ id: string | null; fill_price: number; filled_qty: number; capped: boolean; halted: string | null; unquoted: boolean }> {
   const { ticker, market } = input;
 
   const breaker = await checkCircuitBreaker(market, input.agentId);
@@ -1140,11 +1165,16 @@ async function fillPaperTrade(
     const reason = breaker.reason ?? "circuit breaker halted";
     await writeAudit("circuit-breaker", "fill_blocked", ticker.toUpperCase(), "block",
       `BUY ${input.qty} ${ticker.toUpperCase()} not filled: ${reason}`);
-    return { id: null, fill_price: 0, quoted: false, filled_qty: 0, capped: false, halted: reason };
+    return { id: null, fill_price: 0, filled_qty: 0, capped: false, halted: reason, unquoted: false };
   }
 
   const quoted = await getQuote(ticker, market);
-  const price = Number((quoted ?? stubPrice(ticker)).toFixed(2));
+  if (quoted == null) {
+    await writeAudit("broker", "fill_blocked", ticker.toUpperCase(), "block",
+      `BUY ${input.qty} ${ticker.toUpperCase()} not filled: no live quote`);
+    return { id: null, fill_price: 0, filled_qty: 0, capped: false, halted: null, unquoted: true };
+  }
+  const price = Number(quoted.toFixed(2));
   const venue = input.venue ? `paper-${input.venue}` : "paper-IBKR";
 
   // Mandate deployment gate. Cap the fill to affordable whole shares within the
@@ -1157,7 +1187,7 @@ async function fillPaperTrade(
     const affordable = Math.max(0, Math.floor(budget / price));
     if (affordable < qty) { qty = affordable; capped = true; }
     if (qty <= 0) {
-      return { id: null, fill_price: price, quoted: quoted != null, filled_qty: 0, capped: true, halted: null };
+      return { id: null, fill_price: price, filled_qty: 0, capped: true, halted: null, unquoted: false };
     }
   }
 
@@ -1191,7 +1221,7 @@ async function fillPaperTrade(
     }
   }
 
-  return { id: trade.$id, fill_price: price, quoted: quoted != null, filled_qty: qty, capped, halted: null };
+  return { id: trade.$id, fill_price: price, filled_qty: qty, capped, halted: null, unquoted: false };
 }
 
 export async function broker(ctx: Ctx): Promise<Ctx> {
@@ -1230,9 +1260,9 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
   await setStatus(id, "executing");
   const f = await fillPaperTrade({ ticker: ctx.ticker, qty, market, venue: ctx.route?.venue, agentId: id });
 
-  // No fill — either the circuit breaker halted the desk or the mandate ran out
-  // of deployable cash this cycle. Hold the order for review so a human (or a
-  // later cycle's replenished pacing budget) can fill it. No trade.
+  // No fill — the circuit breaker halted the desk, there was no live quote, or
+  // the mandate ran out of deployable cash this cycle. Hold the order for review
+  // so a human (or a later cycle) can fill it. No trade.
   if (!f.id || f.filled_qty === 0) {
     if (ctx.memoId) {
       await db.updateDocument(DB, "memos", ctx.memoId, {
@@ -1243,7 +1273,9 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
     await emit(id, "handoff",
       f.halted
         ? `HOLD BUY ${qty} ${ctx.ticker} — circuit breaker: ${f.halted}`
-        : `HOLD BUY ${qty} ${ctx.ticker} — fund out of deployable cash this cycle`,
+        : f.unquoted
+          ? `HOLD BUY ${qty} ${ctx.ticker} — no live quote, nothing filled`
+          : `HOLD BUY ${qty} ${ctx.ticker} — fund out of deployable cash this cycle`,
       { memo_id: ctx.memoId, halted: f.halted });
     await setStatus(id, "idle");
     return ctx;
@@ -1253,10 +1285,10 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
     await db.updateDocument(DB, "memos", ctx.memoId, { status: "executed", pending_exec_json: null });
   }
   await writeAudit("broker", "auto_execution", ctx.ticker, "allow",
-    `Auto-approved fill: BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price}${f.quoted ? "" : " (stub)"}${f.capped ? ` (capped from ${qty})` : ""}`);
+    `Auto-approved fill: BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price}${f.capped ? ` (capped from ${qty})` : ""}`);
   await emit(id, "trade",
-    `FILL BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price.toFixed(2)}${f.quoted ? "" : " (stub)"}${f.capped ? ` (capped from ${qty} by mandate pacing)` : ""} via ${ctx.route?.algo ?? "default"}`,
-    { trade_id: f.id, route: ctx.route, quoted: f.quoted, filled_qty: f.filled_qty, requested_qty: qty });
+    `FILL BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price.toFixed(2)}${f.capped ? ` (capped from ${qty} by mandate pacing)` : ""} via ${ctx.route?.algo ?? "default"}`,
+    { trade_id: f.id, route: ctx.route, filled_qty: f.filled_qty, requested_qty: qty });
   await setStatus(id, "idle");
   return { ...ctx, trade: { id: f.id, status: "filled", fill_price: f.fill_price } };
 }
@@ -1303,17 +1335,18 @@ async function executeApproved(memo: ApprovableMemo, agentIds: Record<string, st
     return false;
   }
 
-  // Out of deployable cash: leave the memo "approved" (pending intact) so the
-  // next sweep retries once the pacing budget replenishes. Nothing booked.
+  // No live quote or out of deployable cash: leave the memo "approved" (pending
+  // intact) so the next sweep retries. Nothing booked.
   if (!f.id || f.filled_qty === 0) {
-    await emit(id, "handoff", `HOLD approved BUY ${qty} ${memo.ticker} — fund out of deployable cash`, { memo_id: memo.$id });
+    await emit(id, "handoff",
+      `HOLD approved BUY ${qty} ${memo.ticker} — ${f.unquoted ? "no live quote" : "fund out of deployable cash"}`, { memo_id: memo.$id });
     await setStatus(id, "idle");
     return false;
   }
 
   await db.updateDocument(DB, "memos", memo.$id, { status: "executed", pending_exec_json: null });
   await writeAudit("broker", "approved_execution", memo.ticker, "allow",
-    `Operator-approved fill: BUY ${f.filled_qty} ${memo.ticker} @ ${f.fill_price}${f.quoted ? "" : " (stub)"}${f.capped ? ` (capped from ${qty})` : ""}`);
+    `Operator-approved fill: BUY ${f.filled_qty} ${memo.ticker} @ ${f.fill_price}${f.capped ? ` (capped from ${qty})` : ""}`);
   await emit(id, "trade",
     `APPROVED FILL BUY ${f.filled_qty} ${memo.ticker} @ ${f.fill_price.toFixed(2)}${f.capped ? ` (capped from ${qty})` : ""}`,
     { trade_id: f.id, memo_id: memo.$id, filled_qty: f.filled_qty, requested_qty: qty });
