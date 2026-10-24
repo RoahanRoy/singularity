@@ -240,6 +240,10 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     ctx = await quant(ctx);
     ctx = await critic(ctx);
     ctx = await valuation(ctx);
+    if (ctx.staged) {
+      console.log(`\n=== ${ticker}: staged for review — ${ctx.staged} ===`);
+      return;
+    }
     ctx = await cio(ctx);
     ctx = await pm(ctx);
     ctx = await treasury(ctx);
