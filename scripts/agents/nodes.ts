@@ -1022,29 +1022,72 @@ export async function riskOverlay(ctx: Ctx): Promise<Ctx> {
 }
 
 // 6. Compliance -------------------------------------------------------------
+//
+// Pre-trade rules, in code, from stored data:
+//   - Restricted list: the operator's restricted_list for this desk. A listed
+//     ticker blocks; a list that can't be read blocks too (fail closed).
+//   - Book of record: a ticker the positions collection already holds for the
+//     advisory (Horizon/broker) book can't be booked to the fund, so it blocks.
+//   - Prior position: the fund book's current holding, reported.
+//   - Wash sale: a sell of the ticker in the last 30 days is flagged (advisory).
+//   - Reg SHO: shorts only; the desk only buys.
+// Position limits are the risk overlay's, against the operator's risk_limits.
+const WASH_SALE_DAYS = 30; // IRC §1091 window
+
 export async function compliance(ctx: Ctx): Promise<Ctx> {
   const id = ctx.agentIds.compliance;
   if (!ctx.risk?.approved || !ctx.preTrade?.allowed) return ctx;
 
-  const prompt = loadPrompt("compliance");
+  const market = ctx.market ?? "US";
+  const ticker = ctx.ticker.toUpperCase();
   await setStatus(id, "thinking");
-  const raw = await ask({
-    model: prompt.meta.model,
-    system: prompt.body,
-    user: `Trade: BUY ${ctx.size?.qty} ${ctx.ticker}. Restricted list: empty. Prior position: none.`,
-    label: `compliance:${ctx.ticker}`,
-  });
-  const c = extractJson<NonNullable<Ctx["compliance"]>>(raw);
+
+  const [restricted, held, sells] = await Promise.all([
+    db.listDocuments(DB, "restricted_list", [Query.equal("market", market), Query.equal("ticker", ticker), Query.limit(1)])
+      .then((r) => r.documents[0] ?? null, (err: Error) => err),
+    db.listDocuments(DB, "positions", [Query.equal("ticker", ticker), Query.limit(1)])
+      .then((r) => r.documents[0] ?? null, (err: Error) => err),
+    db.listDocuments(DB, "trades", [Query.equal("ticker", ticker), Query.equal("market", market), Query.orderDesc("$createdAt"), Query.limit(50)])
+      .then((r) => r.documents, (err: Error) => err),
+  ]);
+
+  const hard: string[] = [];
+  const flags: string[] = [];
+  if (restricted instanceof Error) hard.push(`Restricted list: could not be read (${restricted.message}) — failing closed`);
+  else if (restricted) hard.push(`Restricted list: ${ticker} restricted ${String(restricted.added_at).slice(0, 10)} by ${restricted.added_by} — ${restricted.reason}`);
+
+  if (held instanceof Error) {
+    hard.push(`Prior position: could not be read (${held.message}) — failing closed`);
+  } else if (held && (held.horizon_source || held.ibkr_account_id || held.kite_account_id)) {
+    hard.push(`Book of record: ${ticker} is held on the advisory book (${held.horizon_source || "broker"}); a fund fill can't be booked beside it`);
+  } else if (held) {
+    flags.push(`Prior position: fund book holds ${held.qty} sh at ${held.avg_cost} avg cost`);
+  } else {
+    flags.push("Prior position: none on the fund book");
+  }
+
+  if (sells instanceof Error) {
+    flags.push(`Wash sale: trade history unreadable (${sells.message})`);
+  } else {
+    const since = Date.now() - WASH_SALE_DAYS * 86_400_000;
+    const recent = sells.filter((t) => t.side === "sell" && Date.parse(t.filled_at ?? t.$createdAt) >= since);
+    flags.push(recent.length
+      ? `Wash sale: ${recent.length} sell(s) of ${ticker} in the last ${WASH_SALE_DAYS} days — a loss on them may be disallowed`
+      : `Wash sale: no sell of ${ticker} in the last ${WASH_SALE_DAYS} days`);
+  }
+  flags.push("Reg SHO: applies to shorts only — not applicable to BUY");
+
+  const c: NonNullable<Ctx["compliance"]> = { approved: hard.length === 0, flags: [...hard, ...flags] };
 
   await db.createDocument(DB, "governance_events", ID.unique(), {
     kind: c.approved ? "approval" : "block",
     actor: "compliance-agent",
     target: ctx.ticker,
-    reason: (c.flags?.join("; ") || "Pre-trade checks passed").slice(0, 500),
+    reason: (c.approved ? "Pre-trade checks passed" : hard.join("; ")).slice(0, 500),
     occurred_at: new Date().toISOString(),
   });
   await emit(id, c.approved ? "thought" : "alert",
-    `Compliance ${c.approved ? "OK" : "BLOCK"} ${ctx.ticker}`, c);
+    `Compliance ${c.approved ? "OK" : "BLOCK"} ${ctx.ticker}${c.approved ? "" : ` — ${hard[0]}`}`.slice(0, 240), c);
   await setStatus(id, "idle");
   return { ...ctx, compliance: c };
 }
@@ -1694,7 +1737,7 @@ async function bootstrapFor(c: Record<string, ClusterRef>, suffix = ""): Promise
     pm:                  await ensureAgent(`PM${s}`,                   "ops",       c.ops, m("portfolio-manager")),
     treasury:            await ensureAgent(`Treasury${s}`,             "ops",       c.treasury, "code"),
     risk:                await ensureAgent(`Risk Officer${s}`,         "risk",      c.risk, m("risk-officer")),
-    compliance:          await ensureAgent(`Compliance${s}`,           "ops",       c.ops, m("compliance")),
+    compliance:          await ensureAgent(`Compliance${s}`,           "ops",       c.ops, "code"),
     smartRouter:         await ensureAgent(`Smart Router${s}`,         "execution", c.execution, m("smart-router")),
     broker:              await ensureAgent(`Paper Broker${s}`,         "execution", c.execution, "code"),
     tca:                 await ensureAgent(`TCA${s}`,                  "ops",       c.execution, "code"),

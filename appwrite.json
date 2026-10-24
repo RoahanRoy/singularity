@@ -2318,6 +2318,73 @@
                     ]
                 }
             ]
+        },
+        {
+            "$id": "restricted_list",
+            "databaseId": "meridian",
+            "name": "restricted_list",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")",
+                "create(\"users\")",
+                "update(\"users\")",
+                "delete(\"users\")"
+            ],
+            "attributes": [
+                {
+                    "key": "ticker",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "reason",
+                    "type": "string",
+                    "size": 512,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "added_by",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "added_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_market_ticker",
+                    "type": "unique",
+                    "attributes": [
+                        "market",
+                        "ticker"
+                    ],
+                    "orders": [
+                        "ASC",
+                        "ASC"
+                    ]
+                }
+            ]
         }
     ]
 }
