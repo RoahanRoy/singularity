@@ -1,24 +1,6 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, IBM_Plex_Mono, IBM_Plex_Sans, JetBrains_Mono, Newsreader } from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Sans, Newsreader } from "next/font/google";
 import "./globals.css";
-
-const geist = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-jetbrains-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
-});
 
 // Variable, with the optical-size axis so display figures draw from the
 // display master and body copy from the text one.
@@ -48,7 +30,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <head>
         {/* Icon font for the desk and the public pages (Outlined, wght 300). It
             renders ligatures, so `display=block` keeps raw glyph names from
@@ -60,7 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body
-        className={`${geist.variable} ${geistMono.variable} ${jetbrainsMono.variable} ${newsreader.variable} ${plexSans.variable} ${plexMono.variable} antialiased`}
+        className={`${newsreader.variable} ${plexSans.variable} ${plexMono.variable} antialiased`}
       >
         {children}
       </body>
