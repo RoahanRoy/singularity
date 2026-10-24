@@ -17,8 +17,8 @@ export type IbkrSyncResult = {
  * Pull a connected IBKR account's live positions from the gateway and project
  * them onto the US advisory book, natively USD:
  *   - replace this account's `advisory_positions` rows (market="US") with fresh marks,
- *   - append a `fund_snapshots` row (market="US") so the US fund's NAV/PnL
- *     accrues a chartable time series,
+ *   - append an advisory `fund_snapshots` row (market="US", book="advisory")
+ *     so the account's NAV/PnL accrues a chartable time series,
  *   - stamp the account with holdings_count / equity_cash / last_synced_at.
  *
  * Positions tagged with this `ibkr_account_id` are reconstructed on every sync,
@@ -97,6 +97,7 @@ export async function syncAccount(docId: string): Promise<IbkrSyncResult> {
   // vs the most recent US snapshot (a real session delta), not lifetime P&L.
   const lastSnap = await databases.listDocuments(DATABASE_ID, COLLECTIONS.fund_snapshots, [
     Query.equal("market", "US"),
+    Query.or([Query.equal("book", "advisory"), Query.isNull("book")]),
     Query.orderDesc("captured_at"),
     Query.limit(1),
   ]);
@@ -108,6 +109,7 @@ export async function syncAccount(docId: string): Promise<IbkrSyncResult> {
       pnl_daily: Number(dayPnl.toFixed(2)),
       captured_at: new Date().toISOString(),
       market: "US",
+      book: "advisory",
     })
     .catch(() => {});
 

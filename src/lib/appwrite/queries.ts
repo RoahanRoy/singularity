@@ -247,12 +247,20 @@ export async function listScenarios(limit = 12, market?: Market): Promise<Scenar
   return res.documents;
 }
 
-/** Oldest → newest, so the series can be charted left-to-right. */
-export async function listFundSnapshots(limit = 200, market?: Market): Promise<FundSnapshot[]> {
+/**
+ * One book's NAV series, oldest → newest, so it charts left-to-right. Rows from
+ * before the books were split carry no `book` and are advisory.
+ */
+export async function listFundSnapshots(limit = 200, market?: Market, book: "fund" | "advisory" = "advisory"): Promise<FundSnapshot[]> {
   const res = await databases.listDocuments<FundSnapshot & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.fund_snapshots,
-    [...marketFilter(market), Query.orderDesc("captured_at"), Query.limit(limit)],
+    [
+      ...marketFilter(market),
+      book === "fund" ? Query.equal("book", "fund") : Query.or([Query.equal("book", "advisory"), Query.isNull("book")]),
+      Query.orderDesc("captured_at"),
+      Query.limit(limit),
+    ],
   );
   return res.documents.slice().reverse();
 }

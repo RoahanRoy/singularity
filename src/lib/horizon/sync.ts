@@ -7,6 +7,9 @@ import { foldHoldings } from "./book";
 import { holdingsReturn, nextBookIndex, type PulledHolding } from "@/lib/fund/scorecard";
 import { indexLevel } from "@/lib/market/indices";
 
+/** The advisory book's snapshots: tagged, or from before the books were split. */
+const ADVISORY_SNAPSHOT = Query.or([Query.equal("book", "advisory"), Query.isNull("book")]);
+
 export type HorizonSyncResult = {
   /** "fresh": the book was pulled within `maxAgeMs`, so nothing was re-pulled. */
   status: "synced" | "fresh" | "unauthorized" | "error";
@@ -37,8 +40,9 @@ export const HORIZON_LOOP_MAX_AGE_MS = 15 * 60_000;
  *     any direct IBKR rows, which Horizon supersedes (keeping both would count
  *     the same shares twice). Factor exposures carry forward,
  *   - `positions` (the fund book) is never touched,
- *   - one fund_snapshots row per desk that holds anything, carrying the
- *     flow-free book level and the index level beside the NAV (scorecard.ts).
+ *   - one advisory fund_snapshots row (book="advisory") per desk that holds
+ *     anything, carrying the flow-free book level and the index level beside
+ *     the NAV (scorecard.ts).
  *
  * Nothing is written until Horizon has answered, so a failed pull leaves the
  * current book exactly as it was.
@@ -156,6 +160,7 @@ async function pull(): Promise<HorizonSyncResult> {
 
     const lastSnap = await databases.listDocuments(DATABASE_ID, COLLECTIONS.fund_snapshots, [
       Query.equal("market", market),
+      ADVISORY_SNAPSHOT,
       Query.orderDesc("captured_at"),
       Query.limit(1),
     ]);
@@ -168,6 +173,7 @@ async function pull(): Promise<HorizonSyncResult> {
       pnl_daily: Number(dayPnl.toFixed(2)),
       captured_at: new Date().toISOString(),
       market,
+      book: "advisory",
     };
     const track = await scorecardPoint(databases, market, hadHorizon.has(market), real, pulled[market], levels[market]);
     await databases
@@ -200,6 +206,7 @@ async function scorecardPoint(
     try {
       const last = await databases.listDocuments(DATABASE_ID, COLLECTIONS.fund_snapshots, [
         Query.equal("market", market),
+        ADVISORY_SNAPSHOT,
         Query.isNotNull("book_index"),
         Query.orderDesc("captured_at"),
         Query.limit(1),

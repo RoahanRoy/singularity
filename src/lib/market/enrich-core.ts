@@ -22,6 +22,9 @@
  */
 import { type Databases, Query, ID } from "node-appwrite";
 
+/** The advisory book's snapshots: tagged, or from before the books were split. */
+const ADVISORY_SNAPSHOT = Query.or([Query.equal("book", "advisory"), Query.isNull("book")]);
+
 // ── config ──────────────────────────────────────────────────────────────────
 
 export type FactorProxy = { key: string; symbol: string };
@@ -253,7 +256,7 @@ async function reconstructSnapshots(
   summary.sessions = series.length;
   summary.windowStart = series[0].date;
 
-  const existing = await databases.listDocuments(dbId, "fund_snapshots", [Query.equal("market", cfg.market), Query.limit(500)]);
+  const existing = await databases.listDocuments(dbId, "fund_snapshots", [Query.equal("market", cfg.market), ADVISORY_SNAPSHOT, Query.limit(500)]);
   const haveDates = new Set(
     (existing.documents as unknown as { captured_at: string }[]).map((d) => d.captured_at.slice(0, 10)),
   );
@@ -267,6 +270,7 @@ async function reconstructSnapshots(
       pnl_daily: Number((nav - prev).toFixed(2)),
       captured_at: `${date}T${cfg.snapshotCloseUtc}`,
       market: cfg.market,
+      book: "advisory",
     });
     summary.snapshotsAdded++;
   }
@@ -276,7 +280,7 @@ async function reconstructSnapshots(
 /** If the latest snapshot still carries a lifetime P&L figure, fix it. */
 async function correctLatestPnl(databases: Databases, dbId: string, cfg: EnrichConfig, log: (msg: string) => void): Promise<boolean> {
   const top = await databases.listDocuments(dbId, "fund_snapshots", [
-    Query.equal("market", cfg.market), Query.orderDesc("captured_at"), Query.limit(2),
+    Query.equal("market", cfg.market), ADVISORY_SNAPSHOT, Query.orderDesc("captured_at"), Query.limit(2),
   ]);
   const [latest, prev] = top.documents as unknown as { $id: string; nav_usd: number; pnl_daily: number }[];
   if (!latest || !prev) return false;

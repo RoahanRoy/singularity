@@ -46,6 +46,7 @@ import {
 } from "./nodes";
 import { quantDesk } from "./quant-nodes";
 import { heldTickers as heldOnBooks } from "./coverage";
+import { markFundNav } from "./fund-nav";
 import { marketState } from "./market-hours";
 import { collectEvents, type EventHit, type LatestFilingKey } from "./events";
 
@@ -131,6 +132,22 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     }
   }
 
+  // The fund's NAV mark for the session (fund-nav.ts). Every cycle would be a
+  // quote per name and a write; one mark per FUND_NAV_EVERY_MS is enough to end
+  // the session near its close.
+  const FUND_NAV_EVERY_MS = 15 * 60_000;
+  let lastNavMark = 0;
+  async function markNav(): Promise<void> {
+    if (Date.now() - lastNavMark < FUND_NAV_EVERY_MS) return;
+    lastNavMark = Date.now();
+    try {
+      const m = await markFundNav(market);
+      if (m.status === "marked") console.log(`[${key}] fund NAV ${m.session}: ${m.nav} (day ${m.day_pnl >= 0 ? "+" : ""}${m.day_pnl}, book ${m.book_index})`);
+    } catch (err) {
+      console.warn(`[${key}] fund NAV mark failed (continuing): ${(err as Error).message}`);
+    }
+  }
+
   /** Current held tickers for this desk's market, on the fund and advisory books. */
   async function heldTickers(): Promise<string[]> {
     try {
@@ -181,6 +198,7 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     // uses the sizing persisted when the broker held the fill).
     const executed = await sweepApprovedMemos(market, agentIds);
     if (executed > 0) console.log(`[${key}] executed ${executed} operator-approved trade(s)`);
+    await markNav();
     const held = await heldTickers();
 
     // React to fresh disclosures first; fall back to round-robin to keep cold

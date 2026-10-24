@@ -191,6 +191,12 @@ export type FundSnapshot = Base & {
   book_index?: number | null;
   /** The desk's index (S&P 500 / Nifty 50) at the same pull. */
   index_level?: number | null;
+  /**
+   * Whose NAV this is: "fund" (the desk's own book, marked by the desk loop)
+   * or "advisory" (the operator's holdings, from a Horizon/IBKR pull). Null on
+   * rows from before the books were split, which are all advisory.
+   */
+  book?: "fund" | "advisory" | null;
 };
 
 /**

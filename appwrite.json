@@ -1360,6 +1360,15 @@
                     "type": "double",
                     "required": false,
                     "array": false
+                },
+                {
+                    "key": "book",
+                    "type": "string",
+                    "size": 16,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false,
+                    "default": null
                 }
             ],
             "indexes": [
@@ -1378,6 +1387,14 @@
                     "type": "key",
                     "attributes": [
                         "market"
+                    ]
+                },
+                {
+                    "key": "by_market_book",
+                    "type": "key",
+                    "attributes": [
+                        "market",
+                        "book"
                     ]
                 }
             ]
