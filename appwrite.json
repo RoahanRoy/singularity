@@ -2626,6 +2626,134 @@
             ]
         },
         {
+            "$id": "construction_plans",
+            "databaseId": "meridian",
+            "name": "construction_plans",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")"
+            ],
+            "attributes": [
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "book",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "session",
+                    "type": "string",
+                    "size": 10,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "captured_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "nav",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "target_te",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "binding",
+                    "type": "string",
+                    "size": 8,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "te_before",
+                    "type": "double",
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "te_after",
+                    "type": "double",
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "beta_before",
+                    "type": "double",
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "beta_after",
+                    "type": "double",
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "var95_before",
+                    "type": "double",
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "var95_after",
+                    "type": "double",
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "alpha",
+                    "type": "double",
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "plan_json",
+                    "type": "string",
+                    "size": 65535,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_market_book_time",
+                    "type": "key",
+                    "attributes": [
+                        "market",
+                        "book",
+                        "captured_at"
+                    ],
+                    "orders": [
+                        "ASC",
+                        "ASC",
+                        "DESC"
+                    ]
+                }
+            ]
+        },
+        {
             "$id": "risk_budgets",
             "databaseId": "meridian",
             "name": "risk_budgets",

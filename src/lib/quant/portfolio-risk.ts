@@ -147,7 +147,7 @@ export function ledoitWolf(X: readonly (readonly number[])[]): { cov: number[][]
 }
 
 /** Daily adjusted closes on the calendar dates, carrying the last close forward. */
-function onCalendar(bars: readonly Bar[], dates: readonly string[]): { closes: number[]; missing: number } | null {
+export function onCalendar(bars: readonly Bar[], dates: readonly string[]): { closes: number[]; missing: number } | null {
   if (!bars.length || bars[0].date > dates[0]) return null;
   const closes: number[] = [];
   let k = 0, last = NaN, missing = 0;
@@ -164,7 +164,8 @@ function onCalendar(bars: readonly Bar[], dates: readonly string[]): { closes: n
   return { closes, missing };
 }
 
-const rets = (xs: readonly number[]) => xs.slice(1).map((x, i) => x / xs[i] - 1);
+/** Simple returns between consecutive closes. */
+export const rets = (xs: readonly number[]) => xs.slice(1).map((x, i) => x / xs[i] - 1);
 
 function adjOnOrBefore(bars: readonly Bar[], date: string): number | null {
   let ans: number | null = null;

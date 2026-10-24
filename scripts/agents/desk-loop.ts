@@ -54,6 +54,7 @@ import { quantDesk } from "./quant-nodes";
 import { heldTickers as heldOnBooks } from "./coverage";
 import { markFundNav } from "./fund-nav";
 import { reportRisk } from "./portfolio-risk";
+import { reportPlan } from "./construct";
 import { marketState } from "./market-hours";
 import { collectEvents, type EventHit, type LatestFilingKey } from "./events";
 import { hasMemo, nextIdea } from "./ideas";
@@ -161,8 +162,9 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     }
   }
 
-  // The portfolio risk report for both books (portfolio-risk.ts). It runs on
-  // daily history, so an hourly refresh only picks up new fills and marks.
+  // The portfolio risk report and the construction plan for both books
+  // (portfolio-risk.ts, construct.ts). Both run on daily history, so an hourly
+  // refresh only picks up new fills, marks and sweep verdicts.
   const RISK_EVERY_MS = 60 * 60_000;
   let lastRiskReport = 0;
   async function measureRisk(): Promise<void> {
@@ -175,6 +177,16 @@ export async function runDesk(config: DeskConfig): Promise<void> {
         else console.log(`[${key}] ${book} risk skipped (${r.reason})`);
       } catch (err) {
         console.warn(`[${key}] ${book} risk report failed (continuing): ${(err as Error).message}`);
+      }
+      try {
+        const p = await reportPlan(market, book);
+        if (p.status === "planned") {
+          const { plan, before, after, session } = p.built;
+          const trades = plan.lines.filter((l) => l.shares !== 0).length;
+          console.log(`[${key}] ${book} plan ${session}: ${trades} trade(s), TE ${(before.tracking_error * 100).toFixed(1)}% → ${(after.tracking_error * 100).toFixed(1)}% (${plan.binding})`);
+        } else console.log(`[${key}] ${book} plan skipped (${p.reason})`);
+      } catch (err) {
+        console.warn(`[${key}] ${book} construction plan failed (continuing): ${(err as Error).message}`);
       }
     }
   }

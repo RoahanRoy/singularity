@@ -5,9 +5,10 @@
 
 export type DeskMarket = "US" | "IN";
 
+/** `etf`: the exchange-traded fund the desk holds as its index core. */
 export const DESK_INDEX = {
-  US: { symbol: "^GSPC", name: "S&P 500" },
-  IN: { symbol: "^NSEI", name: "Nifty 50" },
+  US: { symbol: "^GSPC", name: "S&P 500", etf: "SPY" },
+  IN: { symbol: "^NSEI", name: "Nifty 50", etf: "NIFTYBEES" },
 } as const;
 
 /**

@@ -4,6 +4,7 @@
  */
 
 import type { PortfolioRisk } from "../quant/portfolio-risk";
+import type { Plan } from "../fund/plan";
 
 export const COLLECTIONS = {
   agents: "agents",
@@ -32,6 +33,7 @@ export const COLLECTIONS = {
   quant_reports: "quant_reports",
   risk_reports: "risk_reports",
   risk_budgets: "risk_budgets",
+  construction_plans: "construction_plans",
 } as const;
 
 type Base = { $id: string; $createdAt: string; $updatedAt: string };
@@ -385,6 +387,43 @@ export type RiskBudget = Base & {
   set_at: string;
   set_by: string;
   note: string | null;
+};
+
+/**
+ * The desk's construction plan for one book, one row per exchange session
+ * (scripts/agents/construct.ts): the weights its tracking-error budget buys,
+ * the trades that get there, and the book's risk before and after.
+ * `plan_json` holds the whole plan (ConstructionPlanPayload).
+ */
+export type ConstructionPlan = Base & {
+  market: Market;
+  book: "fund" | "advisory";
+  session: string;
+  captured_at: string;
+  nav: number;
+  target_te: number;
+  binding: "target" | "bounds" | "floor";
+  te_before: number | null;
+  te_after: number | null;
+  beta_before: number | null;
+  beta_after: number | null;
+  var95_before: number | null;
+  var95_after: number | null;
+  alpha: number | null;
+  plan_json: string;
+};
+
+type PlanRisk = { tracking_error: number | null; beta: number | null; var95: number | null; vol_annual: number | null; unmeasured_weight: number | null };
+
+/** Parsed `ConstructionPlan.plan_json`: lib/fund/plan.ts's plan, numbers rounded. */
+export type ConstructionPlanPayload = Nullable<Plan> & {
+  marks: string;
+  index: string;
+  core: string;
+  before: PlanRisk;
+  after: PlanRisk;
+  /** Set when the skipped list was dropped to fit. */
+  skipped_count?: number;
 };
 
 /**
