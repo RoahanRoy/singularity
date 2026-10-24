@@ -826,12 +826,14 @@ export async function pm(ctx: Ctx): Promise<Ctx> {
   const prompt = loadPrompt("portfolio-manager");
   await setStatus(id, "thinking");
   const market = ctx.market ?? "US";
+  // The fund's NAV is its mandate: with none there is no capital to size from.
   const mandate = await getMandate(db, DB, market).catch(() => null);
-  const nav = mandate && mandate.capital_base > 0 ? mandate.capital_base : 100_000_000;
+  if (!mandate || !(mandate.capital_base > 0)) return stage(ctx, id, `no ${market} fund mandate, no capital to size from`);
+  const nav = mandate.capital_base;
   // A rich valuation the committee still approved trades at half size: the
   // catalyst carried the vote, the price limits how much the fund risks on it.
   const rich = ctx.valuation?.verdict === "rich";
-  const cap = Math.min(5, mandate?.max_name_weight_pct ?? 5) / (rich ? 2 : 1);
+  const cap = Math.min(5, mandate.max_name_weight_pct) / (rich ? 2 : 1);
   // Size against a live quote, never a stored or estimated price: no quote, no trade.
   const price = await getQuote(ctx.ticker, market);
   if (price == null) return stage(ctx, id, `no live quote for ${ctx.ticker}, nothing to size against`);
@@ -844,7 +846,7 @@ Critic score: ${ctx.critique?.score}
 Quant signal: ${ctx.signal ? `${ctx.signal.direction} ${ctx.signal.score} (conf ${ctx.signal.confidence})` : "n/a"}
 Valuation: ${ctx.valuation ? `${ctx.valuation.verdict}, ${ctx.valuation.implied_upside_pct?.toFixed(1)}% upside` : "n/a"}
 IC decision: approve (conviction ${ctx.ic?.conviction ?? "n/a"}, soft weight ceiling ${ctx.ic?.target_weight_hint_pct ?? "n/a"}%)
-NAV: ${nav}${mandate ? " (fund mandate capital base)" : " (no mandate: default)"}
+NAV: ${nav} (fund mandate capital base)
 Name weight cap: ${cap}%${rich ? " (half the usual cap: valuation rich)" : ""}
 Action floor: ${ACTION_FLOOR} · full size at: ${FULL_SIZE_AT}
 Price: ${price} (live quote)`,
@@ -1213,12 +1215,12 @@ async function bookPaperBuy(ticker: string, qty: number, price: number, market: 
  * (min of undeployed cash and the per-cycle pacing cap), and the notional is
  * debited from the mandate's cash on fill. `filled_qty === 0` means the fund is
  * out of deployable cash — no trade is booked and the caller should hold the
- * order for a later cycle. With no mandate, the full qty fills and nothing is
- * debited (attached-brokerage / legacy behaviour is unchanged).
+ * order for a later cycle.
  *
  * The circuit breaker runs first, ahead of any quote or write: a non-null
  * `halted` means the desk's loss/drawdown limits (or an unmarkable book) have
- * stopped new fills — nothing is booked and the caller must not retry blindly.
+ * stopped new fills, or there is no fund mandate to fill against — nothing is
+ * booked and the caller must not retry blindly.
  */
 async function fillPaperTrade(
   input: { ticker: string; qty: number; market: "US" | "IN"; venue?: string | null; agentId: string },
@@ -1227,7 +1229,7 @@ async function fillPaperTrade(
 
   const breaker = await checkCircuitBreaker(market, input.agentId);
   if (breaker.halted) {
-    const reason = breaker.reason ?? "circuit breaker halted";
+    const reason = `circuit breaker: ${breaker.reason ?? "halted"}`;
     await writeAudit("circuit-breaker", "fill_blocked", ticker.toUpperCase(), "block",
       `BUY ${input.qty} ${ticker.toUpperCase()} not filled: ${reason}`);
     return { id: null, fill_price: 0, filled_qty: 0, capped: false, halted: reason, unquoted: false };
@@ -1243,17 +1245,21 @@ async function fillPaperTrade(
   const venue = input.venue ? `paper-${input.venue}` : "paper-IBKR";
 
   // Mandate deployment gate. Cap the fill to affordable whole shares within the
-  // desk's deployable budget for this cycle. No mandate → deploy the full qty.
+  // desk's deployable budget for this cycle. No mandate → no cash → no fill.
   const mandate = await getMandate(db, DB, market).catch(() => null);
+  if (!mandate) {
+    const reason = `no ${market} fund mandate to fill against`;
+    await writeAudit("broker", "fill_blocked", ticker.toUpperCase(), "block",
+      `BUY ${input.qty} ${ticker.toUpperCase()} not filled: ${reason}`);
+    return { id: null, fill_price: price, filled_qty: 0, capped: false, halted: reason, unquoted: false };
+  }
   let qty = input.qty;
   let capped = false;
-  if (mandate) {
-    const budget = deployableThisCycle(mandate);
-    const affordable = Math.max(0, Math.floor(budget / price));
-    if (affordable < qty) { qty = affordable; capped = true; }
-    if (qty <= 0) {
-      return { id: null, fill_price: price, filled_qty: 0, capped: true, halted: null, unquoted: false };
-    }
+  const budget = deployableThisCycle(mandate);
+  const affordable = Math.max(0, Math.floor(budget / price));
+  if (affordable < qty) { qty = affordable; capped = true; }
+  if (qty <= 0) {
+    return { id: null, fill_price: price, filled_qty: 0, capped: true, halted: null, unquoted: false };
   }
 
   const trade = await db.createDocument(DB, "trades", ID.unique(), {
@@ -1278,12 +1284,10 @@ async function fillPaperTrade(
 
   // Debit deployed capital from the mandate. Best-effort: the fill is already
   // real, so a debit failure is logged, not unwound.
-  if (mandate) {
-    try {
-      await debitCash(db, DB, mandate, Number((qty * price).toFixed(2)));
-    } catch (err) {
-      console.warn(`[broker] cash debit failed for ${ticker}:`, (err as Error).message);
-    }
+  try {
+    await debitCash(db, DB, mandate, Number((qty * price).toFixed(2)));
+  } catch (err) {
+    console.warn(`[broker] cash debit failed for ${ticker}:`, (err as Error).message);
   }
 
   return { id: trade.$id, fill_price: price, filled_qty: qty, capped, halted: null, unquoted: false };
@@ -1338,7 +1342,7 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
     }
     await emit(id, "handoff",
       f.halted
-        ? `HOLD BUY ${qty} ${ctx.ticker} — circuit breaker: ${f.halted}`
+        ? `HOLD BUY ${qty} ${ctx.ticker} — ${f.halted}`
         : f.unquoted
           ? `HOLD BUY ${qty} ${ctx.ticker} — no live quote, nothing filled`
           : `HOLD BUY ${qty} ${ctx.ticker} — fund out of deployable cash this cycle`,
@@ -1390,12 +1394,12 @@ async function executeApproved(memo: ApprovableMemo, agentIds: Record<string, st
   await setStatus(id, "executing");
   const f = await fillPaperTrade({ ticker: memo.ticker, qty, market, venue: pending.venue, agentId: id });
 
-  // Circuit breaker halted the desk: the operator approved under conditions
-  // that no longer hold, so send the memo back to review (pending intact) for
-  // a fresh decision once the halt clears — don't auto-fill it later.
+  // Halted (circuit breaker, or no mandate): the operator approved under
+  // conditions that no longer hold, so send the memo back to review (pending
+  // intact) for a fresh decision once the halt clears — don't auto-fill it later.
   if (f.halted) {
     await db.updateDocument(DB, "memos", memo.$id, { status: "review" });
-    await emit(id, "handoff", `HOLD approved BUY ${qty} ${memo.ticker} — circuit breaker: ${f.halted}. Returned to review.`,
+    await emit(id, "handoff", `HOLD approved BUY ${qty} ${memo.ticker} — ${f.halted}. Returned to review.`,
       { memo_id: memo.$id, halted: f.halted });
     await setStatus(id, "idle");
     return false;
