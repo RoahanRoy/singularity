@@ -157,16 +157,14 @@ export type ValuationAssumptions = {
   maxStableGrowth: number;
 };
 
-/**
- * ERPs follow Damodaran's implied (not historical) premiums. US: the implied
- * S&P 500 premium has sat around 4–4.6% since 2022. India: a mature 4.3–4.5%
- * plus a country premium of ~3%, less the ~2% sovereign default spread that the
- * rupee 10-year (the rf here) already carries, so country risk is counted once.
- */
-export function defaultAssumptions(market: Market, rf: number, rfSource: string): ValuationAssumptions {
-  return market === "IN"
-    ? { market, rf, rfSource, erp: 0.055, terminalGrowth: 0.05, statutoryTax: 0.2517, maxStableGrowth: 0.07 }
-    : { market, rf, rfSource, erp: 0.045, terminalGrowth: 0.025, statutoryTax: 0.21, maxStableGrowth: 0.04 };
+/** The operator's stored choices (`valuation_assumptions`): not measured, set and dated by the operator. */
+export type ChosenAssumptions = Pick<ValuationAssumptions, "erp" | "terminalGrowth" | "maxStableGrowth">;
+
+/** Statutory corporate tax: US 21% federal; India 25.17% (22% base + surcharge and cess, section 115BAA). */
+const STATUTORY_TAX: Record<Market, number> = { US: 0.21, IN: 0.2517 };
+
+export function marketAssumptions(market: Market, rf: number, rfSource: string, chosen: ChosenAssumptions): ValuationAssumptions {
+  return { market, rf, rfSource, statutoryTax: STATUTORY_TAX[market], ...chosen };
 }
 
 // ── Inputs from normalized fundamentals ─────────────────────────────────────

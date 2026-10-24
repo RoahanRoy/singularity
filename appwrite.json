@@ -2814,6 +2814,80 @@
                     ]
                 }
             ]
+        },
+        {
+            "$id": "valuation_assumptions",
+            "databaseId": "meridian",
+            "name": "valuation_assumptions",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")"
+            ],
+            "attributes": [
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "erp",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "terminal_growth",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "max_stable_growth",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "set_at",
+                    "type": "datetime",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "set_by",
+                    "type": "string",
+                    "size": 64,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "note",
+                    "type": "string",
+                    "size": 512,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_market_time",
+                    "type": "key",
+                    "attributes": [
+                        "market",
+                        "set_at"
+                    ],
+                    "orders": [
+                        "ASC",
+                        "DESC"
+                    ]
+                }
+            ]
         }
     ]
 }

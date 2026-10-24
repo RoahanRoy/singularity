@@ -37,7 +37,8 @@ import {
   type AgentResult, type AgentSpec, type QuantState, type Stage,
 } from "./quant-agents";
 import type { Sourced } from "../../src/lib/quant/types";
-import type { BlendResult } from "../../src/lib/quant/valuation";
+import type { BlendResult, ChosenAssumptions } from "../../src/lib/quant/valuation";
+import { chosenOf, getAssumptions } from "../../src/lib/quant/assumption-store";
 import type { EnsembleResult } from "../../src/lib/quant/ensemble";
 import type { Ctx } from "./nodes";
 
@@ -308,6 +309,20 @@ function peersFor(ticker: string, market: "US" | "IN", sector: keyof typeof SECT
   return list.filter((t) => t !== ticker.toUpperCase()).slice(0, MAX_PEERS);
 }
 
+// The operator's valuation assumptions per desk (assumption-store.ts), read
+// at most every 15 minutes: a sweep runs many tickers on one setting.
+const ASSUMPTIONS_TTL_MS = 15 * 60_000;
+const assumptionsRead = new Map<"US" | "IN", { at: number; chosen: ChosenAssumptions }>();
+async function chosenAssumptions(market: "US" | "IN"): Promise<ChosenAssumptions | null> {
+  const hit = assumptionsRead.get(market);
+  if (hit && Date.now() - hit.at < ASSUMPTIONS_TTL_MS) return hit.chosen;
+  const row = await getAssumptions(db, DB, market);
+  if (!row) return null;
+  const chosen = chosenOf(row);
+  assumptionsRead.set(market, { at: Date.now(), chosen });
+  return chosen;
+}
+
 /**
  * Run every quant agent for ctx.ticker and attach the results as ctx.quant.
  * Never throws: on an unexpected failure it raises an alert and returns ctx
@@ -325,13 +340,22 @@ export async function quantDesk(ctx: Ctx): Promise<Ctx> {
   const cycleId = `${market}-${ticker}-${Date.now().toString(36)}`;
   const readerId = ctx.agentIds[quantAgentKey("market-data-reader")];
   try {
+    // Valuation discounts at rf + β × the operator's ERP: without a stored
+    // setting there is no fair value to compute, so the stage doesn't run.
+    const chosen = await chosenAssumptions(market);
+    if (!chosen) {
+      const why = `no ${market} valuation assumptions set (scripts/set-valuation-assumptions.ts); quant stage skipped`;
+      console.warn(`[quant] ${ticker}: ${why}`);
+      if (readerId) await emit(readerId, "alert", `${ticker}: ${why}`);
+      return ctx;
+    }
     if (readerId) {
       await setStatus(readerId, "thinking");
       await emit(readerId, "thought", `${ticker}: loading prices, statements, options, factors and ${sector} peers`);
     }
     const peers = peersFor(ticker, market, sector);
     const bundle = await loadBundle({ ticker, market, sector, peers, filingExcerpt: ctx.filing?.excerpt ?? null });
-    const st = newState(bundle);
+    const st = newState(bundle, chosen);
     const specs = (stages: readonly Stage[], kind?: AgentSpec["kind"]) =>
       QUANT_AGENTS.filter((a) => stages.includes(a.stage) && (!kind || a.kind === kind));
 

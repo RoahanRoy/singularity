@@ -1,11 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  fcff, capm, wacc, dcf, gordonDdm, residualIncome, terminalValue, fadePath, snapshot, defaultAssumptions,
+  fcff, capm, wacc, dcf, gordonDdm, residualIncome, terminalValue, fadePath, snapshot, marketAssumptions,
   costOfCapital, dcfModel, ddmModel, residualIncomeModel, computeMultiples, relativeModel, impliedPrice,
   blendValuation, verdictFor, historicalMultiples, growthHint, RI_MAX_SPREAD,
 } from "./valuation";
 import type { Fundamentals } from "./types";
+
+// Fixtures, not the desk's settings: those are the operator's stored rows.
+const US_CHOSEN = { erp: 0.045, terminalGrowth: 0.025, maxStableGrowth: 0.04 };
+const IN_CHOSEN = { erp: 0.055, terminalGrowth: 0.05, maxStableGrowth: 0.07 };
 
 const close = (a: number, b: number, tol: number, msg?: string) =>
   assert.ok(Math.abs(a - b) <= tol, `${msg ?? ""} expected ${b}, got ${a}`);
@@ -57,7 +61,7 @@ const toyCo: Fundamentals = {
 };
 
 test("snapshot, cost of capital and the DCF model on a toy company", () => {
-  const a = defaultAssumptions("US", 0.04, "test");
+  const a = marketAssumptions("US", 0.04, "test", US_CHOSEN);
   const s = snapshot(toyCo, 30, a)!;
   close(s.marketCap, 3000, 1e-9);
   close(s.netDebt, 150, 1e-9);
@@ -66,7 +70,7 @@ test("snapshot, cost of capital and the DCF model on a toy company", () => {
   close(s.taxRate, 40 / 190, 1e-9, "median of 21.05%, 21.05%, 20.87%");
   const coc = costOfCapital(s, a, 1.0);
   close(coc.beta, 1.0, 1e-12, "Blume(1) = 1");
-  close(coc.costOfEquity, 0.085, 1e-12, "rf 4% + implied ERP 4.5%");
+  close(coc.costOfEquity, 0.085, 1e-12, "rf 4% + ERP 4.5%");
   const m = dcfModel(toyCo, s, coc, a, { value: 0.1, source: "test" });
   assert.ok(m.applicable, m.reason);
   assert.ok(m.low! <= m.perShare! && m.perShare! <= m.high!, "base inside its sensitivity band");
@@ -96,7 +100,7 @@ test("residual income: a persistent spread adds a terminal value, capped for ver
   close(kept.pvTerminal, ((0.135 - 0.09) * b11) / (0.09 - 0.025) / Math.pow(1.09, 10), 1e-9);
   close(kept.value, 50 + kept.pvResidualIncome + kept.pvTerminal, 1e-9);
 
-  const a = defaultAssumptions("US", 0.04, "test");
+  const a = marketAssumptions("US", 0.04, "test", US_CHOSEN);
   const s = { ...snapshot(toyCo, 30, a)!, roe: 0.6 };
   const coc = costOfCapital(s, a, 1.0);
   const m = residualIncomeModel(s, coc, a);
@@ -108,7 +112,7 @@ test("residual income: a persistent spread adds a terminal value, capped for ver
 
 test("financials value tangible book: goodwill is not lending capital", () => {
   const bank: Fundamentals = { ...toyCo, annual: toyCo.annual.map((r) => ({ ...r, tangibleBook: r.equity! - 400 })) };
-  const a = defaultAssumptions("IN", 0.065, "test");
+  const a = marketAssumptions("IN", 0.065, "test", IN_CHOSEN);
   const plain = snapshot(bank, 30, a)!;
   const tang = snapshot(bank, 30, a, 1, undefined, { tangible: true })!;
   close(tang.bookPerShare!, 5.6, 1e-9);
@@ -129,7 +133,7 @@ test("growth hint prefers consensus, held near the trailing CAGR", () => {
 });
 
 test("multiples, implied prices and the blend", () => {
-  const a = defaultAssumptions("US", 0.04, "test");
+  const a = marketAssumptions("US", 0.04, "test", US_CHOSEN);
   const s = snapshot(toyCo, 30, a)!;
   const own = computeMultiples(s, 0.1);
   close(own.pe!, 3000 / 181, 1e-9);

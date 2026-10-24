@@ -34,6 +34,7 @@ export const COLLECTIONS = {
   risk_reports: "risk_reports",
   risk_budgets: "risk_budgets",
   construction_plans: "construction_plans",
+  valuation_assumptions: "valuation_assumptions",
 } as const;
 
 type Base = { $id: string; $createdAt: string; $updatedAt: string };
@@ -384,6 +385,22 @@ export type RiskReport = Base & {
 export type RiskBudget = Base & {
   market: Market;
   target_te: number;
+  set_at: string;
+  set_by: string;
+  note: string | null;
+};
+
+/**
+ * The operator's valuation assumptions for a desk: the equity risk premium
+ * over the long risk-free rate, the perpetual growth after the forecast years,
+ * and the most a dividend may grow forever (lib/quant/valuation.ts), as
+ * fractions. Append-only; the latest `set_at` applies.
+ */
+export type ValuationAssumptionsRow = Base & {
+  market: Market;
+  erp: number;
+  terminal_growth: number;
+  max_stable_growth: number;
   set_at: string;
   set_by: string;
   note: string | null;

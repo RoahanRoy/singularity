@@ -30,9 +30,9 @@ import { alignOnDates, closeOnOrBefore } from "../../src/lib/quant/series";
 import { forensic, growth, ratioHistory, screen, type ScreenResult } from "../../src/lib/quant/fundamentals";
 import { riskReport, type RiskReport } from "../../src/lib/quant/risk";
 import {
-  blendValuation, computeMultiples, costOfCapital, dcfModel, ddmModel, defaultAssumptions, historicalMultiples,
+  blendValuation, computeMultiples, costOfCapital, dcfModel, ddmModel, marketAssumptions, historicalMultiples,
   growthHint, relativeModel, residualIncomeModel, revenueCagr, snapshot,
-  type BlendResult, type CompanySnapshot, type CostOfCapital, type ModelValue, type Multiples, type RelativeRow, type ValuationAssumptions,
+  type BlendResult, type ChosenAssumptions, type CompanySnapshot, type CostOfCapital, type ModelValue, type Multiples, type RelativeRow, type ValuationAssumptions,
 } from "../../src/lib/quant/valuation";
 import { arimaReport, garchReport, kalmanTrendReport, markovSwitching, pairsScan, smoothingReport, type GarchReport, type OosScore, type RegimeReport } from "../../src/lib/quant/timeseries";
 import { fitMerton, impliedVolProxy, impliedVolSummary, monteCarloReport, ouSeriesReport, residualLevel, volRiskPremium, type OuSeriesReport } from "../../src/lib/quant/stochastic";
@@ -287,10 +287,11 @@ export type QuantState = {
   halt?: string;
 };
 
-export function newState(bundle: QuantBundle): QuantState {
+/** `chosen`: the operator's stored valuation assumptions for the desk (assumption-store.ts). */
+export function newState(bundle: QuantBundle, chosen: ChosenAssumptions): QuantState {
   return {
     bundle, results: {}, timings: {}, models: {}, relativeRows: null,
-    assumptions: defaultAssumptions(bundle.market, bundle.rf.long.value, bundle.rf.long.source),
+    assumptions: marketAssumptions(bundle.market, bundle.rf.long.value, bundle.rf.long.source, chosen),
     snapshot: null, coc: null, betaSource: null, risk: null, screen: null, blend: null, garch: null,
     features: undefined, backtest: null, macroFit: null, macroTilts: null, ensemble: null,
   };
