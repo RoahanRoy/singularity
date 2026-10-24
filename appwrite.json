@@ -180,8 +180,9 @@
                 {
                     "key": "health",
                     "type": "double",
-                    "required": true,
-                    "array": false
+                    "required": false,
+                    "array": false,
+                    "default": null
                 },
                 {
                     "key": "market",

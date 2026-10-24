@@ -94,7 +94,7 @@ async function ensureCluster(name: string, theme: string, market: Market = "US")
     return existing.documents[0].$id;
   }
   const doc = await db.createDocument(DB, "clusters", ID.unique(), {
-    name, theme, agent_count: 0, health: 0.9, market,
+    name, theme, agent_count: 0, market,
   });
   CLUSTER_CACHE.set(name, doc.$id);
   return doc.$id;

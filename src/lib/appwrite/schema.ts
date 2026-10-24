@@ -58,7 +58,8 @@ export type Cluster = Base & {
   name: string;
   theme: string;
   agent_count: number;
-  health: number;
+  /** Unmeasured: nothing computes a cluster's health yet, so it stays null. */
+  health?: number | null;
   market?: Market | null;
 };
 
