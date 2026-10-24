@@ -2,7 +2,7 @@
 
 import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc, type IbkrAccount, type QuantReport, type RiskReport, type Market, isFundPosition } from "./schema";
+import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type AuditLog, type AgentCommand, type AgentStatusDoc, type IbkrAccount, type QuantReport, type RiskReport, type Market, isFundPosition } from "./schema";
 
 /**
  * Market filter. When a desk is passed we constrain to that desk's rows.
@@ -269,16 +269,6 @@ export async function listFundSnapshots(limit = 200, market?: Market, book: "fun
 // derived from live agents / clusters / budget_ledger, so the old
 // `model_routes`, `pipelines`, and `compute_nodes` collections are no longer
 // queried. The types remain in schema.ts for any external tooling.
-
-/** The operator's configured risk limits (singleton row keyed by `key`). */
-export async function getRiskLimits(key = "default"): Promise<RiskLimits | null> {
-  const res = await databases.listDocuments<RiskLimits & Models.Document>(
-    DATABASE_ID,
-    COLLECTIONS.risk_limits,
-    [Query.equal("key", key), Query.limit(1)],
-  );
-  return res.documents[0] ?? null;
-}
 
 /** Append-only pre-trade / governance audit trail, newest first. */
 export async function listAuditLog(limit = 50): Promise<AuditLog[]> {

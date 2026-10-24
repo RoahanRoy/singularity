@@ -14,7 +14,7 @@
  */
 import { ask, extractJson } from "./llm";
 import { loadPrompt } from "./prompts";
-import { db, DB, ID, Query, emit, setStatus, ensureAgent, recountClusters, writeAudit, ensureRiskLimits, type ClusterRef } from "./appwrite";
+import { db, DB, ID, Query, emit, setStatus, ensureAgent, recountClusters, writeAudit, type ClusterRef } from "./appwrite";
 import { fetchLatestFiling, type EdgarFiling } from "./edgar";
 import { fetchLatestIndiaFiling } from "./india";
 import { fetchTranscript } from "./transcript";
@@ -24,6 +24,8 @@ import { indexDoc, recallPrior, formatRecall } from "./recall";
 import { getMandate, deployableThisCycle, debitCash } from "../../src/lib/fund/mandate";
 import { checkCircuitBreaker } from "./circuit-breaker";
 import { markFundBook, fundRows, isFundRow, type FundRow } from "./fund-book";
+import { measureTrade } from "./risk-budget";
+import { gateTrade, largestAdd } from "../../src/lib/fund/risk-budget";
 import { sectorOf, indiaSectorOf, sectorFromIndustry, type Sector } from "./universe";
 import { bootstrapQuant, type QuantCtx } from "./quant-nodes";
 
@@ -671,8 +673,8 @@ async function reviewGate(ctx: Ctx): Promise<boolean> {
 // 3b. Valuation reviewer ----------------------------------------------------
 //
 // Runs between critic and PM. Reviews the fair-value band and verdict
-// (rich/fair/cheap) the quant valuation agents computed; the PM uses it to
-// throttle sizing (a `rich` verdict halves the name cap). No computed band →
+// (rich/fair/cheap) the quant valuation agents computed, for the IC and the
+// PM to weigh; it doesn't set the size cap (the risk budget does). No computed band →
 // the memo is staged: an LLM's estimate of fair value is not a measurement.
 export async function valuation(ctx: Ctx): Promise<Ctx> {
   // Only price-check theses that passed the critic.
@@ -805,21 +807,25 @@ export async function pm(ctx: Ctx): Promise<Ctx> {
   const prompt = loadPrompt("portfolio-manager");
   await setStatus(id, "thinking");
   const market = ctx.market ?? "US";
-  // Size against the fund's NAV: its mandate cash plus its positions at live
-  // marks. No mandate, no capital; a book that can't be marked has no NAV.
-  const book = await markFundBook(market).catch((err: Error) => err);
-  if (book instanceof Error) return stage(ctx, id, `can't mark the ${market} fund book (${book.message})`);
-  const mandate = book.mandate;
-  if (!mandate || !(book.equity > 0)) return stage(ctx, id, `no ${market} fund mandate, no capital to size from`);
-  const nav = book.equity;
-  // A rich valuation the committee still approved trades at half size: the
-  // catalyst carried the vote, the price limits how much the fund risks on it.
-  const rich = ctx.valuation?.verdict === "rich";
-  const cap = Math.min(5, mandate.max_name_weight_pct) / (rich ? 2 : 1);
   // Size against a live quote, never a stored or estimated price: no quote, no trade.
   const price = await getQuote(ctx.ticker, market);
   if (price == null) return stage(ctx, id, `no live quote for ${ctx.ticker}, nothing to size against`);
   const arrival = { price, at: new Date().toISOString() };
+  // The cap is the largest weight the risk budget clears (lib/fund/risk-budget.ts),
+  // measured on the fund book at live marks; spending is capped at its cash.
+  const m = await measureTrade(market, ctx.ticker, price).catch((err: Error) => ({ ok: false as const, reason: err.message }));
+  if (!m.ok) return stage(ctx, id, m.reason);
+  const nav = m.nav;
+  const target = m.budget.target_te;
+  const capWeight = largestAdd((add) => m.after(add).tracking_error, {
+    target,
+    teBefore: m.before.tracking_error,
+    nameWeightBefore: m.nameWeightBefore,
+    nameActiveVol: m.nameActiveVol,
+    wMax: Math.max(0, m.cash) / nav,
+  });
+  const cap = Math.floor(capWeight * 10_000) / 100;
+  const pctOf = (x: number) => `${(x * 100).toFixed(2)}%`;
   const raw = await ask({
     model: prompt.meta.model,
     system: prompt.body,
@@ -828,8 +834,8 @@ Critic score: ${ctx.critique?.score}
 Quant signal: ${ctx.signal ? `${ctx.signal.direction} ${ctx.signal.score} (conf ${ctx.signal.confidence})` : "n/a"}
 Valuation: ${ctx.valuation ? `${ctx.valuation.verdict}, ${ctx.valuation.implied_upside_pct?.toFixed(1)}% upside` : "n/a"}
 IC decision: approve (conviction ${ctx.ic?.conviction ?? "n/a"}, soft weight ceiling ${ctx.ic?.target_weight_hint_pct ?? "n/a"}%)
-NAV: ${nav} (fund book: cash ${book.cash} + positions ${book.mv}${book.unpriced_pct > 0 ? `, ${book.unpriced_pct}% at a stored mark` : ""})
-Name weight cap: ${cap}%${rich ? " (half the usual cap: valuation rich)" : ""}
+NAV: ${nav} (fund book: cash ${m.cash} + positions, live marks)
+Name weight cap: ${cap}% to add (the most that keeps the book within its ${pctOf(target)} tracking-error budget vs the ${m.index}: book TE now ${pctOf(m.before.tracking_error)}, ${ctx.ticker} held at ${pctOf(m.nameWeightBefore)} with ${pctOf(m.nameActiveVol)} active vol; within cash)
 Action floor: ${ACTION_FLOOR} · full size at: ${FULL_SIZE_AT}
 Price: ${price} (live quote)`,
     label: `pm:${ctx.ticker}`,
@@ -905,48 +911,61 @@ export async function risk(ctx: Ctx): Promise<Ctx> {
     return ctx;
   }
 
-  // Measured VaR (GARCH / 3y historical, quant desk) makes this a code check.
-  // Unmeasured → staged: no estimated VaR stands in for one.
-  const dv = ctx.quant?.dailyVar;
-  if (!dv || !Number.isFinite(dv.value) || !(dv.value > 0)) {
-    return stage(ctx, id, `no measured VaR for ${ctx.ticker}`);
-  }
+  // The trade against the risk budget, re-measured on the book as it is now.
+  // Anything unmeasured stages; no estimate stands in.
+  const market = ctx.market ?? "US";
+  const price = ctx.size.arrival?.price ?? 0;
+  const m = await measureTrade(market, ctx.ticker, price).catch((err: Error) => ({ ok: false as const, reason: err.message }));
+  if (!m.ok) return stage(ctx, id, m.reason);
   await setStatus(id, "thinking");
-  const varPct = Math.round(ctx.size.weight_pct * dv.value * 1000) / 1000; // weight % × price VaR → % of NAV
+  const add = (ctx.size.qty * price) / m.nav;
+  const post = m.after(add);
+  const target = m.budget.target_te;
+  const breaches = gateTrade({
+    target,
+    teBefore: m.before.tracking_error,
+    teAfter: post.tracking_error,
+    nameWeightAfter: m.nameWeightBefore + add,
+    nameActiveVol: m.nameActiveVol,
+  });
+  const pctOf = (x: number) => `${(x * 100).toFixed(2)}%`;
   const r: NonNullable<Ctx["risk"]> = {
-    approved: varPct < 1.5,
-    var_pct: varPct,
-    notes: `1-day VaR95 ${(dv.value * 100).toFixed(2)}% of price (${dv.source}) × ${ctx.size.weight_pct}% weight = ${varPct.toFixed(3)}% of NAV vs the 1.5% limit`,
+    approved: breaches.length === 0,
+    // The book's 1-day VaR95 after the trade, % of NAV.
+    var_pct: Math.round(post.var95.parametric * 100_000) / 1000,
+    notes: (breaches.length
+      ? breaches.join("; ")
+      : `Tracking error ${pctOf(m.before.tracking_error)} → ${pctOf(post.tracking_error)} vs the ${pctOf(target)} budget (${m.index}); ${ctx.ticker} ${pctOf(m.nameWeightBefore + add)} × ${pctOf(m.nameActiveVol)} active vol = ${pctOf((m.nameWeightBefore + add) * m.nameActiveVol)} of it. Book VaR95 ${pctOf(post.var95.parametric)}.`
+    ).slice(0, 1000),
   };
   await emit(id, r.approved ? "thought" : "alert",
-    `Risk ${r.approved ? "APPROVED" : "BLOCKED"} ${ctx.ticker} (VaR ${r.var_pct.toFixed(2)}%, measured)`, r);
+    `Risk ${r.approved ? "APPROVED" : "BLOCKED"} ${ctx.ticker} (TE ${pctOf(post.tracking_error)} vs ${pctOf(target)} budget)`, r);
   await setStatus(id, "idle");
   return { ...ctx, risk: r };
 }
 
 // 5b. Deterministic pre-trade risk overlay ----------------------------------
 //
-// The risk officer checks this name's VaR; these checks look at the whole fund
-// book (fund-book.ts: mandate cash + paper positions at live marks — never the
-// advisory Horizon book), in code, between sizing and execution. Every
-// decision — allow or block — is written to audit_log so the operator has an
-// immutable paper trail. Limits come from the operator's risk_limits row
-// (seeded with defaults on first run). A book that can't be marked blocks.
+// The risk officer gates the trade against the risk budget; these checks are
+// the fund's structure, on the whole fund book (fund-book.ts: mandate cash +
+// paper positions at live marks — never the advisory Horizon book), in code,
+// between sizing and execution: the book is cash-funded, so the buy must fit
+// in its cash (gross stays at or under 100% of NAV, no margin), and every held
+// name must carry a live quote this session. Every decision — allow or block —
+// is written to audit_log so the operator has an immutable paper trail. A book
+// that can't be marked blocks.
 export async function riskOverlay(ctx: Ctx): Promise<Ctx> {
   const id = ctx.agentIds.risk;
   // Nothing to gate unless the chain produced a sized, risk-approved trade.
   if (!ctx.size || ctx.size.qty === 0 || !ctx.risk?.approved) return ctx;
 
   await setStatus(id, "thinking");
-  const limits = await ensureRiskLimits();
-
-  // Scope the book to this cycle's desk: both desks share one limit set.
   const market = ctx.market ?? "US";
   const book = await markFundBook(market).catch((err: Error) => err);
   const notional = ctx.size.qty * (ctx.size.arrival?.price ?? 0);
 
   const breaches: string[] = [];
-  let proposedWeight = 0, projectedGross = 0, nameCount = 0;
+  let proposedWeight = 0, projectedGross = 0;
   if (book instanceof Error || !(book.equity > 0)) {
     breaches.push(book instanceof Error ? `can't mark the fund book (${book.message})` : `fund book has no equity (${book.equity})`);
   } else {
@@ -955,22 +974,14 @@ export async function riskOverlay(ctx: Ctx): Promise<Ctx> {
     const existing = book.names.find((n) => n.ticker.toUpperCase() === ticker);
     proposedWeight = (((existing?.mv ?? 0) + notional) / book.equity) * 100;
     projectedGross = ((book.mv + notional) / book.equity) * 100;
-    nameCount = book.names.length + (existing ? 0 : 1);
+    if (notional > book.cash) breaches.push(`notional ${notional.toFixed(2)} is over the book's cash ${book.cash.toFixed(2)} (gross ${projectedGross.toFixed(1)}%, no margin)`);
+    if (book.unpriced_pct > 0) breaches.push(`${book.unpriced_pct}% of the book has no live quote this session`);
   }
-  const varPct = ctx.risk.var_pct ?? 0;
-
-  if (proposedWeight > limits.max_position_weight_pct)
-    breaches.push(`position weight ${proposedWeight.toFixed(2)}% > ${limits.max_position_weight_pct}% cap`);
-  if (projectedGross > limits.max_gross_leverage * 100)
-    breaches.push(`gross exposure ${projectedGross.toFixed(0)}% > ${(limits.max_gross_leverage * 100).toFixed(0)}% cap`);
-  if (varPct > limits.daily_var_limit_pct)
-    breaches.push(`VaR ${varPct.toFixed(2)}% > ${limits.daily_var_limit_pct}% cap`);
-  if (nameCount > limits.max_name_count)
-    breaches.push(`book would hold ${nameCount} names > ${limits.max_name_count} cap`);
+  const varPct = ctx.risk.var_pct;
 
   const allowed = breaches.length === 0;
   const detail = allowed
-    ? `Pre-trade overlay cleared ${ctx.ticker}: weight ${proposedWeight.toFixed(2)}%, VaR ${varPct.toFixed(2)}%, gross ${projectedGross.toFixed(0)}%, names ${nameCount}.`
+    ? `Pre-trade overlay cleared ${ctx.ticker}: weight ${proposedWeight.toFixed(2)}%, book VaR95 ${varPct.toFixed(2)}%, gross ${projectedGross.toFixed(1)}%, fully live-priced.`
     : `Pre-trade overlay BLOCKED ${ctx.ticker}: ${breaches.join("; ")}.`;
 
   await writeAudit("risk-overlay", "pre_trade_check", ctx.ticker, allowed ? "allow" : "block", detail);
@@ -986,7 +997,7 @@ export async function riskOverlay(ctx: Ctx): Promise<Ctx> {
     if (ctx.memoId) await db.updateDocument(DB, "memos", ctx.memoId, { status: "rejected" });
     await emit(id, "alert", `Overlay BLOCK ${ctx.ticker}: ${breaches[0]}`, { breaches });
   } else {
-    await emit(id, "thought", `Overlay cleared ${ctx.ticker}`, { proposedWeight, varPct, projectedGross, nameCount });
+    await emit(id, "thought", `Overlay cleared ${ctx.ticker}`, { proposedWeight, varPct, projectedGross });
   }
   await setStatus(id, "idle");
   return { ...ctx, preTrade: { allowed, breaches } };
@@ -1002,7 +1013,7 @@ export async function riskOverlay(ctx: Ctx): Promise<Ctx> {
 //   - Prior position: the fund book's current holding, reported.
 //   - Wash sale: a sell of the ticker in the last 30 days is flagged (advisory).
 //   - Reg SHO: shorts only; the desk only buys.
-// Position limits are the risk overlay's, against the operator's risk_limits.
+// Position limits are the risk budget's (risk officer) and the overlay's.
 const WASH_SALE_DAYS = 30; // IRC §1091 window
 
 export async function compliance(ctx: Ctx): Promise<Ctx> {

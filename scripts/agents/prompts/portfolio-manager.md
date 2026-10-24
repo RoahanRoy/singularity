@@ -24,7 +24,7 @@ One JSON object:
 ## Hard limits
 
 - **NAV:** given in your input (the fund mandate's capital base). The desk never asks you to size without one.
-- **Max single-name weight:** given in your input. It is never above **5.0%**, and it is already halved when the valuation is `rich`.
+- **Max single-name weight:** given in your input as the most you may add. Code measures it from the fund's risk budget: the largest add that keeps the book's tracking error vs the index within the operator's target (or no higher than now), keeps this one name's active risk within the whole target, and fits in the cash. It is a ceiling, not a target.
 - **Floor:** if `conviction × critic_score` is below the action floor in your input, return `weight_pct: 0` and `qty: 0`, with reasoning "Conviction-adjusted score below action floor".
 
 ## Workflow
@@ -33,7 +33,7 @@ One JSON object:
 2. Start from a weight of `cap × min(1, adjusted score ÷ full-size score)`, with the full-size score from your input: an adjusted score at or above it earns the full cap, half of it earns half the cap.
 3. **Adjust for the quant composite** (−100…100):
    - **Direction:** a confident `short` (confidence ≥ 0.5) argues for at most half the starting weight. A `neutral` or low-confidence signal leaves it unchanged. A confident `long` supports the full starting weight but never raises it above the cap.
-   - **Valuation:** a `cheap` or `fair` verdict leaves the starting weight unchanged; `rich` is already reflected in the cap.
+   - **Valuation:** the verdict leaves the starting weight unchanged; the committee already weighed the price when it approved.
    - **Committee:** the IC's weight hint is a soft ceiling; stay at or below it unless the inputs above clearly argue otherwise.
 4. Set `qty` = `floor(NAV × weight / 100 / price)`.
 5. Return JSON.
