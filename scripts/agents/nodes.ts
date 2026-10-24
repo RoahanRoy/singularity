@@ -25,6 +25,8 @@ import { getMandate, deployableCash } from "../../src/lib/fund/mandate";
 import { fillPaperTrade, coreHolding } from "./paper-book";
 import { markFundBook, isFundRow, type FundRow } from "./fund-book";
 import { measureTrade } from "./risk-budget";
+import { storedPlan } from "./construct";
+import { exchangeDate } from "./market-hours";
 import { gateTrade, largestAdd } from "../../src/lib/fund/risk-budget";
 import { DESK_INDEX } from "../../src/lib/market/indices";
 import { sectorOf, indiaSectorOf, sectorFromIndustry, type Sector } from "./universe";
@@ -631,16 +633,6 @@ ${ctx.quant.facts}` : ""}`,
 }
 
 /**
- * Conviction × critic score below this stages the memo for the operator
- * instead of sizing it. The analyst's conviction is a probability-weighted
- * risk/reward, so 0.5 conviction on a 0.5-score memo (0.25) is a small edge
- * worth a starter position, not nothing.
- */
-export const ACTION_FLOOR = 0.25;
-/** Conviction × critic score at which the PM sizes to the full name cap. */
-export const FULL_SIZE_AT = 0.6;
-
-/**
  * Stop the chain because a number it needs was not measured. The memo goes back
  * to review with the reason; nothing downstream substitutes a guess.
  */
@@ -652,31 +644,15 @@ async function stage(ctx: Ctx, agentId: string, reason: string): Promise<Ctx> {
   return { ...ctx, staged: reason };
 }
 
-// Review gate: kills a critic-rejected thesis and stages a low-conviction one,
-// but a thesis that clears the bar now PROCEEDS through full sizing/analysis.
-// Whether the sized trade auto-executes or holds for operator approval is
-// decided at the broker (based on MERIDIAN_AUTO_APPROVE), so the operator can
-// review a fully-sized, risk-cleared proposal rather than a bare thesis.
+// Review gate: a critic-rejected thesis stops here. Whether a sized trade
+// auto-executes or holds for operator approval is decided at the broker
+// (MERIDIAN_AUTO_APPROVE), so the operator reviews a fully-sized,
+// risk-cleared proposal rather than a bare thesis.
 async function reviewGate(ctx: Ctx): Promise<boolean> {
-  const id = ctx.agentIds.pm;
-  const verdict = ctx.critique?.verdict;
-  const conv = ctx.memo?.conviction ?? 0;
-  const score = ctx.critique?.score ?? 0;
-
-  if (verdict === "reject") {
-    await emit(id, "alert", `BLOCKED ${ctx.ticker} — critic rejected thesis`);
-    if (ctx.memoId) await db.updateDocument(DB, "memos", ctx.memoId, { status: "rejected" });
-    return false;
-  }
-
-  const adjusted = conv * score;
-  if (adjusted < ACTION_FLOOR) {
-    await emit(id, "alert", `STAGED ${ctx.ticker} for operator review (adjusted score ${adjusted.toFixed(2)} < ${ACTION_FLOOR})`);
-    if (ctx.memoId) await db.updateDocument(DB, "memos", ctx.memoId, { status: "review" });
-    return false;
-  }
-
-  return true;
+  if (ctx.critique?.verdict !== "reject") return true;
+  await emit(ctx.agentIds.pm, "alert", `BLOCKED ${ctx.ticker} — critic rejected thesis`);
+  if (ctx.memoId) await db.updateDocument(DB, "memos", ctx.memoId, { status: "rejected" });
+  return false;
 }
 
 // 3b. Valuation reviewer ----------------------------------------------------
@@ -803,6 +779,13 @@ export async function cio(ctx: Ctx): Promise<Ctx> {
 }
 
 // 4. PM ---------------------------------------------------------------------
+//
+// In code. The size is the session's construction plan for the fund book
+// (construct.ts): the weight that buys the most expected excess return
+// (confidence × valuation upside) per unit of tracking risk. The PM buys the
+// gap from the name's weight now to its planned weight, capped at the largest
+// add the risk budget clears on the book as it is marked now. No plan this
+// session, or a plan that doesn't add the name, stages: nothing else sizes.
 export async function pm(ctx: Ctx): Promise<Ctx> {
   const id = ctx.agentIds.pm;
   // Investment Committee gate: a reject kills the idea; a revise stages it.
@@ -813,9 +796,20 @@ export async function pm(ctx: Ctx): Promise<Ctx> {
   }
   if (!(await reviewGate(ctx))) return ctx;
 
-  const prompt = loadPrompt("portfolio-manager");
   await setStatus(id, "thinking");
   const market = ctx.market ?? "US";
+  const ticker = ctx.ticker.toUpperCase();
+  const session = exchangeDate(market);
+  const plan = await storedPlan(market, "fund", session).catch(() => null);
+  if (!plan) return stage(ctx, id, `no ${market} fund construction plan for ${session} to size from`);
+  const line = plan.lines.find((l) => l.role === "name" && l.ticker.toUpperCase() === ticker);
+  if (!line) {
+    const why = plan.fixed.find((f) => f.ticker.toUpperCase() === ticker)?.reason
+      ?? plan.skipped.find((f) => f.ticker.toUpperCase() === ticker)?.reason
+      ?? "not one of the desk's ranked ideas or held names";
+    return stage(ctx, id, `the ${session} plan doesn't size ${ticker}: ${why}`);
+  }
+
   // Size against a live quote, never a stored or estimated price: no quote, no trade.
   const price = await getQuote(ctx.ticker, market);
   if (price == null) return stage(ctx, id, `no live quote for ${ctx.ticker}, nothing to size against`);
@@ -826,39 +820,29 @@ export async function pm(ctx: Ctx): Promise<Ctx> {
   const m = await measureTrade(market, ctx.ticker, price).catch((err: Error) => ({ ok: false as const, reason: err.message }));
   if (!m.ok) return stage(ctx, id, m.reason);
   const nav = m.nav;
-  const target = m.budget.target_te;
   const capWeight = largestAdd((add) => m.after(add).tracking_error, {
-    target,
+    target: m.budget.target_te,
     teBefore: m.before.tracking_error,
     nameWeightBefore: m.nameWeightBefore,
     nameActiveVol: m.nameActiveVol,
     wMax: (Math.max(0, m.cash) + m.coreValue) / nav,
   });
-  const cap = Math.floor(capWeight * 10_000) / 100;
   const pctOf = (x: number) => `${(x * 100).toFixed(2)}%`;
-  const raw = await ask({
-    model: prompt.meta.model,
-    system: prompt.body,
-    user: `Memo: ${JSON.stringify(ctx.memo)}
-Critic score: ${ctx.critique?.score}
-Quant signal: ${ctx.signal ? `${ctx.signal.direction} ${ctx.signal.score} (conf ${ctx.signal.confidence})` : "n/a"}
-Valuation: ${ctx.valuation ? `${ctx.valuation.verdict}, ${ctx.valuation.implied_upside_pct?.toFixed(1)}% upside` : "n/a"}
-IC decision: approve (conviction ${ctx.ic?.conviction ?? "n/a"}, soft weight ceiling ${ctx.ic?.target_weight_hint_pct ?? "n/a"}%)
-NAV: ${nav} (fund book: cash ${m.cash} + positions, live marks; buys past cash sell the ${m.core} index core, held ${m.coreValue})
-Name weight cap: ${cap}% to add (the most that keeps the book within its ${pctOf(target)} tracking-error budget vs the ${m.index}: book TE now ${pctOf(m.before.tracking_error)}, ${ctx.ticker} held at ${pctOf(m.nameWeightBefore)} with ${pctOf(m.nameActiveVol)} active vol; within cash and core)
-Action floor: ${ACTION_FLOOR} · full size at: ${FULL_SIZE_AT}
-Price: ${price} (live quote)`,
-    label: `pm:${ctx.ticker}`,
-  });
-  const out = extractJson<NonNullable<Ctx["size"]>>(raw);
-  const weight = Math.max(0, Math.min(cap, Number(out.weight_pct) || 0));
+  const gap = Math.max(0, line.to - m.nameWeightBefore);
+  const add = Math.min(gap, capWeight);
+  const qty = Math.floor((nav * add) / price);
+  if (qty <= 0) {
+    return stage(ctx, id, gap <= 0
+      ? `${ticker} is at its planned ${pctOf(line.to)} (held ${pctOf(m.nameWeightBefore)})`
+      : `the risk budget clears ${pctOf(capWeight)} of the planned ${pctOf(gap)} add, under one share`);
+  }
   const size: NonNullable<Ctx["size"]> = {
-    weight_pct: Math.round(weight * 100) / 100,
-    qty: Math.floor((nav * weight) / 100 / price),
-    reasoning: out.reasoning,
+    weight_pct: Math.round(add * 10_000) / 100,
+    qty,
+    reasoning: `Plan ${session}: ${ticker} ${pctOf(m.nameWeightBefore)} → ${pctOf(line.to)} (${line.why}).${add < gap ? ` Capped at ${pctOf(capWeight)}: the most the ${pctOf(m.budget.target_te)} TE budget vs the ${m.index} and cash plus core clear now.` : ""}`.slice(0, 1000),
     arrival,
   };
-  await emit(id, "thought", `Sizing ${ctx.ticker} at ${size.weight_pct?.toFixed(2)}% (${size.qty} sh)`, size);
+  await emit(id, "thought", `Sizing ${ctx.ticker} at ${size.weight_pct.toFixed(2)}% (${size.qty} sh) to the ${session} plan`, size);
   await setStatus(id, "idle");
   return { ...ctx, size };
 }
@@ -1589,7 +1573,7 @@ async function bootstrapFor(c: Record<string, ClusterRef>, suffix = ""): Promise
     critic:              await ensureAgent(`Red Team Critic${s}`,      "research",  c.research, m("red-team-critic")),
     valuationReviewer:   await ensureAgent(`Valuation Reviewer${s}`,   "research",  c.research, m("valuation-reviewer")),
     cio:                 await ensureAgent(`CIO / Committee${s}`,      "ops",       c.committee, m("cio")),
-    pm:                  await ensureAgent(`PM${s}`,                   "ops",       c.ops, m("portfolio-manager")),
+    pm:                  await ensureAgent(`PM${s}`,                   "ops",       c.ops, "code"),
     treasury:            await ensureAgent(`Treasury${s}`,             "ops",       c.treasury, "code"),
     risk:                await ensureAgent(`Risk Officer${s}`,         "risk",      c.risk, "code"),
     compliance:          await ensureAgent(`Compliance${s}`,           "ops",       c.ops, "code"),

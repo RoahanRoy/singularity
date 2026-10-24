@@ -206,3 +206,16 @@ export async function reportPlan(market: Market, book: PlanBook, now: Date = new
   else await db.createDocument(DB, "construction_plans", ID.unique(), row);
   return run;
 }
+
+/** The book's stored plan for an exchange session (one row per session), or null when none was stored. */
+export async function storedPlan(market: Market, book: PlanBook, session: string): Promise<Plan | null> {
+  const res = await db.listDocuments(DB, "construction_plans", [
+    Query.equal("market", market),
+    Query.equal("book", book),
+    Query.equal("session", session),
+    Query.orderDesc("captured_at"),
+    Query.limit(1),
+  ]);
+  const row = res.documents[0] as unknown as { plan_json: string } | undefined;
+  return row ? (JSON.parse(row.plan_json) as Plan) : null;
+}

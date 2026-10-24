@@ -64,8 +64,10 @@ re-size; compliance doesn't approve sizing. Boundaries are stated explicitly.
 
 `nodes.ts` will **not** auto-execute a trade unless:
 
-- `critic.verdict === "pass"`, AND
-- `memo.conviction × critic.score >= 0.4`, AND
+- the critic didn't reject the thesis, AND
+- the Investment Committee approved it, AND
+- the session's construction plan (`construct.ts`) adds the name — the PM
+  sizes to the plan, in code, within the risk budget, AND
 - `MERIDIAN_AUTO_APPROVE=1` is set in the environment.
 
 Anything weaker writes the memo with `status: review` and stops. This matches
@@ -187,7 +189,7 @@ in `universe.ts`. Each analyst is a distinct row in the `agents` collection.
 | `filing-summarizer` | LLM summarization of untrusted excerpt, no tools | ✅ live |
 | `indexFiling` (in `nodes.ts`) | persistence-only, no LLM | ✅ live |
 | `red-team-critic` | adversarial review | ✅ live |
-| `portfolio-manager` | sizing | ✅ live |
+| `pm` (in `nodes.ts`) | sizing to the session's construction plan, no LLM | ✅ live |
 | `risk-officer` | pre-trade risk-budget gate (tracking error, one-name active risk) | ✅ live |
 | `compliance` | pre-trade rules | ✅ live |
 

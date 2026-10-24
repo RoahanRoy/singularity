@@ -9,14 +9,14 @@
  * hand with scripts/core-rebalance.ts. Every fill is behind the circuit
  * breaker (paper-book.ts). No plan for the session, no trade.
  */
-import { db, DB, Query, emit, writeAudit, type Market } from "./appwrite";
+import { emit, writeAudit, type Market } from "./appwrite";
 import { markFundBook } from "./fund-book";
 import { getQuote } from "./quotes";
 import { exchangeDate } from "./market-hours";
 import { fillPaperSell, fillPaperTrade } from "./paper-book";
+import { storedPlan } from "./construct";
 import { coreTargetWeight, coreTrade } from "../../src/lib/fund/core";
 import { DESK_INDEX } from "../../src/lib/market/indices";
-import type { Plan } from "../../src/lib/fund/plan";
 
 export type CoreRun =
   | { status: "skipped"; reason: string }
@@ -28,16 +28,8 @@ const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 export async function rebalanceCore(market: Market, agentId: string, opts: { execute: boolean; dry?: boolean; now?: Date }): Promise<CoreRun> {
   const now = opts.now ?? new Date();
   const session = exchangeDate(market, now);
-  const res = await db.listDocuments(DB, "construction_plans", [
-    Query.equal("market", market),
-    Query.equal("book", "fund"),
-    Query.equal("session", session),
-    Query.orderDesc("captured_at"),
-    Query.limit(1),
-  ]);
-  const row = res.documents[0] as unknown as { plan_json: string } | undefined;
-  if (!row) return { status: "skipped", reason: `no ${market} fund plan for ${session}` };
-  const plan = JSON.parse(row.plan_json) as Pick<Plan, "nav" | "lines">;
+  const plan = await storedPlan(market, "fund", session);
+  if (!plan) return { status: "skipped", reason: `no ${market} fund plan for ${session}` };
   const target = coreTargetWeight(plan);
   const ticker = DESK_INDEX[market].etf;
   if (target == null) return { status: "skipped", reason: `the ${session} plan has no ${ticker} core line` };
