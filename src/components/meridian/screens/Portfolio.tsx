@@ -10,7 +10,8 @@ import { BenchmarkPanel } from "../Benchmark";
 import { fmtMoney, fmtFullMoney } from "@/lib/meridian/format";
 import { operatorFetch } from "@/lib/auth/operator-fetch";
 import {
-  listPositions,
+  listFundPositions,
+  listAdvisoryPositions,
   listHeldMemos,
   subscribeMemos,
   listFundSnapshots,
@@ -361,11 +362,11 @@ function HeldOrders({ market }: { market: Market }) {
 
 // ── Positions list ───────────────────────────────────────────────────────────
 
-function PositionsList({ rows, loaded, market }: { rows: Position[]; loaded: boolean; market: Market }) {
+function PositionsList({ rows, loaded, market, empty = "No positions on the book." }: { rows: Position[]; loaded: boolean; market: Market; empty?: string }) {
   if (loaded && rows.length === 0) {
     return (
       <div className="dim" style={{ fontFamily: "var(--mono)", fontSize: 11, padding: "12px 16px" }}>
-        No positions on the book.
+        {empty}
       </div>
     );
   }
@@ -451,6 +452,8 @@ const ACTION_COLOR: Record<RebalanceAction, string> = {
 };
 
 function RebalancePanel({ positions, mandate, market }: { positions: Position[]; mandate: MandateCaps | null; market: Market }) {
+  // `positions` is the advisory book. The mandate lends its name caps only:
+  // its cash is the fund's, not the operator's, so the plan adds no new money.
   // Tagged with the desk they were read for, so a market switch shows "reading"
   // until that desk's verdicts land instead of planning against the other desk's.
   const [loaded, setLoaded] = useState<{ market: Market; verdicts: Verdict[] } | null>(null);
@@ -470,10 +473,8 @@ function RebalancePanel({ positions, mandate, market }: { positions: Position[];
   const plan = useMemo(() => {
     if (!verdicts) return null;
     const caps = mandate ?? DEFAULT_CAPS;
-    // Advice is for the operator's real holdings, not the fund's own book.
-    const real = positions.filter((p) => p.book === "advisory");
     return planRebalance({
-      holdings: real.map((p) => ({
+      holdings: positions.map((p) => ({
         ticker: p.ticker,
         label: p.label,
         marketValue: p.market_value || 0,
@@ -481,7 +482,7 @@ function RebalancePanel({ positions, mandate, market }: { positions: Position[];
         isFund: p.ticker.startsWith("MF:"),
       })),
       verdicts,
-      cash: caps.cash,
+      cash: 0,
       maxNames: caps.max_names,
       maxNameWeightPct: caps.max_name_weight_pct,
       currency: market === "IN" ? "INR" : "USD",
@@ -560,7 +561,7 @@ function RebalancePanel({ positions, mandate, market }: { positions: Position[];
       <div className="dim" style={{ padding: "8px 12px", fontSize: 10, lineHeight: 1.5 }}>
         Advisory only: nothing is sent to a broker. Shorts trim by half, no name above{" "}
         {(mandate ?? DEFAULT_CAPS).max_name_weight_pct}%, new longs fill open slots under{" "}
-        {(mandate ?? DEFAULT_CAPS).max_names} names, mandate cash counts as new money.
+        {(mandate ?? DEFAULT_CAPS).max_names} names, no new money (the mandate&apos;s cash is the fund&apos;s).
       </div>
     </div>
   );
@@ -640,13 +641,16 @@ function deriveKpis(snapshots: FundSnapshot[], positions: Position[], navUsd: nu
 
 export function PortfolioScreen() {
   const { market } = useMarket();
+  // Two books, never summed: the fund's own (mandate cash + the desk's paper
+  // positions) and the advisory book (the operator's holdings via Horizon/IBKR).
   const [positions, setPositions] = useState<Position[]>([]);
+  const [advisory, setAdvisory] = useState<Position[]>([]);
   const [snapshots, setSnapshots] = useState<FundSnapshot[]>([]);
+  const [advisorySnaps, setAdvisorySnaps] = useState<FundSnapshot[]>([]);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [posLoaded, setPosLoaded] = useState(false);
-  // Undeployed cash of a from-scratch fund mandate (null when the desk runs an
-  // attached brokerage book instead). Folded into NAV so a freshly-onboarded
-  // fund shows its capital base, not "—", before it has deployed anything.
+  // The fund mandate's undeployed cash (null with no mandate: no fund). Part
+  // of fund NAV, so a fresh fund shows its capital base before it deploys.
   const [mandate, setMandate] = useState<MandateCaps | null>(null);
   const mandateCash = mandate?.cash ?? null;
   // Bumped after a Horizon sync so the book re-reads without a market switch.
@@ -657,18 +661,22 @@ export function PortfolioScreen() {
     let cancelled = false;
     setPosLoaded(false);
     setPositions([]);
+    setAdvisory([]);
     setSnapshots([]);
+    setAdvisorySnaps([]);
     setScenarios([]);
     setMandate(null);
-    listPositions(200, market)
-      .then((p) => {
-        if (cancelled) return;
-        setPositions(market === "IN" ? normalizeWeights(p) : p);
-        setPosLoaded(true);
-      })
-      .catch(() => { if (!cancelled) setPosLoaded(true); });
-    listFundSnapshots(200, market)
+    Promise.allSettled([listFundPositions(200, market), listAdvisoryPositions(200, market)]).then(([f, a]) => {
+      if (cancelled) return;
+      if (f.status === "fulfilled") setPositions(f.value);
+      if (a.status === "fulfilled") setAdvisory(market === "IN" ? normalizeWeights(a.value) : a.value);
+      setPosLoaded(true);
+    });
+    listFundSnapshots(200, market, "fund")
       .then((s) => { if (!cancelled) setSnapshots(s); })
+      .catch(() => {});
+    listFundSnapshots(200, market, "advisory")
+      .then((s) => { if (!cancelled) setAdvisorySnaps(s); })
       .catch(() => {});
     listScenarios(12, market)
       .then((s) => { if (!cancelled) setScenarios(s); })
@@ -682,12 +690,13 @@ export function PortfolioScreen() {
     return () => { cancelled = true; };
   }, [market, reloadKey]);
 
-  // NAV = deployed market value + undeployed mandate cash. For an attached
-  // brokerage book (no mandate) mandateCash is null and NAV is just the book MV.
+  // Fund NAV = its positions' market value + undeployed mandate cash. With no
+  // mandate there is no fund (positions without one never fill).
   const navUsd = useMemo(
-    () => positions.reduce((s, p) => s + (p.market_value || 0), 0) + (mandateCash ?? 0),
+    () => (mandateCash == null ? 0 : positions.reduce((s, p) => s + (p.market_value || 0), 0) + mandateCash),
     [positions, mandateCash],
   );
+  const advisoryMV = useMemo(() => advisory.reduce((s, p) => s + (p.market_value || 0), 0), [advisory]);
 
   const lastSnap = snapshots[snapshots.length - 1];
   const todayPnl = lastSnap?.pnl_daily ?? 0;
@@ -707,8 +716,8 @@ export function PortfolioScreen() {
     <div className="portfolio">
       <div className="panel span-row-2" style={{ borderTop: 0, borderBottom: 0, borderLeft: 0 }}>
         <div className="panel-head">
-          <span className="title">Fund · Live</span>
-          <span className="meta">NAV · Mark-to-Market · {positions.length} positions</span>
+          <span className="title">Fund Book · Live</span>
+          <span className="meta">NAV · mandate cash + {positions.length} positions</span>
         </div>
         <div className="panel-body tight" style={{ overflow: "auto" }}>
           <div className="bigstat">
@@ -777,17 +786,25 @@ export function PortfolioScreen() {
         </div>
       </div>
 
-      <Panel
-        title={`Book vs ${market === "IN" ? "Nifty 50" : "S&P 500"}`}
-        meta="the index to beat · current holdings"
-        className="span-col-2"
-        bodyClassName="tight"
-      >
-        <BenchmarkPanel positions={positions} market={market} snapshots={snapshots} />
+      <Panel title="Fund Book · Positions" meta="the desk's paper fills · ranked by MV" bodyClassName="tight">
+        <PositionsList
+          rows={positions}
+          loaded={posLoaded}
+          market={market}
+          empty={mandate ? "Nothing deployed yet: the fund is all mandate cash." : "No fund mandate on this desk: set one to open the fund book."}
+        />
       </Panel>
 
-      <Panel title="Factor Exposures · Net" meta="weighted across book" bodyClassName="tight">
-        <Exposures positions={positions} />
+      <Panel title="Held Orders · Awaiting Approval" meta="broker · operator gate" bodyClassName="tight">
+        <HeldOrders market={market} />
+      </Panel>
+
+      <Panel
+        title="Fund Mandate · From Scratch"
+        meta="capital base · risk posture · deployment"
+        bodyClassName="tight"
+      >
+        <FundMandatePanel market={market} />
       </Panel>
 
       <Panel
@@ -798,24 +815,29 @@ export function PortfolioScreen() {
         <ScenarioTree scenarios={scenarios} />
       </Panel>
 
-      <Panel title="Held Orders · Awaiting Approval" meta="broker · operator gate" bodyClassName="tight">
-        <HeldOrders market={market} />
+      <Panel
+        title={`Advisory Book vs ${market === "IN" ? "Nifty 50" : "S&P 500"}`}
+        meta="the operator's holdings · the index to beat"
+        className="span-col-2"
+        bodyClassName="tight"
+      >
+        <BenchmarkPanel positions={advisory} market={market} snapshots={advisorySnaps} />
       </Panel>
 
-      <Panel title="Positions · Live" meta="ranked by MV" bodyClassName="tight">
-        <PositionsList rows={positions} loaded={posLoaded} market={market} />
-      </Panel>
-
-      <Panel title="Rebalance · Advisory" meta="quant verdicts · real book" bodyClassName="tight">
-        <RebalancePanel positions={positions} mandate={mandate} market={market} />
+      <Panel title="Factor Exposures · Advisory" meta="weighted across the operator's holdings" bodyClassName="tight">
+        <Exposures positions={advisory} />
       </Panel>
 
       <Panel
-        title="Fund Mandate · From Scratch"
-        meta="capital base · risk posture · deployment"
+        title="Advisory Book · Holdings"
+        meta={`${advisory.length} holdings · ${advisoryMV ? fmtMoney(advisoryMV, market) : "—"} · read-only`}
         bodyClassName="tight"
       >
-        <FundMandatePanel market={market} />
+        <PositionsList rows={advisory} loaded={posLoaded} market={market} empty="No holdings synced from Horizon or IBKR." />
+      </Panel>
+
+      <Panel title="Rebalance · Advisory" meta="quant verdicts · operator's holdings" bodyClassName="tight">
+        <RebalancePanel positions={advisory} mandate={mandate} market={market} />
       </Panel>
 
       {/* Horizon, when configured, supersedes the direct brokerage links. */}

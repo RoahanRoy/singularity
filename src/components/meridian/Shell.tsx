@@ -7,7 +7,7 @@ import { MarketTicker, ExchangeClock, exchangeStatus, type ExchangeStatus } from
 import { useOperator } from "./AuthGate";
 import { useMarket } from "./MarketContext";
 import { signOutOperator } from "@/lib/auth/operator";
-import { listPositions, listIbkrAccounts, listFundSnapshots } from "@/lib/appwrite/queries";
+import { listAdvisoryPositions, listIbkrAccounts, listFundSnapshots } from "@/lib/appwrite/queries";
 import type { Position } from "@/lib/appwrite/schema";
 import { fmtFullMoney, type Market } from "@/lib/meridian/format";
 import { useTheme } from "@/lib/meridian/theme";
@@ -36,7 +36,8 @@ type Posture = {
 type Book = { positions: Position[]; posture: Posture | null };
 
 /**
- * The live book behind the sidebar: held positions for the active desk and,
+ * The advisory book behind the sidebar — the operator's real holdings for the
+ * active desk (not the fund's own paper book, which Portfolio shows) — and,
  * on the US desk, posture derived from the real IBKR account — NAV/cash from
  * the connected account, leverage & cash% from the positions, and a 99%/1d
  * historical VaR from the fund's NAV return series (— until there's history).
@@ -46,9 +47,9 @@ function useBook(market: Market): Book | null {
   useEffect(() => {
     let cancelled = false;
     const load = async (): Promise<Book> => {
-      if (market !== "US") return { positions: await listPositions(50, market), posture: null };
+      if (market !== "US") return { positions: await listAdvisoryPositions(50, market), posture: null };
       const [pos, accts, snaps] = await Promise.all([
-        listPositions(50, "US"),
+        listAdvisoryPositions(50, "US"),
         listIbkrAccounts(10),
         listFundSnapshots(200, "US"),
       ]);
@@ -114,7 +115,7 @@ function Holdings({ book, market }: { book: Book | null; market: Market }) {
     <>
       <div className="v2-hold-head">
         <span>Holdings</span>
-        <span className="meta">{market === "IN" ? "India Fund · Horizon" : "US Fund · IBKR"}</span>
+        <span className="meta">{market === "IN" ? "India · Advisory · Horizon" : "US · Advisory · IBKR"}</span>
       </div>
       <div className="v2-hold">
         {book && rows.length === 0 && (
