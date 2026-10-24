@@ -10,7 +10,7 @@ import { AuditLogScreen } from "@/components/meridian/desk/AuditLog";
 import { SwarmScreen } from "@/components/meridian/screens/Swarm";
 import { ResearchScreen } from "@/components/meridian/screens/Research";
 import { QuantScreen } from "@/components/meridian/screens/Quant";
-import { PortfolioScreen } from "@/components/meridian/screens/Portfolio";
+import { BookScreen } from "@/components/meridian/desk/Book";
 import { RiskScreen } from "@/components/meridian/screens/Risk";
 import { ConsoleScreen } from "@/components/meridian/screens/Console";
 import { ComputeScreen } from "@/components/meridian/screens/Compute";
@@ -46,7 +46,7 @@ function Screen({ id }: { id: ScreenId }) {
     case "today":
       return <TodayScreen />;
     case "book":
-      return <Legacy><PortfolioScreen /></Legacy>;
+      return <BookScreen />;
     case "risk":
       return <Legacy><RiskScreen /></Legacy>;
     case "research":

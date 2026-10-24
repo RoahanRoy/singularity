@@ -221,3 +221,15 @@
    with the old tokens until they're ported. */
 .m-legacy { height: calc(100dvh - 140px); min-height: 520px; display: flex; flex-direction: column; border-radius: 8px; overflow: hidden; box-shadow: var(--shadow); }
 .m-legacy > .main { flex: 1; min-height: 0; overflow: auto; }
+
+/* Legacy panels (mandate form, Horizon, IBKR) dropped into a v2 screen: their
+   old token names resolve to the v2 palette, so they follow the theme. */
+.m-compat {
+  --mono: var(--m-mono); --md-accent: var(--accent); --bg-0: var(--bg);
+  --ink-0: var(--ink); --ink-1: var(--ink); --line-soft: var(--line);
+  --green: var(--up); --red: var(--down); --amber: var(--warn);
+  font-size: 13px;
+}
+.m-compat .mono { font-family: var(--m-mono); }
+.m-compat .dim { color: var(--ink-3); }
+.m-compat input, .m-compat select, .m-compat textarea { font: inherit; color: var(--ink); background: var(--surface); }
