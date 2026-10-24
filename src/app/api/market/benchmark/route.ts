@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { requireOperator } from "@/lib/appwrite/server";
 import type { Bar } from "@/lib/fund/benchmark";
+import { DESK_INDEX as INDEX } from "@/lib/market/indices";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,7 +20,6 @@ export const dynamic = "force-dynamic";
  * price, so a gold ETF stands in for them, and `sources` says so.
  */
 
-const INDEX = { US: { symbol: "^GSPC", name: "S&P 500" }, IN: { symbol: "^NSEI", name: "Nifty 50" } } as const;
 const DESK_CCY = { US: "USD", IN: "INR" } as const;
 
 /** Stand-ins for instruments Yahoo doesn't carry, by ticker pattern. */

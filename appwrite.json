@@ -1240,6 +1240,18 @@
                     "array": false,
                     "encrypt": false,
                     "default": "US"
+                },
+                {
+                    "key": "book_index",
+                    "type": "double",
+                    "required": false,
+                    "array": false
+                },
+                {
+                    "key": "index_level",
+                    "type": "double",
+                    "required": false,
+                    "array": false
                 }
             ],
             "indexes": [

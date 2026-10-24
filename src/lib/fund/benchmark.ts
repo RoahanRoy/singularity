@@ -81,7 +81,6 @@ export function compareToIndex(holdings: BenchmarkHolding[], index: Bar[], from?
   const i0 = idx[0].close;
   const book = value.map((v) => (v / v0) * 100);
   const level = idx.map((b) => (b.close / i0) * 100);
-  const bookReturn = book[book.length - 1] / 100 - 1;
   const indexReturn = level[level.length - 1] / 100 - 1;
 
   const holdingsOut: HoldingVsIndex[] = priced
@@ -92,7 +91,20 @@ export function compareToIndex(holdings: BenchmarkHolding[], index: Bar[], from?
     })
     .sort((a, b) => b.contribution - a.contribution);
 
-  const rb = dailyReturns(book), ri = dailyReturns(level);
+  return { ...compareSeries(dates, book, level), holdings: holdingsOut, missing };
+}
+
+/**
+ * Two aligned series already rebased to 100 — the book and the index — and
+ * the stats that say how one tracks the other. Shared by the replayed book
+ * above and the recorded track (scorecard.ts).
+ */
+export function compareSeries(
+  dates: string[], book: number[], index: number[],
+): Omit<BenchmarkResult, "holdings" | "missing"> {
+  const bookReturn = book[book.length - 1] / book[0] - 1;
+  const indexReturn = index[index.length - 1] / index[0] - 1;
+  const rb = dailyReturns(book), ri = dailyReturns(index);
   const enough = rb.length >= MIN_DAYS_FOR_STATS;
   const varI = variance(ri);
   const cov = covariance(rb, ri);
@@ -105,16 +117,14 @@ export function compareToIndex(holdings: BenchmarkHolding[], index: Bar[], from?
   };
 
   return {
-    dates, book, index: level, bookReturn, indexReturn, excess: bookReturn - indexReturn,
+    dates, book, index, bookReturn, indexReturn, excess: bookReturn - indexReturn,
     beta: enough && varI > 0 ? cov / varI : null,
     correlation: enough && varI > 0 && varB > 0 ? cov / Math.sqrt(varI * varB) : null,
     trackingError: enough ? Math.sqrt(variance(rb.map((r, k) => r - ri[k])) * TRADING_DAYS) : null,
     upCapture: enough ? capture(up) : null,
     downCapture: enough ? capture(down) : null,
     bookMaxDrawdown: maxDrawdown(book),
-    indexMaxDrawdown: maxDrawdown(level),
-    holdings: holdingsOut,
-    missing,
+    indexMaxDrawdown: maxDrawdown(index),
   };
 }
 

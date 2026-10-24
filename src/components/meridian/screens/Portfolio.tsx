@@ -783,7 +783,7 @@ export function PortfolioScreen() {
         className="span-col-2"
         bodyClassName="tight"
       >
-        <BenchmarkPanel positions={positions} market={market} />
+        <BenchmarkPanel positions={positions} market={market} snapshots={snapshots} />
       </Panel>
 
       <Panel title="Factor Exposures · Net" meta="weighted across book" bodyClassName="tight">

@@ -6,10 +6,14 @@ import {
   BENCHMARK_RANGES, compareToIndex, rescaleTo, windowStart,
   type Bar, type BenchmarkRange, type BenchmarkResult, type HoldingVsIndex,
 } from "@/lib/fund/benchmark";
+import { recordedTrack, type RecordedPoint } from "@/lib/fund/scorecard";
 import type { Market, Position } from "@/lib/appwrite/schema";
 
 /** Where a holding's prices came from, when not its own listing in the desk's currency. */
 type Source = { symbol: string; currency?: string; proxy?: string };
+/** Today's holdings replayed over past prices, or the track recorded at each book sync. */
+type View = "replay" | "recorded";
+
 type Payload = {
   index: { symbol: string; name: string; bars: Bar[] };
   bars: Record<string, Bar[]>;
@@ -33,8 +37,14 @@ const label: React.CSSProperties = {
  * rebased to 100, the running excess underneath, risk stats, and which
  * holdings are carrying or dragging the book.
  */
-export function BenchmarkPanel({ positions, market }: { positions: Position[]; market: Market }) {
+export function BenchmarkPanel({ positions, market, snapshots = [] }: {
+  positions: Position[];
+  market: Market;
+  /** The desk's fund_snapshots, oldest first: the recorded track lives on them. */
+  snapshots?: RecordedPoint[];
+}) {
   const [range, setRange] = useState<BenchmarkRange>("6M");
+  const [view, setView] = useState<View>("replay");
   const listed = useMemo(
     () => positions.filter((p) => !p.ticker.startsWith("MF:") && p.qty > 0),
     [positions],
@@ -80,6 +90,18 @@ export function BenchmarkPanel({ positions, market }: { positions: Position[]; m
     );
   }, [payload, listed, range]);
 
+  const recorded = useMemo<BenchmarkResult | null>(() => {
+    const all = recordedTrack(snapshots);
+    if (!all) return null;
+    // A range shorter than the record so far shows the whole record.
+    return recordedTrack(snapshots, windowStart(all.dates[all.dates.length - 1], range)) ?? all;
+  }, [snapshots, range]);
+  const recordedSince = recordedTrack(snapshots)?.dates[0] ?? null;
+  const viewProps = { view, onView: setView, recordedSince };
+
+  if (view === "recorded" && recorded) {
+    return <BenchmarkView result={recorded} indexName={indexName} range={range} onRange={setRange} funds={0} {...viewProps} />;
+  }
   if (!listed.length) {
     return <Empty>No listed holdings on this desk yet: nothing to compare against the {indexName}.</Empty>;
   }
@@ -87,18 +109,26 @@ export function BenchmarkPanel({ positions, market }: { positions: Position[]; m
   if (!payload) return <Empty>Loading a year of closes for {listed.length} holdings and the {indexName}…</Empty>;
   if (!result) return <Empty>No overlapping price history for the book and the {indexName}.</Empty>;
   return (
-    <BenchmarkView result={result} indexName={indexName} range={range} onRange={setRange} funds={funds} sources={payload.sources} />
+    <BenchmarkView
+      result={result} indexName={indexName} range={range} onRange={setRange} funds={funds} sources={payload.sources} {...viewProps}
+    />
   );
 }
 
 /** The comparison itself, given a computed result: no fetching, so it renders anywhere. */
-export function BenchmarkView({ result, indexName, range, onRange, funds, sources = {} }: {
+export function BenchmarkView({
+  result, indexName, range, onRange, funds, sources = {}, view = "replay", onView, recordedSince = null,
+}: {
   result: BenchmarkResult;
   indexName: string;
   range: BenchmarkRange;
   onRange: (r: BenchmarkRange) => void;
   funds: number;
   sources?: Record<string, Source>;
+  view?: View;
+  onView?: (v: View) => void;
+  /** First day of the recorded track; null until two days are on record. */
+  recordedSince?: string | null;
 }) {
   const beating = result.excess >= 0;
   const held = new Set(result.holdings.map((h) => h.ticker));
@@ -106,6 +136,19 @@ export function BenchmarkView({ result, indexName, range, onRange, funds, source
   const proxied = Object.entries(sources).filter(([t, s]) => held.has(t) && s.proxy);
   return (
     <div style={{ display: "grid", gap: 0 }}>
+      {onView && (
+        <div style={{ display: "flex", gap: 2, padding: "10px 14px 0" }} role="group" aria-label="Which book">
+          <Toggle on={view === "replay"} onClick={() => onView("replay")}>Replay · today&apos;s holdings</Toggle>
+          <Toggle
+            on={view === "recorded"}
+            onClick={() => onView("recorded")}
+            disabled={!recordedSince}
+            title={recordedSince ? undefined : "Starts with the next book sync; shows once two days are on record."}
+          >
+            {recordedSince ? `Recorded · since ${fmtDate(recordedSince)}` : "Recorded · starts next sync"}
+          </Toggle>
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 14px 6px", flexWrap: "wrap" }}>
         <div style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--ink-0)" }}>
           {beating ? "Ahead of" : "Behind"} the {indexName} by{" "}
@@ -116,20 +159,7 @@ export function BenchmarkView({ result, indexName, range, onRange, funds, source
         <Legend color={INDEX} text={`${indexName} ${sgn(result.indexReturn)}`} dashed />
         <div style={{ marginLeft: "auto", display: "flex", gap: 2 }} role="group" aria-label="Time range">
           {BENCHMARK_RANGES.map((r) => (
-            <button
-              key={r}
-              type="button"
-              onClick={() => onRange(r)}
-              aria-pressed={r === range}
-              style={{
-                fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.08em", padding: "3px 8px",
-                border: "1px solid " + (r === range ? "var(--line-strong)" : "transparent"), borderRadius: 6,
-                background: r === range ? "var(--bg-3)" : "transparent",
-                color: r === range ? "var(--ink-0)" : "var(--ink-3)", cursor: "pointer",
-              }}
-            >
-              {r}
-            </button>
+            <Toggle key={r} on={r === range} onClick={() => onRange(r)}>{r}</Toggle>
           ))}
         </div>
       </div>
@@ -151,7 +181,14 @@ export function BenchmarkView({ result, indexName, range, onRange, funds, source
       <Contributors holdings={result.holdings} indexName={indexName} />
 
       <div className="dim" style={{ padding: "8px 14px 12px", fontFamily: "var(--mono)", fontSize: 10.5, lineHeight: 1.6, color: "var(--ink-3)" }}>
-        Today&apos;s share counts held over the window (price return, no cash or trades), against the {indexName} price index.
+        {view === "recorded" ? (
+          <>
+            Recorded at each book sync: the book&apos;s holdings marked from one sync to the next, so trades and their
+            timing count and new cash doesn&apos;t, against the {indexName} price index.
+          </>
+        ) : (
+          <>Today&apos;s share counts held over the window (price return, no cash or trades), against the {indexName} price index.</>
+        )}
         {abroad.length > 0 && ` Priced from listings abroad, converted daily: ${abroad.map(([t, s]) => `${t} (${s.symbol}${s.currency ? `, ${s.currency}` : ""})`).join(", ")}.`}
         {proxied.length > 0 && ` Stand-ins: ${proxied.map(([t, s]) => `${t} (${s.proxy})`).join(", ")}.`}
         {result.missing.length > 0 && ` No history for ${result.missing.join(", ")}.`}
@@ -159,6 +196,32 @@ export function BenchmarkView({ result, indexName, range, onRange, funds, source
         {" "}Capture above 100 / below 100 is the shape that beats the index with less risk.
       </div>
     </div>
+  );
+}
+
+function Toggle({ on, onClick, disabled, title, children }: {
+  on: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={on}
+      disabled={disabled}
+      title={title}
+      style={{
+        fontFamily: "var(--mono)", fontSize: 10, letterSpacing: "0.08em", padding: "3px 8px",
+        border: "1px solid " + (on ? "var(--line-strong)" : "transparent"), borderRadius: 6,
+        background: on ? "var(--bg-3)" : "transparent",
+        color: on ? "var(--ink-0)" : "var(--ink-3)", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.6 : 1,
+      }}
+    >
+      {children}
+    </button>
   );
 }
 

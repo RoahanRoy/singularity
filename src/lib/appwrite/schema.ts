@@ -173,6 +173,10 @@ export type FundSnapshot = Base & {
   pnl_daily: number;
   captured_at: string;
   market?: Market | null;
+  /** Flow-free running book level, written by each Horizon pull (lib/fund/scorecard.ts). */
+  book_index?: number | null;
+  /** The desk's index (S&P 500 / Nifty 50) at the same pull. */
+  index_level?: number | null;
 };
 
 /**

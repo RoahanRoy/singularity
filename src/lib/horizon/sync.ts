@@ -4,6 +4,8 @@ import { createAdminClient, DATABASE_ID } from "@/lib/appwrite/server";
 import { COLLECTIONS, type Market, type Position } from "@/lib/appwrite/schema";
 import { fetchHoldings, HorizonAuthError } from "./client";
 import { foldHoldings } from "./book";
+import { holdingsReturn, nextBookIndex, type PulledHolding } from "@/lib/fund/scorecard";
+import { indexLevel } from "@/lib/market/indices";
 
 export type HorizonSyncResult = {
   /** "fresh": the book was pulled within `maxAgeMs`, so nothing was re-pulled. */
@@ -34,7 +36,8 @@ export const HORIZON_LOOP_MAX_AGE_MS = 15 * 60_000;
  *     Horizon supersedes (keeping both would count the same shares twice).
  *     Factor exposures carry forward,
  *   - paper-book rows (no account id, no horizon_source) are never touched,
- *   - one fund_snapshots row per desk that holds anything.
+ *   - one fund_snapshots row per desk that holds anything, carrying the
+ *     flow-free book level and the index level beside the NAV (scorecard.ts).
  *
  * Nothing is written until Horizon has answered, so a failed pull leaves the
  * current book exactly as it was.
@@ -128,6 +131,7 @@ async function pull(): Promise<HorizonSyncResult> {
   for (const r of rows) total[r.market] += r.mv;
 
   const written: Record<Market, number> = { IN: 0, US: 0 };
+  const pulled: Record<Market, PulledHolding[]> = { IN: [], US: [] };
   await Promise.all(
     rows.map(async (r) => {
       try {
@@ -145,6 +149,7 @@ async function pull(): Promise<HorizonSyncResult> {
         });
         result.holdings[r.market]++;
         written[r.market] += r.mv;
+        pulled[r.market].push({ ticker: r.ticker, qty: r.qty, marketValue: r.mv });
       } catch (err) {
         result.skipped.push({ ticker: r.ticker, reason: (err as Error).message });
       }
@@ -152,6 +157,9 @@ async function pull(): Promise<HorizonSyncResult> {
   );
 
   // ── One NAV point per desk that holds anything ───────────────────────────
+  const levels = Object.fromEntries(
+    await Promise.all(MARKETS.map(async (m) => [m, result.holdings[m] ? await indexLevel(m) : null] as const)),
+  ) as Record<Market, number | null>;
   for (const market of MARKETS) {
     if (result.holdings[market] === 0) continue;
     const paperMV = paper
@@ -168,17 +176,57 @@ async function pull(): Promise<HorizonSyncResult> {
     // The first pull from Horizon replaces whatever book was there before —
     // a change of source, not a session's P&L — so it books no day move.
     const dayPnl = hadHorizon.has(market) && typeof prevNav === "number" ? nav - prevNav : 0;
+    const point = {
+      nav_usd: Number(nav.toFixed(2)),
+      pnl_daily: Number(dayPnl.toFixed(2)),
+      captured_at: new Date().toISOString(),
+      market,
+    };
+    const track = await scorecardPoint(databases, market, hadHorizon.has(market), real, pulled[market], levels[market]);
     await databases
-      .createDocument(DATABASE_ID, COLLECTIONS.fund_snapshots, ID.unique(), {
-        nav_usd: Number(nav.toFixed(2)),
-        pnl_daily: Number(dayPnl.toFixed(2)),
-        captured_at: new Date().toISOString(),
-        market,
-      })
+      .createDocument(DATABASE_ID, COLLECTIONS.fund_snapshots, ID.unique(), { ...point, ...track })
+      // Before the scorecard columns are migrated in, the NAV point still lands.
+      .catch(() => (track ? databases.createDocument(DATABASE_ID, COLLECTIONS.fund_snapshots, ID.unique(), point) : null))
       .catch(() => {});
   }
 
   return result;
+}
+
+/**
+ * The scorecard levels for this pull: the book level chained from the last
+ * recorded one by the return of the holdings Horizon reported last time, and
+ * the index level. A desk's first Horizon pull starts the book at the base.
+ * The book level is written even when Yahoo doesn't answer, so the chain never
+ * skips a pull's return; that day just has no index point to compare against.
+ */
+async function scorecardPoint(
+  databases: ReturnType<typeof createAdminClient>["databases"],
+  market: Market,
+  continuing: boolean,
+  prior: Position[],
+  now: PulledHolding[],
+  level: number | null,
+): Promise<{ book_index: number; index_level: number | null } | null> {
+  let prevIndex: number | null = null;
+  if (continuing) {
+    try {
+      const last = await databases.listDocuments(DATABASE_ID, COLLECTIONS.fund_snapshots, [
+        Query.equal("market", market),
+        Query.isNotNull("book_index"),
+        Query.orderDesc("captured_at"),
+        Query.limit(1),
+      ]);
+      prevIndex = (last.documents[0] as { book_index?: number | null } | undefined)?.book_index ?? null;
+    } catch {
+      return null; // the column isn't there yet
+    }
+  }
+  const before = prior
+    .filter((p) => p.horizon_source && (p.market ?? "US") === market)
+    .map((p) => ({ ticker: p.ticker, qty: Number(p.qty), marketValue: Number(p.market_value) }));
+  const r = prevIndex == null ? null : holdingsReturn(before, now);
+  return { book_index: Number(nextBookIndex(prevIndex, r).toFixed(6)), index_level: level == null ? null : Number(level.toFixed(4)) };
 }
 
 /** Real-holdings rows Horizon currently has on each desk, and when they landed. */
