@@ -40,7 +40,7 @@ async function freshReports(market: Market, now: Date): Promise<QuantReport[]> {
   }
 }
 
-/** Today's ranked ideas for the desk, strongest first, covered or not. */
+/** Today's ranked ideas for the desk, strongest first, covered or not (src/lib/fund/ideas.ts). */
 export async function loadIdeas(market: Market, universe: readonly string[], held: readonly string[], now: Date = new Date()): Promise<Idea[]> {
   if (!(STORED_MAX_AGE_H > 0)) return [];
   const verdicts = (await freshReports(market, now)).flatMap((r) => {
@@ -50,7 +50,7 @@ export async function loadIdeas(market: Market, universe: readonly string[], hel
     try { data = r.payload_json ? (JSON.parse(r.payload_json) as { data?: unknown }).data : null; } catch { /* no upside */ }
     return [{ ...v, upsidePct: upsideOf(data) }];
   });
-  return rankIdeas({ verdicts, universe, held, now: now.getTime(), maxAgeMs: STORED_MAX_AGE_H * 3_600_000 });
+  return rankIdeas({ verdicts, universe, held, now: now.getTime(), maxAgeMs: STORED_MAX_AGE_H * 3_600_000 }).ideas;
 }
 
 /** True when the desk has written a memo on the name. */

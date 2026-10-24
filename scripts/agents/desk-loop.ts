@@ -270,8 +270,7 @@ export async function runDesk(config: DeskConfig): Promise<void> {
         const { idea } = pick;
         ticker = idea.ticker;
         research = true;
-        const up = idea.upsidePct == null ? "" : `, valuation upside ${idea.upsidePct > 0 ? "+" : ""}${idea.upsidePct.toFixed(1)}%`;
-        const why = `composite +${Math.round(idea.composite)} × confidence ${idea.confidence.toFixed(2)}${up}`;
+        const why = `composite +${Math.round(idea.composite)} × confidence ${idea.confidence.toFixed(2)}, valuation upside +${idea.upsidePct.toFixed(1)}%`;
         via = `idea #${pick.rank} of ${pick.of} (${why}; ${pick.covered} above it already covered)`;
         try {
           await emit(agentIds.parser, "thought", `Researching idea ${ticker}: #${pick.rank} of ${pick.of} sweep longs, ${why}`, {
