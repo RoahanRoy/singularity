@@ -23,7 +23,7 @@ import type { QuantReport } from "../../src/lib/appwrite/schema";
 const PAGE = 100;
 
 /** Every ensemble verdict on the desk inside the freshness window. */
-async function freshReports(market: Market, now: Date): Promise<QuantReport[]> {
+export async function freshReports(market: Market, now: Date): Promise<QuantReport[]> {
   const since = new Date(now.getTime() - STORED_MAX_AGE_H * 3_600_000).toISOString();
   const out: QuantReport[] = [];
   let cursor: string | undefined;

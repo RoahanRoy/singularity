@@ -18,7 +18,8 @@
  * Behavior: runs continuously. Each cycle first scans for new filings (see
  * events.ts) on names the desk covers — held, or researched — and drains any
  * into a priority queue; the ticker for the cycle is the next queued update,
- * or, when the queue is empty,
+ * or, when the queue is empty, a covered name whose sweep verdict has flipped
+ * long ↔ short since its last memo (flips.ts), or else
  * the strongest unresearched idea from the daily quant sweep (ideas.ts), or,
  * when none is left, a round-robin pick over the held book (falling back to the
  * static universe).
@@ -33,6 +34,7 @@
  *   <PREFIX>_ERROR_BACKOFF_MS  pause after a failed cycle (default 15000)
  *   <PREFIX>_EVENT_SCAN=0      don't scan for filings on covered names
  *   <PREFIX>_EVENT_BATCH       names probed for new filings per cycle (default 10)
+ *   <PREFIX>_FLIPS=0           don't re-research covered names on a verdict flip
  *   <PREFIX>_IDEAS=0           don't research ideas from the quant sweep
  *   MERIDIAN_SYNC_BASE         base URL of the running app for the sync route
  *                              (default http://localhost:3000)
@@ -55,6 +57,7 @@ import { reportRisk } from "./portfolio-risk";
 import { marketState } from "./market-hours";
 import { collectEvents, type EventHit, type LatestFilingKey } from "./events";
 import { hasMemo, nextIdea } from "./ideas";
+import { nextFlip } from "./flips";
 
 export type DeskConfig = {
   /** Short tag used for log lines and env-var prefixing (e.g. "tech", "india"). */
@@ -98,6 +101,8 @@ export async function runDesk(config: DeskConfig): Promise<void> {
   // fallback, so a scan outage never stalls the loop.
   const EVENT_SCAN = process.env[`${envPrefix}_EVENT_SCAN`] !== "0" && !!config.universe;
   const EVENT_BATCH = Number(process.env[`${envPrefix}_EVENT_BATCH`] || config.eventScanBatch || 10);
+  // Flips: covered names the sweep now calls the other way (flips.ts).
+  const FLIPS = process.env[`${envPrefix}_FLIPS`] !== "0" && !!config.universe;
   // Ideas: the sweep's strongest unheld longs, each researched once (ideas.ts).
   const IDEAS = process.env[`${envPrefix}_IDEAS`] !== "0" && !!config.universe;
 
@@ -234,8 +239,9 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     await measureRisk();
     const held = await heldTickers();
 
-    // Update covered names on new filings first, then research the next idea;
-    // fall back to round-robin to keep cold names covered and the loop warm.
+    // Update covered names on new filings first, then on a verdict flip, then
+    // research the next idea; fall back to round-robin to keep cold names
+    // covered and the loop warm.
     await scanEvents(held);
     const evt = eventQueue.shift();
     let ticker: string;
@@ -258,15 +264,38 @@ export async function runDesk(config: DeskConfig): Promise<void> {
         /* feed emit is non-fatal — the cycle proceeds regardless */
       }
     } else {
+      let flip: Awaited<ReturnType<typeof nextFlip>> = null;
+      if (FLIPS) {
+        try {
+          flip = await nextFlip(market, config.universe ?? [], held);
+        } catch (err) {
+          console.warn(`[${key}] flip check failed (moving on to ideas): ${(err as Error).message}`);
+        }
+      }
       let pick: Awaited<ReturnType<typeof nextIdea>> = null;
-      if (IDEAS) {
+      if (!flip && IDEAS) {
         try {
           pick = await nextIdea(market, config.universe ?? [], held);
         } catch (err) {
           console.warn(`[${key}] idea queue failed (falling back to round-robin): ${(err as Error).message}`);
         }
       }
-      if (pick) {
+      const sign = (x: number) => `${x >= 0 ? "+" : ""}${Math.round(x)}`;
+      if (flip) {
+        ticker = flip.ticker;
+        research = true;
+        const why = `memo of ${flip.memoAt.slice(0, 10)} was written on ${flip.basis.direction} ${sign(flip.basis.composite)}, sweep now ${flip.current.direction} ${sign(flip.current.composite)}`;
+        via = `update · verdict flip (${why})`;
+        try {
+          await emit(agentIds.parser, "thought", `Updating ${ticker} on a verdict flip — ${why}`, {
+            via: "update", kind: "flip", ticker, held: held.some((h) => h.toUpperCase() === ticker),
+            memo_at: flip.memoAt, from: flip.basis.direction, from_composite: flip.basis.composite,
+            to: flip.current.direction, to_composite: flip.current.composite,
+          });
+        } catch {
+          /* feed emit is non-fatal */
+        }
+      } else if (pick) {
         const { idea } = pick;
         ticker = idea.ticker;
         research = true;
