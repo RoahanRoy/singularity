@@ -15,8 +15,8 @@ export type IbkrSyncResult = {
 
 /**
  * Pull a connected IBKR account's live positions from the gateway and project
- * them onto the US book, natively USD:
- *   - replace this account's `positions` rows (market="US") with fresh marks,
+ * them onto the US advisory book, natively USD:
+ *   - replace this account's `advisory_positions` rows (market="US") with fresh marks,
  *   - append a `fund_snapshots` row (market="US") so the US fund's NAV/PnL
  *     accrues a chartable time series,
  *   - stamp the account with holdings_count / equity_cash / last_synced_at.
@@ -49,7 +49,8 @@ export async function syncAccount(docId: string): Promise<IbkrSyncResult> {
     return { accountId: ibkrAccountId, holdings: 0, navUsd: 0, pnl: 0, status };
   }
 
-  // The swarm's book tracks equities; map those onto `positions`. NAV still
+  // The advisory book tracks equities; map those onto `advisory_positions`
+  // (the operator's real holdings — never the fund's own book). NAV still
   // counts every leg's market value plus cash so it reflects the true account.
   const equities = positions.filter((p) => p.assetClass === "STK" && p.position !== 0);
   const totalMV = positions.reduce((s, p) => s + p.marketValue, 0);
@@ -59,7 +60,7 @@ export async function syncAccount(docId: string): Promise<IbkrSyncResult> {
 
   // Replace this account's cached positions, carrying forward factor exposures
   // (slow-moving betas keyed by ticker, not part of the brokerage's truth).
-  const existing = await databases.listDocuments(DATABASE_ID, COLLECTIONS.positions, [
+  const existing = await databases.listDocuments(DATABASE_ID, COLLECTIONS.advisory_positions, [
     Query.equal("ibkr_account_id", docId),
     Query.limit(500),
   ]);
@@ -71,14 +72,14 @@ export async function syncAccount(docId: string): Promise<IbkrSyncResult> {
   }
   await Promise.all(
     existing.documents.map((d) =>
-      databases.deleteDocument(DATABASE_ID, COLLECTIONS.positions, d.$id).catch(() => {}),
+      databases.deleteDocument(DATABASE_ID, COLLECTIONS.advisory_positions, d.$id).catch(() => {}),
     ),
   );
 
   await Promise.all(
     equities.map((p) => {
       const ticker = p.ticker.slice(0, 16);
-      return databases.createDocument(DATABASE_ID, COLLECTIONS.positions, ID.unique(), {
+      return databases.createDocument(DATABASE_ID, COLLECTIONS.advisory_positions, ID.unique(), {
         ticker,
         qty: p.position,
         avg_cost: Number(p.avgPrice.toFixed(2)),

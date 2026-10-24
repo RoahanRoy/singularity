@@ -5,7 +5,7 @@
  * sizing, position weights, limits and the circuit breaker count.
  *
  * Fund rows are the `positions` rows with no brokerage account id and no
- * horizon_source. Pure read: no writes, no alerts. Throws if the book or the
+ * horizon_source (the rest are legacy advisory rows, now in advisory_positions). Pure read: no writes, no alerts. Throws if the book or the
  * mandate can't be read, so a caller that gates on it fails closed.
  *
  * Marks: a name with a live quote is marked at it. A name without one carries
@@ -18,7 +18,7 @@ import { db, DB, Query } from "./appwrite";
 import { getQuoteDetail } from "./quotes";
 import { exchangeDate } from "./market-hours";
 import { getMandate } from "../../src/lib/fund/mandate";
-import type { FundMandate } from "../../src/lib/appwrite/schema";
+import { isFundPosition, type FundMandate } from "../../src/lib/appwrite/schema";
 
 type Market = "US" | "IN";
 
@@ -35,9 +35,8 @@ export type FundRow = {
   horizon_source?: string | null;
 };
 
-/** A positions row on the fund's book (not a Horizon or brokerage row). */
-export const isFundRow = (p: Pick<FundRow, "ibkr_account_id" | "kite_account_id" | "horizon_source">) =>
-  !p.ibkr_account_id && !p.kite_account_id && !p.horizon_source;
+/** A positions row on the fund's book (not a legacy Horizon or brokerage row). */
+export const isFundRow = isFundPosition;
 
 export type FundName = {
   ticker: string;
@@ -94,7 +93,13 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R>
 
 /** The fund rows for a desk, unmarked. */
 export async function fundRows(market: Market): Promise<FundRow[]> {
-  const res = await db.listDocuments(DB, "positions", [Query.equal("market", market), Query.limit(200)]);
+  const res = await db.listDocuments(DB, "positions", [
+    Query.equal("market", market),
+    Query.isNull("horizon_source"),
+    Query.isNull("ibkr_account_id"),
+    Query.isNull("kite_account_id"),
+    Query.limit(200),
+  ]);
   return (res.documents as unknown as FundRow[]).filter(isFundRow);
 }
 

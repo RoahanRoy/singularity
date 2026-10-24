@@ -12,7 +12,7 @@ export type HorizonSyncResult = {
   status: "synced" | "fresh" | "unauthorized" | "error";
   /** Rows written per desk. */
   holdings: Record<Market, number>;
-  /** Direct IBKR (or legacy Kite) rows removed because Horizon now carries those holdings. */
+  /** Direct IBKR rows removed because Horizon now carries those holdings. */
   superseded: number;
   /** Holdings that could not be placed on the book, and why. */
   skipped: { ticker: string; reason: string }[];
@@ -26,16 +26,17 @@ const MARKETS: Market[] = ["IN", "US"];
 export const HORIZON_LOOP_MAX_AGE_MS = 15 * 60_000;
 
 /**
- * Pull the operator's real book from Horizon and project it onto Meridian:
+ * Pull the operator's real book from Horizon onto Meridian's advisory book
+ * (`advisory_positions`) — holdings the desk advises on but never trades; the
+ * fund's own book is the paper positions (scripts/agents/fund-book.ts):
  *   - rupee holdings (Kite, Coin, Groww) become the India book (market="IN",
  *     in INR); everything held abroad (IBKR, Trading 212, Revolut) becomes the
  *     US book (market="US", converted to USD at Horizon's own rate),
  *   - the same instrument held by several members or brokers is one row,
- *   - every prior real-holdings row is replaced — Horizon's from the last pull,
- *     any direct IBKR rows and rows left by the removed Kite link, which
- *     Horizon supersedes (keeping both would count the same shares twice).
- *     Factor exposures carry forward,
- *   - paper-book rows (no account id, no horizon_source) are never touched,
+ *   - every prior advisory row is replaced — Horizon's from the last pull and
+ *     any direct IBKR rows, which Horizon supersedes (keeping both would count
+ *     the same shares twice). Factor exposures carry forward,
+ *   - `positions` (the fund book) is never touched,
  *   - one fund_snapshots row per desk that holds anything, carrying the
  *     flow-free book level and the index level beside the NAV (scorecard.ts).
  *
@@ -45,7 +46,7 @@ export const HORIZON_LOOP_MAX_AGE_MS = 15 * 60_000;
 export async function syncHorizon(opts: { maxAgeMs?: number } = {}): Promise<HorizonSyncResult> {
   // Both desk loops reach this every cycle through the delegating sync routes.
   // One pull at a time per server: concurrent replaces would race on the
-  // unique ticker index.
+  // unique market+ticker index.
   if (inflight) return inflight;
   inflight = (async () => {
     // Horizon's book moves when its own broker syncs do — hours, not seconds —
@@ -99,34 +100,23 @@ async function pull(): Promise<HorizonSyncResult> {
     return result;
   }
 
-  const { rows: folded, skipped } = foldHoldings(data);
+  const { rows, skipped } = foldHoldings(data);
   result.skipped.push(...skipped);
 
-  // ── Replace the real-holdings rows ───────────────────────────────────────
+  // ── Replace the advisory rows ────────────────────────────────────────────
   const { databases } = createAdminClient();
-  const existing = await databases.listDocuments(DATABASE_ID, COLLECTIONS.positions, [Query.limit(1000)]);
-  const docs = existing.documents as unknown as Position[];
-  const isReal = (p: Position) => Boolean(p.horizon_source || p.kite_account_id || p.ibkr_account_id);
-  const real = docs.filter(isReal);
-  const paper = docs.filter((p) => !isReal(p));
+  const existing = await databases.listDocuments(DATABASE_ID, COLLECTIONS.advisory_positions, [Query.limit(1000)]);
+  const real = existing.documents as unknown as Position[];
 
-  const hadHorizon = new Set(docs.filter((p) => p.horizon_source).map((p) => p.market ?? "US"));
+  const hadHorizon = new Set(real.filter((p) => p.horizon_source).map((p) => p.market ?? "US"));
   const priorFactors = new Map<string, string>();
-  for (const p of real) if (p.factor_exposures_json) priorFactors.set(p.ticker, p.factor_exposures_json);
-  const paperTickers = new Set(paper.map((p) => p.ticker.toUpperCase()));
+  for (const p of real) if (p.factor_exposures_json) priorFactors.set(`${p.market}:${p.ticker}`, p.factor_exposures_json);
   result.superseded = real.filter((p) => !p.horizon_source).length;
 
   await Promise.all(
-    real.map((d) => databases.deleteDocument(DATABASE_ID, COLLECTIONS.positions, d.$id).catch(() => {})),
+    real.map((d) => databases.deleteDocument(DATABASE_ID, COLLECTIONS.advisory_positions, d.$id).catch(() => {})),
   );
 
-  // A paper position already owns the ticker (by_ticker is unique); leave the
-  // paper book's state alone and say so rather than overwrite it.
-  const rows = folded.filter((r) => {
-    if (!paperTickers.has(r.ticker)) return true;
-    result.skipped.push({ ticker: r.ticker, reason: "ticker is held on the paper book" });
-    return false;
-  });
   const total: Record<Market, number> = { IN: 0, US: 0 };
   for (const r of rows) total[r.market] += r.mv;
 
@@ -135,14 +125,14 @@ async function pull(): Promise<HorizonSyncResult> {
   await Promise.all(
     rows.map(async (r) => {
       try {
-        await databases.createDocument(DATABASE_ID, COLLECTIONS.positions, ID.unique(), {
+        await databases.createDocument(DATABASE_ID, COLLECTIONS.advisory_positions, ID.unique(), {
           ticker: r.ticker,
           qty: r.qty,
           avg_cost: Number((r.qty > 0 ? r.cost / r.qty : 0).toFixed(4)),
           market_value: Number(r.mv.toFixed(2)),
           unrealized_pnl: Number(r.pnl.toFixed(2)),
           weight: Number((total[r.market] > 0 ? r.mv / total[r.market] : 0).toFixed(6)),
-          factor_exposures_json: priorFactors.get(r.ticker) ?? null,
+          factor_exposures_json: priorFactors.get(`${r.market}:${r.ticker}`) ?? null,
           market: r.market,
           horizon_source: [...r.brokers].join(" · ").slice(0, 64) || "Horizon",
           label: r.label ? r.label.slice(0, 128) : null,
@@ -162,10 +152,7 @@ async function pull(): Promise<HorizonSyncResult> {
   ) as Record<Market, number | null>;
   for (const market of MARKETS) {
     if (result.holdings[market] === 0) continue;
-    const paperMV = paper
-      .filter((p) => (p.market ?? "US") === market)
-      .reduce((s, p) => s + Number(p.market_value ?? 0), 0);
-    const nav = written[market] + paperMV;
+    const nav = written[market];
 
     const lastSnap = await databases.listDocuments(DATABASE_ID, COLLECTIONS.fund_snapshots, [
       Query.equal("market", market),
@@ -229,7 +216,7 @@ async function scorecardPoint(
   return { book_index: Number(nextBookIndex(prevIndex, r).toFixed(6)), index_level: level == null ? null : Number(level.toFixed(4)) };
 }
 
-/** Real-holdings rows Horizon currently has on each desk, and when they landed. */
+/** Advisory rows Horizon currently has on each desk, and when they landed. */
 export async function horizonBookStatus(): Promise<{
   holdings: Record<Market, number>;
   lastSyncedAt: string | null;
@@ -237,7 +224,7 @@ export async function horizonBookStatus(): Promise<{
   const { databases } = createAdminClient();
   const count = async (market: Market) =>
     (
-      await databases.listDocuments(DATABASE_ID, COLLECTIONS.positions, [
+      await databases.listDocuments(DATABASE_ID, COLLECTIONS.advisory_positions, [
         Query.isNotNull("horizon_source"),
         Query.equal("market", market),
         Query.limit(1),
@@ -247,7 +234,7 @@ export async function horizonBookStatus(): Promise<{
     count("IN"),
     count("US"),
     // Every sync recreates its rows, so the newest row's creation is the sync.
-    databases.listDocuments(DATABASE_ID, COLLECTIONS.positions, [
+    databases.listDocuments(DATABASE_ID, COLLECTIONS.advisory_positions, [
       Query.isNotNull("horizon_source"),
       Query.orderDesc("$createdAt"),
       Query.limit(1),

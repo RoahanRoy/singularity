@@ -470,8 +470,8 @@ function RebalancePanel({ positions, mandate, market }: { positions: Position[];
   const plan = useMemo(() => {
     if (!verdicts) return null;
     const caps = mandate ?? DEFAULT_CAPS;
-    // Advice is for the real book; paper rows the desk loop may have written are left out.
-    const real = positions.filter((p) => p.horizon_source || p.ibkr_account_id || p.kite_account_id);
+    // Advice is for the operator's real holdings, not the fund's own book.
+    const real = positions.filter((p) => p.book === "advisory");
     return planRebalance({
       holdings: real.map((p) => ({
         ticker: p.ticker,

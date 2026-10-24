@@ -37,7 +37,7 @@
  *                              of dotfiles (for throwaway checkouts, e.g. cloud)
  */
 import type { Sector } from "./universe";
-import { db, DB, Query, emit, quotaCheck, flushQuota } from "./appwrite";
+import { emit, quotaCheck, flushQuota } from "./appwrite";
 import {
   parser, analyst, quant, critic, valuation, cio,
   pm, treasury, risk, riskOverlay, compliance, smartRouter, broker, tca, attribution,
@@ -45,6 +45,7 @@ import {
   type Ctx,
 } from "./nodes";
 import { quantDesk } from "./quant-nodes";
+import { heldTickers as heldOnBooks } from "./coverage";
 import { marketState } from "./market-hours";
 import { collectEvents, type EventHit, type LatestFilingKey } from "./events";
 
@@ -130,18 +131,10 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     }
   }
 
-  /** Current held tickers for this desk's market. */
+  /** Current held tickers for this desk's market, on the fund and advisory books. */
   async function heldTickers(): Promise<string[]> {
     try {
-      const res = await db.listDocuments(DB, "positions", [
-        Query.equal("market", market),
-        Query.limit(200),
-      ]);
-      // "MF:" rows are mutual funds pulled from Horizon: no listing, no
-      // filings, nothing for the research chain to read.
-      return res.documents
-        .map((d) => String(d.ticker ?? "").toUpperCase())
-        .filter((t) => t && !t.startsWith("MF:"));
+      return await heldOnBooks(market);
     } catch (err) {
       console.warn(`[${key}] could not read held book (${(err as Error).message})`);
       return [];

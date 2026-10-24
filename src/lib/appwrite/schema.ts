@@ -10,6 +10,7 @@ export const COLLECTIONS = {
   filings: "filings",
   memos: "memos",
   positions: "positions",
+  advisory_positions: "advisory_positions",
   trades: "trades",
   scenarios: "scenarios",
   governance_events: "governance_events",
@@ -120,7 +121,20 @@ export type Position = Base & {
   horizon_source?: string | null;
   /** Display name when the ticker alone doesn't say it — a fund's scheme name. */
   label?: string | null;
+  /**
+   * Which book the row is on. Not stored — set on read: "fund" is the desk's
+   * own book (`positions` rows with no account id and no horizon_source),
+   * "advisory" the operator's real holdings (`advisory_positions`).
+   */
+  book?: "fund" | "advisory";
 };
+
+/**
+ * A `positions` row on the fund's own book. The rest of `positions` is legacy
+ * advisory rows from before the books were split (now in advisory_positions).
+ */
+export const isFundPosition = (p: Pick<Position, "ibkr_account_id" | "kite_account_id" | "horizon_source">) =>
+  !p.ibkr_account_id && !p.kite_account_id && !p.horizon_source;
 
 export type Trade = Base & {
   ticker: string;

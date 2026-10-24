@@ -8,20 +8,26 @@ import { SECTOR_UNIVERSE, INDIA_SECTOR_UNIVERSE } from "./universe";
 
 export type Market = "US" | "IN";
 
-/** Distinct tickers on a desk's book. "MF:" rows are mutual funds pulled from Horizon — they file and trade nothing. */
+/**
+ * Distinct tickers a desk holds: the fund's own book (`positions`) and the
+ * operator's advisory book (`advisory_positions`). "MF:" rows are mutual funds
+ * pulled from Horizon — they file and trade nothing.
+ */
 export async function heldTickers(market: Market): Promise<string[]> {
   const rows: string[] = [];
-  let cursor: string | undefined;
-  while (true) {
-    const queries = [Query.equal("market", market), Query.limit(100)];
-    if (cursor) queries.push(Query.cursorAfter(cursor));
-    const page = await db.listDocuments(DB, "positions", queries);
-    for (const d of page.documents) {
-      const t = String(d.ticker ?? "").trim().toUpperCase();
-      if (t && !t.startsWith("MF:")) rows.push(t);
+  for (const col of ["positions", "advisory_positions"]) {
+    let cursor: string | undefined;
+    while (true) {
+      const queries = [Query.equal("market", market), Query.limit(100)];
+      if (cursor) queries.push(Query.cursorAfter(cursor));
+      const page = await db.listDocuments(DB, col, queries);
+      for (const d of page.documents) {
+        const t = String(d.ticker ?? "").trim().toUpperCase();
+        if (t && !t.startsWith("MF:")) rows.push(t);
+      }
+      if (page.documents.length < 100) break;
+      cursor = page.documents[page.documents.length - 1].$id;
     }
-    if (page.documents.length < 100) break;
-    cursor = page.documents[page.documents.length - 1].$id;
   }
   return Array.from(new Set(rows));
 }

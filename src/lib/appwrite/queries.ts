@@ -2,7 +2,7 @@
 
 import { Query, ID, type Models } from "appwrite";
 import { databases, DATABASE_ID, client } from "./client";
-import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc, type IbkrAccount, type QuantReport, type Market } from "./schema";
+import { COLLECTIONS, type Agent, type Cluster, type AgentEvent, type Filing, type Memo, type Position, type Trade, type OperatorMessage, type GovernanceEvent, type BudgetLedger, type Scenario, type FundSnapshot, type RiskLimits, type AuditLog, type AgentCommand, type AgentStatusDoc, type IbkrAccount, type QuantReport, type Market, isFundPosition } from "./schema";
 
 /**
  * Market filter. When a desk is passed we constrain to that desk's rows.
@@ -90,13 +90,38 @@ export async function listMemos(limit = 6, market?: Market): Promise<Memo[]> {
   return res.documents;
 }
 
-export async function listPositions(limit = 25, market?: Market): Promise<Position[]> {
+/** The fund's own book: the desk's paper positions. */
+export async function listFundPositions(limit = 25, market?: Market): Promise<Position[]> {
   const res = await databases.listDocuments<Position & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.positions,
+    [
+      ...marketFilter(market),
+      // Legacy advisory rows still in `positions` carry one of these.
+      Query.isNull("horizon_source"),
+      Query.isNull("ibkr_account_id"),
+      Query.isNull("kite_account_id"),
+      Query.orderDesc("market_value"),
+      Query.limit(limit),
+    ],
+  );
+  return res.documents.filter(isFundPosition).map((p) => ({ ...p, book: "fund" as const }));
+}
+
+/** The advisory book: the operator's real holdings, synced from Horizon or IBKR. */
+export async function listAdvisoryPositions(limit = 25, market?: Market): Promise<Position[]> {
+  const res = await databases.listDocuments<Position & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.advisory_positions,
     [...marketFilter(market), Query.orderDesc("market_value"), Query.limit(limit)],
   );
-  return res.documents;
+  return res.documents.map((p) => ({ ...p, book: "advisory" as const }));
+}
+
+/** Both books, largest first, each row tagged with its `book`. */
+export async function listPositions(limit = 25, market?: Market): Promise<Position[]> {
+  const [fund, advisory] = await Promise.all([listFundPositions(limit, market), listAdvisoryPositions(limit, market)]);
+  return [...fund, ...advisory].sort((a, b) => b.market_value - a.market_value).slice(0, limit);
 }
 
 export async function listPendingTrades(limit = 10, market?: Market): Promise<Trade[]> {

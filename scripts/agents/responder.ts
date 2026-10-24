@@ -18,6 +18,7 @@
  *   - Survives transient errors by logging and continuing.
  */
 import { db, DB, ID, Query, recordSpend } from "./appwrite";
+import { isFundPosition } from "../../src/lib/appwrite/schema";
 import { ask } from "./llm";
 import { loadPrompt } from "./prompts";
 
@@ -56,6 +57,9 @@ type Position = {
   unrealized_pnl: number;
   weight: number;
   market?: "US" | "IN" | null;
+  ibkr_account_id?: string | null;
+  kite_account_id?: string | null;
+  horizon_source?: string | null;
 };
 
 type GovernanceEvent = {
@@ -158,27 +162,36 @@ async function snapshot(market: Market): Promise<string> {
     lines.push(`Recent memos: (fetch failed: ${(err as Error).message})`);
   }
 
-  try {
-    const positions = await db.listDocuments(DB, "positions", [
-      Query.orderDesc("market_value"),
-      Query.limit(40),
-    ]);
-    const docs = (positions.documents as unknown as Position[]).filter((p) => inMarket(p, market));
-    if (docs.length) {
-      const totalMv = docs.reduce((s, p) => s + (p.market_value || 0), 0);
-      const totalPnl = docs.reduce((s, p) => s + (p.unrealized_pnl || 0), 0);
-      const ccy = market === "IN" ? "₹" : "$";
-      lines.push(`Positions (${docs.length}, MV ${ccy}${totalMv.toFixed(0)}, uPnL ${ccy}${totalPnl.toFixed(0)}):`);
-      for (const p of docs.slice(0, 6)) {
-        lines.push(
-          `  - ${p.ticker} qty ${p.qty} · MV ${ccy}${(p.market_value || 0).toFixed(0)} · w ${(p.weight * 100).toFixed(2)}% · uPnL ${ccy}${(p.unrealized_pnl || 0).toFixed(0)}`,
-        );
+  // Two books: the fund's own (positions it trades) and the operator's
+  // advisory book (real holdings it only advises on). Never summed.
+  const ccy = market === "IN" ? "₹" : "$";
+  const books = [
+    { name: "Fund book", col: "positions", keep: isFundPosition },
+    { name: "Advisory book (operator's holdings)", col: "advisory_positions", keep: () => true },
+  ];
+  for (const book of books) {
+    try {
+      const positions = await db.listDocuments(DB, book.col, [
+        Query.equal("market", market),
+        Query.orderDesc("market_value"),
+        Query.limit(40),
+      ]);
+      const docs = (positions.documents as unknown as Position[]).filter(book.keep);
+      if (docs.length) {
+        const totalMv = docs.reduce((s, p) => s + (p.market_value || 0), 0);
+        const totalPnl = docs.reduce((s, p) => s + (p.unrealized_pnl || 0), 0);
+        lines.push(`${book.name} (${docs.length}, MV ${ccy}${totalMv.toFixed(0)}, uPnL ${ccy}${totalPnl.toFixed(0)}):`);
+        for (const p of docs.slice(0, 6)) {
+          lines.push(
+            `  - ${p.ticker} qty ${p.qty} · MV ${ccy}${(p.market_value || 0).toFixed(0)} · w ${(p.weight * 100).toFixed(2)}% · uPnL ${ccy}${(p.unrealized_pnl || 0).toFixed(0)}`,
+          );
+        }
+      } else {
+        lines.push(`${book.name}: nothing on the ${market} desk yet`);
       }
-    } else {
-      lines.push(`Positions: none on the ${market} desk yet`);
+    } catch (err) {
+      lines.push(`${book.name}: (fetch failed: ${(err as Error).message})`);
     }
-  } catch (err) {
-    lines.push(`Positions: (fetch failed: ${(err as Error).message})`);
   }
 
   try {

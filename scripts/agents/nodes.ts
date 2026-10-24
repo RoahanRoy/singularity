@@ -23,7 +23,7 @@ import { fetchRiskFree } from "./market-data";
 import { indexDoc, recallPrior, formatRecall } from "./recall";
 import { getMandate, deployableThisCycle, debitCash } from "../../src/lib/fund/mandate";
 import { checkCircuitBreaker } from "./circuit-breaker";
-import { markFundBook, fundRows } from "./fund-book";
+import { markFundBook, fundRows, isFundRow, type FundRow } from "./fund-book";
 import { sectorOf, indiaSectorOf, sectorFromIndustry, type Sector } from "./universe";
 import { bootstrapQuant, type QuantCtx } from "./quant-nodes";
 
@@ -1013,10 +1013,12 @@ export async function compliance(ctx: Ctx): Promise<Ctx> {
   const ticker = ctx.ticker.toUpperCase();
   await setStatus(id, "thinking");
 
-  const [restricted, held, sells] = await Promise.all([
+  const [restricted, held, advisory, sells] = await Promise.all([
     db.listDocuments(DB, "restricted_list", [Query.equal("market", market), Query.equal("ticker", ticker), Query.limit(1)])
       .then((r) => r.documents[0] ?? null, (err: Error) => err),
     db.listDocuments(DB, "positions", [Query.equal("ticker", ticker), Query.limit(1)])
+      .then((r) => r.documents[0] ?? null, (err: Error) => err),
+    db.listDocuments(DB, "advisory_positions", [Query.equal("market", market), Query.equal("ticker", ticker), Query.limit(1)])
       .then((r) => r.documents[0] ?? null, (err: Error) => err),
     db.listDocuments(DB, "trades", [Query.equal("ticker", ticker), Query.equal("market", market), Query.orderDesc("$createdAt"), Query.limit(50)])
       .then((r) => r.documents, (err: Error) => err),
@@ -1029,13 +1031,17 @@ export async function compliance(ctx: Ctx): Promise<Ctx> {
 
   if (held instanceof Error) {
     hard.push(`Prior position: could not be read (${held.message}) — failing closed`);
-  } else if (held && (held.horizon_source || held.ibkr_account_id || held.kite_account_id)) {
-    hard.push(`Book of record: ${ticker} is held on the advisory book (${held.horizon_source || "broker"}); a fund fill can't be booked beside it`);
+  } else if (held && !isFundRow(held as unknown as FundRow)) {
+    // A legacy advisory row from before the books were split; `positions`
+    // allows one row per ticker, so the fund can't open one beside it.
+    hard.push(`Book of record: a legacy advisory row (${held.horizon_source || "broker"}) still holds ${ticker} in positions; a fund fill can't be booked beside it`);
   } else if (held) {
     flags.push(`Prior position: fund book holds ${held.qty} sh at ${held.avg_cost} avg cost`);
   } else {
     flags.push("Prior position: none on the fund book");
   }
+  if (advisory instanceof Error) flags.push(`Advisory book: could not be read (${advisory.message})`);
+  else if (advisory) flags.push(`Advisory book: the operator holds ${advisory.qty} ${ticker} (${advisory.horizon_source || "broker"})`);
 
   if (sells instanceof Error) {
     flags.push(`Wash sale: trade history unreadable (${sells.message})`);

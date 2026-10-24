@@ -671,6 +671,114 @@
             ]
         },
         {
+            "$id": "advisory_positions",
+            "databaseId": "meridian",
+            "name": "advisory_positions",
+            "enabled": true,
+            "documentSecurity": false,
+            "$permissions": [
+                "read(\"users\")"
+            ],
+            "attributes": [
+                {
+                    "key": "ticker",
+                    "type": "string",
+                    "size": 16,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "qty",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "avg_cost",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "market_value",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "unrealized_pnl",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "weight",
+                    "type": "double",
+                    "required": true,
+                    "array": false
+                },
+                {
+                    "key": "factor_exposures_json",
+                    "type": "string",
+                    "size": 4096,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "market",
+                    "type": "string",
+                    "size": 4,
+                    "required": true,
+                    "array": false,
+                    "encrypt": false,
+                    "default": null
+                },
+                {
+                    "key": "ibkr_account_id",
+                    "type": "string",
+                    "size": 64,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "horizon_source",
+                    "type": "string",
+                    "size": 64,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                },
+                {
+                    "key": "label",
+                    "type": "string",
+                    "size": 128,
+                    "required": false,
+                    "array": false,
+                    "encrypt": false
+                }
+            ],
+            "indexes": [
+                {
+                    "key": "by_market_ticker",
+                    "type": "unique",
+                    "attributes": [
+                        "market",
+                        "ticker"
+                    ]
+                },
+                {
+                    "key": "by_market",
+                    "type": "key",
+                    "attributes": [
+                        "market"
+                    ]
+                }
+            ]
+        },
+        {
             "$id": "trades",
             "databaseId": "meridian",
             "name": "trades",

@@ -7,11 +7,13 @@
  * machinery (Yahoo history, univariate betas, NAV reconstruction, pnl fix,
  * scenario seeding) is identical across markets.
  *
- * For each position in the config's market it:
+ * For each position in the config's market — on the advisory book
+ * (`advisory_positions`) and the fund's own book (fund rows of `positions`) — it:
  *   1. pulls ~1y of daily closes for the holding + factor proxies,
  *   2. computes univariate betas (cov/var on daily returns) → factor_exposures_json,
- *   3. reconstructs the book's NAV series over the window where ALL holdings have
- *      history (qty held constant) and appends the missing daily snapshots,
+ *   3. reconstructs the advisory book's NAV series over the window where ALL its
+ *      holdings have history (qty held constant) and appends the missing daily
+ *      snapshots,
  *   4. corrects the latest snapshot's pnl_daily to a real day-over-day delta,
  *   5. seeds the market's stress scenarios if none exist.
  *
@@ -130,7 +132,7 @@ function closeAtOrBefore(bars: Bar[], date: string): number | null {
 
 // ── runner ────────────────────────────────────────────────────────────────────
 
-type PosDoc = { $id: string; ticker: string; qty: number };
+type PosDoc = { $id: string; ticker: string; qty: number; col: "advisory_positions" | "positions" };
 
 export async function runEnrichment(
   databases: Databases,
@@ -143,8 +145,21 @@ export async function runEnrichment(
     windowStart: null, scenariosSeeded: 0, pnlCorrected: false,
   };
 
-  const posRes = await databases.listDocuments(dbId, "positions", [Query.equal("market", cfg.market), Query.limit(200)]);
-  const positions = posRes.documents as unknown as PosDoc[];
+  const [advRes, fundRes] = await Promise.all([
+    databases.listDocuments(dbId, "advisory_positions", [Query.equal("market", cfg.market), Query.limit(200)]),
+    databases.listDocuments(dbId, "positions", [
+      Query.equal("market", cfg.market),
+      // Fund rows only: legacy advisory rows left in `positions` carry one of these.
+      Query.isNull("horizon_source"),
+      Query.isNull("ibkr_account_id"),
+      Query.isNull("kite_account_id"),
+      Query.limit(200),
+    ]),
+  ]);
+  const positions: PosDoc[] = [
+    ...(advRes.documents as unknown as PosDoc[]).map((p) => ({ ...p, col: "advisory_positions" as const })),
+    ...(fundRes.documents as unknown as PosDoc[]).map((p) => ({ ...p, col: "positions" as const })),
+  ];
   summary.holdings = positions.length;
 
   if (positions.length === 0) {
@@ -184,7 +199,7 @@ export async function runEnrichment(
       const { ra, rb } = alignedReturns(bars, fb);
       return [{ factor: f.key, beta: Number(beta(ra, rb).toFixed(3)) }];
     });
-    await databases.updateDocument(dbId, "positions", p.$id, {
+    await databases.updateDocument(dbId, p.col, p.$id, {
       factor_exposures_json: JSON.stringify(exposures),
     });
     summary.betasWritten++;
@@ -192,7 +207,7 @@ export async function runEnrichment(
   log(`betas written: ${summary.betasWritten}`);
 
   // 3) Reconstruct + append NAV snapshots.
-  await reconstructSnapshots(databases, dbId, cfg, positions, holdingBars, summary, log);
+  await reconstructSnapshots(databases, dbId, cfg, positions.filter((p) => p.col === "advisory_positions"), holdingBars, summary, log);
 
   // 4) Correct the latest snapshot's pnl_daily to a real session delta.
   summary.pnlCorrected = await correctLatestPnl(databases, dbId, cfg, log);
