@@ -21,11 +21,12 @@ import { fetchTranscript } from "./transcript";
 import { getQuote } from "./quotes";
 import { fetchRiskFree } from "./market-data";
 import { indexDoc, recallPrior, formatRecall } from "./recall";
-import { getMandate, deployableCash, debitCash } from "../../src/lib/fund/mandate";
-import { checkCircuitBreaker } from "./circuit-breaker";
-import { markFundBook, fundRows, isFundRow, type FundRow } from "./fund-book";
+import { getMandate, deployableCash } from "../../src/lib/fund/mandate";
+import { fillPaperTrade, coreHolding } from "./paper-book";
+import { markFundBook, isFundRow, type FundRow } from "./fund-book";
 import { measureTrade } from "./risk-budget";
 import { gateTrade, largestAdd } from "../../src/lib/fund/risk-budget";
+import { DESK_INDEX } from "../../src/lib/market/indices";
 import { sectorOf, indiaSectorOf, sectorFromIndustry, type Sector } from "./universe";
 import { bootstrapQuant, type QuantCtx } from "./quant-nodes";
 
@@ -136,10 +137,10 @@ export type Ctx = {
   };
   financing?: {
     approved: boolean;
-    funding_source: "cash";
+    funding_source: "cash" | "cash + index core";
     /** Notional at the arrival quote, in the desk's currency. */
     notional: number;
-    /** Cash the trade can draw on: the mandate's undeployed balance. */
+    /** What the trade can draw on: the mandate's undeployed cash plus the index core at a live quote. */
     deployable: number;
     /** Annual opportunity cost of the cash at the measured short rate; null when the rate is unmeasured. */
     est_financing_bps: number | null;
@@ -400,7 +401,6 @@ export async function parser(ctx: Ctx): Promise<Ctx> {
 
 // Internals exported for unit testing / future composition.
 export const _filingPipeline = { edgarReader, summarize, indexFiling, findFiling };
-export const _paperBook = { bookPaperBuy, fillPaperTrade };
 
 // 2. Sector Analyst ---------------------------------------------------------
 //
@@ -821,7 +821,8 @@ export async function pm(ctx: Ctx): Promise<Ctx> {
   if (price == null) return stage(ctx, id, `no live quote for ${ctx.ticker}, nothing to size against`);
   const arrival = { price, at: new Date().toISOString() };
   // The cap is the largest weight the risk budget clears (lib/fund/risk-budget.ts),
-  // measured on the fund book at live marks; spending is capped at its cash.
+  // measured on the fund book at live marks; spending is capped at its cash
+  // plus the index core it sells past cash.
   const m = await measureTrade(market, ctx.ticker, price).catch((err: Error) => ({ ok: false as const, reason: err.message }));
   if (!m.ok) return stage(ctx, id, m.reason);
   const nav = m.nav;
@@ -831,7 +832,7 @@ export async function pm(ctx: Ctx): Promise<Ctx> {
     teBefore: m.before.tracking_error,
     nameWeightBefore: m.nameWeightBefore,
     nameActiveVol: m.nameActiveVol,
-    wMax: Math.max(0, m.cash) / nav,
+    wMax: (Math.max(0, m.cash) + m.coreValue) / nav,
   });
   const cap = Math.floor(capWeight * 10_000) / 100;
   const pctOf = (x: number) => `${(x * 100).toFixed(2)}%`;
@@ -843,8 +844,8 @@ Critic score: ${ctx.critique?.score}
 Quant signal: ${ctx.signal ? `${ctx.signal.direction} ${ctx.signal.score} (conf ${ctx.signal.confidence})` : "n/a"}
 Valuation: ${ctx.valuation ? `${ctx.valuation.verdict}, ${ctx.valuation.implied_upside_pct?.toFixed(1)}% upside` : "n/a"}
 IC decision: approve (conviction ${ctx.ic?.conviction ?? "n/a"}, soft weight ceiling ${ctx.ic?.target_weight_hint_pct ?? "n/a"}%)
-NAV: ${nav} (fund book: cash ${m.cash} + positions, live marks)
-Name weight cap: ${cap}% to add (the most that keeps the book within its ${pctOf(target)} tracking-error budget vs the ${m.index}: book TE now ${pctOf(m.before.tracking_error)}, ${ctx.ticker} held at ${pctOf(m.nameWeightBefore)} with ${pctOf(m.nameActiveVol)} active vol; within cash)
+NAV: ${nav} (fund book: cash ${m.cash} + positions, live marks; buys past cash sell the ${m.core} index core, held ${m.coreValue})
+Name weight cap: ${cap}% to add (the most that keeps the book within its ${pctOf(target)} tracking-error budget vs the ${m.index}: book TE now ${pctOf(m.before.tracking_error)}, ${ctx.ticker} held at ${pctOf(m.nameWeightBefore)} with ${pctOf(m.nameActiveVol)} active vol; within cash and core)
 Action floor: ${ACTION_FLOOR} · full size at: ${FULL_SIZE_AT}
 Price: ${price} (live quote)`,
     label: `pm:${ctx.ticker}`,
@@ -864,11 +865,12 @@ Price: ${price} (live quote)`,
 
 // 4b. Treasury / Financing --------------------------------------------------
 //
-// In code. The fund is long-only and funded from the mandate's cash: no margin,
-// no borrow. Treasury checks the sized trade against the mandate's undeployed
-// cash and prices the cash at the measured short rate (its opportunity
-// cost). No mandate, a paused mandate, or too little cash for one share blocks
-// here, before risk and execution see it. No view on the thesis.
+// In code. The fund is long-only and funded from the mandate's cash, then by
+// selling its index core (paper-book.ts): no margin, no borrow. Treasury
+// checks the sized trade against the two and prices the cash at the measured
+// short rate (its opportunity cost). No mandate, a paused mandate, or too
+// little of both for one share blocks here, before risk and execution see it.
+// No view on the thesis.
 export async function treasury(ctx: Ctx): Promise<Ctx> {
   if (!ctx.size || ctx.size.qty === 0) return ctx;
 
@@ -876,13 +878,17 @@ export async function treasury(ctx: Ctx): Promise<Ctx> {
   const market = ctx.market ?? "US";
   await setStatus(id, "thinking");
 
-  const [mandate, rf] = await Promise.all([
+  const [mandate, rf, core] = await Promise.all([
     getMandate(db, DB, market).catch(() => null),
     fetchRiskFree(market).then((r) => r.short).catch(() => null),
+    coreHolding(market).catch(() => null),
   ]);
   const price = ctx.size.arrival?.price ?? 0;
   const notional = Number((ctx.size.qty * price).toFixed(2));
-  const deployable = Number(deployableCash(mandate).toFixed(2));
+  const cash = Number(deployableCash(mandate).toFixed(2));
+  const coreValue = mandate && core ? Number((core.qty * core.price).toFixed(2)) : 0;
+  const deployable = Number((cash + coreValue).toFixed(2));
+  const fromCore = notional > cash && coreValue > 0;
   // An unmeasured rate (FRED down, env/default stand-in) is not a cost of cash.
   const bps = rf && !rf.assumption ? Math.round(rf.value * 10_000 * 10) / 10 : null;
   const rate = bps == null ? `short rate unmeasured${rf ? ` (${rf.source})` : ""}` : `${bps}bps/yr at ${rf!.source}`;
@@ -891,21 +897,24 @@ export async function treasury(ctx: Ctx): Promise<Ctx> {
   if (!(price > 0)) block = "no arrival quote to price the trade";
   else if (!mandate) block = `no ${market} fund mandate — no cash to fund from`;
   else if (mandate.status !== "active") block = `${market} mandate is ${mandate.status}`;
-  else if (deployable < price) block = `deployable cash ${deployable} is below one share (${price})`;
+  else if (deployable < price) block = `cash ${cash} plus index core ${coreValue} is below one share (${price})`;
 
   const capped = !block && notional > deployable
-    ? ` Fill will be capped to ${Math.floor(deployable / price)} sh by cash.`
+    ? ` Fill will be capped to ${Math.floor(deployable / price)} sh by cash and core.`
     : "";
+  const source = fromCore
+    ? `${cash} cash, the rest from ${DESK_INDEX[market].etf} (${core!.qty} sh at ${core!.price})`
+    : "cash";
   const f: NonNullable<Ctx["financing"]> = {
     approved: !block,
-    funding_source: "cash",
+    funding_source: fromCore ? "cash + index core" : "cash",
     notional,
     deployable,
     est_financing_bps: bps,
-    notes: block ?? `Cash-funded: notional ${notional} against ${deployable} deployable; cost of cash ${rate}.${capped}`,
+    notes: block ?? `Funded from ${source}: notional ${notional} against ${deployable} deployable; cost of cash ${rate}.${capped}`,
   };
   await emit(id, f.approved ? "thought" : "alert",
-    `Financing ${f.approved ? "OK" : "BLOCK"} ${ctx.ticker} — ${block ?? `cash, ${bps == null ? "rate unmeasured" : `${bps}bps/yr`}`}`, f);
+    `Financing ${f.approved ? "OK" : "BLOCK"} ${ctx.ticker} — ${block ?? `${f.funding_source}, ${bps == null ? "rate unmeasured" : `${bps}bps/yr`}`}`, f);
   await setStatus(id, "idle");
   return { ...ctx, financing: f };
 }
@@ -958,8 +967,9 @@ export async function risk(ctx: Ctx): Promise<Ctx> {
 // The risk officer gates the trade against the risk budget; these checks are
 // the fund's structure, on the whole fund book (fund-book.ts: mandate cash +
 // paper positions at live marks — never the advisory Horizon book), in code,
-// between sizing and execution: the book is cash-funded, so the buy must fit
-// in its cash (gross stays at or under 100% of NAV, no margin), and every held
+// between sizing and execution: the book is funded from cash and its index
+// core, so the buy must fit in the two (gross stays at or under 100% of NAV,
+// no margin), and every held
 // name must carry a live quote this session. Every decision — allow or block —
 // is written to audit_log so the operator has an immutable paper trail. A book
 // that can't be marked blocks.
@@ -982,8 +992,11 @@ export async function riskOverlay(ctx: Ctx): Promise<Ctx> {
     const ticker = ctx.ticker.toUpperCase();
     const existing = book.names.find((n) => n.ticker.toUpperCase() === ticker);
     proposedWeight = (((existing?.mv ?? 0) + notional) / book.equity) * 100;
-    projectedGross = ((book.mv + notional) / book.equity) * 100;
-    if (notional > book.cash) breaches.push(`notional ${notional.toFixed(2)} is over the book's cash ${book.cash.toFixed(2)} (gross ${projectedGross.toFixed(1)}%, no margin)`);
+    // Core shares sold to fund the buy leave gross where it was.
+    const coreMv = book.names.find((n) => n.ticker.toUpperCase() === DESK_INDEX[market].etf)?.mv ?? 0;
+    const fromCore = Math.min(coreMv, Math.max(0, notional - book.cash));
+    projectedGross = ((book.mv + notional - fromCore) / book.equity) * 100;
+    if (notional > book.cash + coreMv) breaches.push(`notional ${notional.toFixed(2)} is over the book's cash ${book.cash.toFixed(2)} plus index core ${coreMv.toFixed(2)} (gross ${projectedGross.toFixed(1)}%, no margin)`);
     if (book.unpriced_pct > 0) breaches.push(`${book.unpriced_pct}% of the book has no live quote this session`);
   }
   const varPct = ctx.risk.var_pct;
@@ -1126,143 +1139,10 @@ export async function smartRouter(ctx: Ctx): Promise<Ctx> {
 //
 // Fills a compliance-cleared BUY at a real quote (no quote, no fill: the order
 // is held for a later cycle or the operator) and books it into the fund book
-// (fund-book.ts) — positions rows with no brokerage account id and no
-// horizon_source, which a Horizon/IBKR sync never touches.
+// (paper-book.ts), funded from cash and then the index core.
 
-/**
- * Book a paper BUY: add to (or open) the ticker's fund position at `price`,
- * then restate every fund position's weight as its share of fund NAV
- * (`cash`, the mandate's cash after this fill, plus the positions).
- */
-async function bookPaperBuy(ticker: string, qty: number, price: number, market: "US" | "IN", cash: number): Promise<void> {
-  const book = await fundRows(market);
-  const existing = book.find((p) => p.ticker.toUpperCase() === ticker.toUpperCase());
-
-  if (existing) {
-    const newQty = existing.qty + qty;
-    const newAvg = newQty > 0 ? (existing.qty * existing.avg_cost + qty * price) / newQty : price;
-    existing.qty = newQty;
-    existing.avg_cost = newAvg;
-    existing.market_value = newQty * price;
-    await db.updateDocument(DB, "positions", existing.$id, {
-      qty: newQty,
-      avg_cost: Number(newAvg.toFixed(4)),
-      market_value: Number((newQty * price).toFixed(2)),
-      unrealized_pnl: Number(((price - newAvg) * newQty).toFixed(2)),
-    });
-  } else {
-    const created = await db.createDocument(DB, "positions", ID.unique(), {
-      ticker: ticker.toUpperCase(),
-      qty,
-      avg_cost: Number(price.toFixed(4)),
-      market_value: Number((qty * price).toFixed(2)),
-      unrealized_pnl: 0,
-      weight: 0, // set by the renormalise pass below
-      factor_exposures_json: null,
-      market,
-    });
-    book.push({ $id: created.$id, ticker, qty, avg_cost: price, market_value: qty * price });
-  }
-
-  // Weights as fractions (0..1) of fund NAV. Small book, so writing each row
-  // per fill is cheap.
-  const nav = cash + book.reduce((s, p) => s + Math.abs(p.market_value), 0);
-  if (!(nav > 0)) return;
-  await Promise.all(
-    book.map((p) =>
-      db.updateDocument(DB, "positions", p.$id, {
-        weight: Number((p.market_value / nav).toFixed(6)),
-      }).catch(() => {}),
-    ),
-  );
-}
-
-/**
- * Record a paper BUY fill: a live quote, a trades row, and the paper-book
- * update. Without a live quote nothing fills (`unquoted`), so the caller holds
- * the order rather than booking it at a made-up price. Shared by the auto-execute path and the operator-approved
- * execution path so both fill identically.
- *
- * When the desk has a from-scratch fund mandate, this is where its capital base
- * bites: the requested qty is capped to what the mandate's undeployed cash
- * buys, and the notional is debited from the mandate's cash on fill. `filled_qty === 0` means the fund is
- * out of deployable cash — no trade is booked and the caller should hold the
- * order for a later cycle.
- *
- * The circuit breaker runs first, ahead of any quote or write: a non-null
- * `halted` means the desk's loss/drawdown limits (or an unmarkable book) have
- * stopped new fills, or there is no fund mandate to fill against — nothing is
- * booked and the caller must not retry blindly.
- */
-async function fillPaperTrade(
-  input: { ticker: string; qty: number; market: "US" | "IN"; venue?: string | null; agentId: string },
-): Promise<{ id: string | null; fill_price: number; filled_qty: number; capped: boolean; halted: string | null; unquoted: boolean }> {
-  const { ticker, market } = input;
-
-  const breaker = await checkCircuitBreaker(market, input.agentId);
-  if (breaker.halted) {
-    const reason = `circuit breaker: ${breaker.reason ?? "halted"}`;
-    await writeAudit("circuit-breaker", "fill_blocked", ticker.toUpperCase(), "block",
-      `BUY ${input.qty} ${ticker.toUpperCase()} not filled: ${reason}`);
-    return { id: null, fill_price: 0, filled_qty: 0, capped: false, halted: reason, unquoted: false };
-  }
-
-  const quoted = await getQuote(ticker, market);
-  if (quoted == null) {
-    await writeAudit("broker", "fill_blocked", ticker.toUpperCase(), "block",
-      `BUY ${input.qty} ${ticker.toUpperCase()} not filled: no live quote`);
-    return { id: null, fill_price: 0, filled_qty: 0, capped: false, halted: null, unquoted: true };
-  }
-  const price = Number(quoted.toFixed(2));
-  const venue = input.venue ? `paper-${input.venue}` : "paper-IBKR";
-
-  // Mandate deployment gate. Cap the fill to the whole shares the mandate's
-  // undeployed cash buys. No mandate → no cash → no fill.
-  const mandate = await getMandate(db, DB, market).catch(() => null);
-  if (!mandate) {
-    const reason = `no ${market} fund mandate to fill against`;
-    await writeAudit("broker", "fill_blocked", ticker.toUpperCase(), "block",
-      `BUY ${input.qty} ${ticker.toUpperCase()} not filled: ${reason}`);
-    return { id: null, fill_price: price, filled_qty: 0, capped: false, halted: reason, unquoted: false };
-  }
-  let qty = input.qty;
-  let capped = false;
-  const affordable = Math.max(0, Math.floor(deployableCash(mandate) / price));
-  if (affordable < qty) { qty = affordable; capped = true; }
-  if (qty <= 0) {
-    return { id: null, fill_price: price, filled_qty: 0, capped: true, halted: null, unquoted: false };
-  }
-
-  const trade = await db.createDocument(DB, "trades", ID.unique(), {
-    ticker: ticker.toUpperCase(),
-    side: "buy",
-    qty,
-    price,
-    venue: venue.slice(0, 32),
-    agent_id: input.agentId,
-    status: "filled",
-    filled_at: new Date().toISOString(),
-    market,
-  });
-
-  // Reflect the fill in the paper book. Best-effort: a booking failure must not
-  // undo a recorded fill, so we log and continue.
-  try {
-    await bookPaperBuy(ticker, qty, price, market, Math.max(0, mandate.cash - qty * price));
-  } catch (err) {
-    console.warn(`[broker] paper book update failed for ${ticker}:`, (err as Error).message);
-  }
-
-  // Debit deployed capital from the mandate. Best-effort: the fill is already
-  // real, so a debit failure is logged, not unwound.
-  try {
-    await debitCash(db, DB, mandate, Number((qty * price).toFixed(2)));
-  } catch (err) {
-    console.warn(`[broker] cash debit failed for ${ticker}:`, (err as Error).message);
-  }
-
-  return { id: trade.$id, fill_price: price, filled_qty: qty, capped, halted: null, unquoted: false };
-}
+const coreNote = (f: { core_sold: number }, market: "US" | "IN") =>
+  f.core_sold > 0 ? `, funded in part by selling ${f.core_sold} ${DESK_INDEX[market].etf}` : "";
 
 export async function broker(ctx: Ctx): Promise<Ctx> {
   const id = ctx.agentIds.broker;
@@ -1316,7 +1196,7 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
         ? `HOLD BUY ${qty} ${ctx.ticker} — ${f.halted}`
         : f.unquoted
           ? `HOLD BUY ${qty} ${ctx.ticker} — no live quote, nothing filled`
-          : `HOLD BUY ${qty} ${ctx.ticker} — fund out of undeployed cash`,
+          : `HOLD BUY ${qty} ${ctx.ticker} — fund out of cash and index core`,
       { memo_id: ctx.memoId, halted: f.halted });
     await setStatus(id, "idle");
     return ctx;
@@ -1326,10 +1206,10 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
     await db.updateDocument(DB, "memos", ctx.memoId, { status: "executed", pending_exec_json: null });
   }
   await writeAudit("broker", "auto_execution", ctx.ticker, "allow",
-    `Auto-approved fill: BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price}${f.capped ? ` (capped from ${qty})` : ""}`);
+    `Auto-approved fill: BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price}${f.capped ? ` (capped from ${qty})` : ""}${coreNote(f, market)}`);
   await emit(id, "trade",
-    `FILL BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price.toFixed(2)}${f.capped ? ` (capped from ${qty} by mandate cash)` : ""} via ${ctx.route?.algo ?? "default"}`,
-    { trade_id: f.id, route: ctx.route, filled_qty: f.filled_qty, requested_qty: qty });
+    `FILL BUY ${f.filled_qty} ${ctx.ticker} @ ${f.fill_price.toFixed(2)}${f.capped ? ` (capped from ${qty} by cash and core)` : ""}${coreNote(f, market)} via ${ctx.route?.algo ?? "default"}`,
+    { trade_id: f.id, route: ctx.route, filled_qty: f.filled_qty, requested_qty: qty, core_sold: f.core_sold, core_trade_id: f.core_trade_id });
   await setStatus(id, "idle");
   return { ...ctx, trade: { id: f.id, status: "filled", fill_price: f.fill_price } };
 }
@@ -1380,17 +1260,17 @@ async function executeApproved(memo: ApprovableMemo, agentIds: Record<string, st
   // intact) so the next sweep retries. Nothing booked.
   if (!f.id || f.filled_qty === 0) {
     await emit(id, "handoff",
-      `HOLD approved BUY ${qty} ${memo.ticker} — ${f.unquoted ? "no live quote" : "fund out of deployable cash"}`, { memo_id: memo.$id });
+      `HOLD approved BUY ${qty} ${memo.ticker} — ${f.unquoted ? "no live quote" : "fund out of cash and index core"}`, { memo_id: memo.$id });
     await setStatus(id, "idle");
     return false;
   }
 
   await db.updateDocument(DB, "memos", memo.$id, { status: "executed", pending_exec_json: null });
   await writeAudit("broker", "approved_execution", memo.ticker, "allow",
-    `Operator-approved fill: BUY ${f.filled_qty} ${memo.ticker} @ ${f.fill_price}${f.capped ? ` (capped from ${qty})` : ""}`);
+    `Operator-approved fill: BUY ${f.filled_qty} ${memo.ticker} @ ${f.fill_price}${f.capped ? ` (capped from ${qty})` : ""}${coreNote(f, market)}`);
   await emit(id, "trade",
-    `APPROVED FILL BUY ${f.filled_qty} ${memo.ticker} @ ${f.fill_price.toFixed(2)}${f.capped ? ` (capped from ${qty})` : ""}`,
-    { trade_id: f.id, memo_id: memo.$id, filled_qty: f.filled_qty, requested_qty: qty });
+    `APPROVED FILL BUY ${f.filled_qty} ${memo.ticker} @ ${f.fill_price.toFixed(2)}${f.capped ? ` (capped from ${qty})` : ""}${coreNote(f, market)}`,
+    { trade_id: f.id, memo_id: memo.$id, filled_qty: f.filled_qty, requested_qty: qty, core_sold: f.core_sold, core_trade_id: f.core_trade_id });
   await setStatus(id, "idle");
   await recordTca({
     agentId: agentIds.tca, tradeId: f.id, ticker: memo.ticker, qty: f.filled_qty, fillPrice: f.fill_price,

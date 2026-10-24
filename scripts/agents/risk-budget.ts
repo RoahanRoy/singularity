@@ -6,7 +6,9 @@
  *
  * `measureTrade` marks the fund book (fund-book.ts), pulls each name's daily
  * history and runs the portfolio risk engine on the book as it is and with the
- * trade added. Anything it can't measure stages the trade rather than guess:
+ * trade added — funded from cash, then by selling the index core, as the
+ * paper broker fills it (paper-book.ts). Anything it can't measure stages the
+ * trade rather than guess:
  * no budget, a held name without a live quote, a held or traded name without a
  * full window of history, no index history.
  */
@@ -35,12 +37,15 @@ export type TradeRisk =
       budget: RiskBudget;
       nav: number;
       cash: number;
+      /** The index core's ETF and its value held at a live mark (0 when none is held). */
+      core: string;
+      coreValue: number;
       index: string;
       before: PortfolioRisk;
       /** The name's weight in NAV before the trade and its active vol (annual). */
       nameWeightBefore: number;
       nameActiveVol: number;
-      /** The book's risk report with `add` (a weight of NAV) bought at `price`. */
+      /** The book's risk report with `add` (a weight of NAV) bought at `price`, past cash out of the core. */
       after: (add: number) => PortfolioRisk;
     };
 
@@ -59,8 +64,15 @@ export async function measureTrade(market: Market, ticker: string, price: number
   if (!hist) return { ok: false, reason: `no ${DESK_INDEX[market].symbol} history` };
 
   const nav = book.equity;
+  const core = DESK_INDEX[market].etf;
+  const coreHeld = t === core ? undefined : hist.holdings.find((h) => h.ticker === core && h.qty > 0);
+  const coreValue = coreHeld ? coreHeld.qty * coreHeld.price : 0;
   const at = (add: number) => {
-    const holdings = hist.holdings.map((h) => (h.ticker === t ? { ...h, qty: h.qty + (add * nav) / price, price } : h));
+    const fromCore = Math.min(coreValue, Math.max(0, add * nav - book.cash));
+    const holdings = hist.holdings.map((h) =>
+      h.ticker === t ? { ...h, qty: h.qty + (add * nav) / price, price }
+        : h === coreHeld ? { ...h, qty: h.qty - fromCore / h.price } : h,
+    );
     return measure(nav, holdings, hist.index);
   };
   const before = at(0);
@@ -76,6 +88,8 @@ export async function measureTrade(market: Market, ticker: string, price: number
     budget,
     nav,
     cash: book.cash,
+    core,
+    coreValue: Number(coreValue.toFixed(2)),
     index: DESK_INDEX[market].name,
     before,
     nameWeightBefore: name.weight,

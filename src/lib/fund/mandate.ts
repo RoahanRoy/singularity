@@ -101,3 +101,15 @@ export async function debitCash(
   await db.updateDocument(dbId, COLLECTIONS.fund_mandate, mandate.$id, { cash: next });
   return next;
 }
+
+/** Credit a paper sell's proceeds to the mandate's undeployed cash. */
+export async function creditCash(
+  db: Databases,
+  dbId: string,
+  mandate: FundMandate,
+  amount: number,
+): Promise<number> {
+  const next = Number((mandate.cash + Math.max(0, amount)).toFixed(2));
+  await db.updateDocument(dbId, COLLECTIONS.fund_mandate, mandate.$id, { cash: next });
+  return next;
+}

@@ -5,15 +5,18 @@
  */
 import { db, DB, Query } from "./appwrite";
 import { SECTOR_UNIVERSE, INDIA_SECTOR_UNIVERSE } from "./universe";
+import { DESK_INDEX } from "../../src/lib/market/indices";
 
 export type Market = "US" | "IN";
 
 /**
  * Distinct tickers a desk holds: the fund's own book (`positions`) and the
  * operator's advisory book (`advisory_positions`). "MF:" rows are mutual funds
- * pulled from Horizon — they file and trade nothing.
+ * pulled from Horizon — they file and trade nothing — and the desk's index-core
+ * ETF (DESK_INDEX) is the index, not a name to research.
  */
 export async function heldTickers(market: Market): Promise<string[]> {
+  const core = DESK_INDEX[market].etf;
   const rows: string[] = [];
   for (const col of ["positions", "advisory_positions"]) {
     let cursor: string | undefined;
@@ -23,7 +26,7 @@ export async function heldTickers(market: Market): Promise<string[]> {
       const page = await db.listDocuments(DB, col, queries);
       for (const d of page.documents) {
         const t = String(d.ticker ?? "").trim().toUpperCase();
-        if (t && !t.startsWith("MF:")) rows.push(t);
+        if (t && !t.startsWith("MF:") && t !== core) rows.push(t);
       }
       if (page.documents.length < 100) break;
       cursor = page.documents[page.documents.length - 1].$id;

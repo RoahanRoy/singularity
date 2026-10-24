@@ -10,9 +10,10 @@
  *
  * Marks: a name with a live quote is marked at it. A name without one carries
  * its stored market value (its last mark) and counts toward `unpriced_pct`.
- * Day P&L marks shares held at the open from the prior close and shares bought
- * this session from their fill price; paper buys move cash into stock, so
- * start-of-day equity = equity − day P&L.
+ * Day P&L marks shares held at the open from the prior close, shares bought
+ * this session from their fill price and shares sold this session at their
+ * fill price; paper fills move cash and stock into each other, so start-of-day
+ * equity = equity − day P&L.
  */
 import { db, DB, Query } from "./appwrite";
 import { getQuoteDetail } from "./quotes";
@@ -115,44 +116,47 @@ export async function markFundBook(market: Market, now: Date = new Date()): Prom
     ]),
     getMandate(db, DB, market),
   ]);
-  const book = rows.filter((p) => p.qty > 0);
-
-  // Paper shares bought this session, per ticker — their day P&L runs from the
-  // fill price, not the prior close.
-  const today = new Map<string, { qty: number; cost: number }>();
+  // Paper fills this session, per ticker — their day P&L runs from the fill
+  // price, not the prior close.
+  const today = new Map<string, { bought: number; cost: number; sold: number; proceeds: number }>();
   for (const t of tradeRes.documents as unknown as TradeRow[]) {
-    if (t.side !== "buy" || t.status !== "filled" || !String(t.venue ?? "").startsWith("paper-")) continue;
+    if ((t.side !== "buy" && t.side !== "sell") || t.status !== "filled" || !String(t.venue ?? "").startsWith("paper-")) continue;
     if (!t.filled_at || exchangeDate(market, new Date(t.filled_at)) !== session) continue;
     const k = t.ticker.toUpperCase();
-    const agg = today.get(k) ?? { qty: 0, cost: 0 };
-    agg.qty += t.qty;
-    agg.cost += t.qty * t.price;
+    const agg = today.get(k) ?? { bought: 0, cost: 0, sold: 0, proceeds: 0 };
+    if (t.side === "buy") { agg.bought += t.qty; agg.cost += t.qty * t.price; }
+    else { agg.sold += t.qty; agg.proceeds += t.qty * t.price; }
     today.set(k, agg);
   }
+  // A name sold out this session still carries the day's P&L on what it sold.
+  const book = rows.filter((p) => p.qty > 0 || (today.get(p.ticker.toUpperCase())?.sold ?? 0) > 0);
 
   const quotes = await mapPool(book, QUOTE_CONCURRENCY, (p) => getQuoteDetail(p.ticker, market));
 
   let mv = 0;
   let dayPnl = 0;
   let unpriced = 0;
-  const names: FundName[] = book.map((p, i) => {
+  const marked: FundName[] = book.map((p, i) => {
     const q = quotes[i];
     if (!q || q.prevClose == null) {
       // No live mark: carry the stored value and contribute no P&L.
-      const stored = Math.abs(p.market_value ?? 0);
+      const stored = p.qty > 0 ? Math.abs(p.market_value ?? 0) : 0;
       mv += stored;
       unpriced += stored;
       return { ticker: p.ticker, qty: p.qty, price: null, mv: stored };
     }
-    const fills = today.get(p.ticker.toUpperCase());
-    const boughtToday = Math.min(fills?.qty ?? 0, p.qty);
-    const costToday = fills && fills.qty > 0 ? fills.cost * (boughtToday / fills.qty) : 0;
-    const heldAtOpen = p.qty - boughtToday;
+    const f = today.get(p.ticker.toUpperCase()) ?? { bought: 0, cost: 0, sold: 0, proceeds: 0 };
+    // Shares at the open = now − bought + sold. A fill history that doesn't
+    // reconcile with the row (more bought than it holds) counts what it holds.
+    const scale = f.bought > p.qty + f.sold ? (p.qty + f.sold) / f.bought : 1;
+    const bought = f.bought * scale;
+    const heldAtOpen = p.qty - bought + f.sold;
     const value = p.qty * q.price;
     mv += value;
-    dayPnl += heldAtOpen * (q.price - q.prevClose) + (boughtToday * q.price - costToday);
+    dayPnl += value - heldAtOpen * q.prevClose - f.cost * scale + f.proceeds;
     return { ticker: p.ticker, qty: p.qty, price: q.price, mv: value };
   });
+  const names = marked.filter((n) => n.qty > 0);
 
   const cash = mandate?.cash ?? 0;
   const equity = cash + mv;

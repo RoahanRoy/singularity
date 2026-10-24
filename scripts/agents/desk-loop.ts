@@ -55,7 +55,8 @@ import { heldTickers as heldOnBooks } from "./coverage";
 import { markFundNav } from "./fund-nav";
 import { reportRisk } from "./portfolio-risk";
 import { reportPlan } from "./construct";
-import { marketState } from "./market-hours";
+import { rebalanceCore } from "./core";
+import { exchangeDate, marketState } from "./market-hours";
 import { collectEvents, type EventHit, type LatestFilingKey } from "./events";
 import { hasMemo, nextIdea } from "./ideas";
 import { nextFlip } from "./flips";
@@ -191,6 +192,26 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     }
   }
 
+  // The fund's index core, traded to the session's plan once per session
+  // (core.ts): filled with MERIDIAN_AUTO_APPROVE=1, held for the operator
+  // otherwise. A session without a stored plan tries again next cycle.
+  let coreSession: string | null = null;
+  async function rebalanceCoreOnce(brokerId: string): Promise<void> {
+    const session = exchangeDate(market);
+    if (coreSession === session) return;
+    try {
+      const r = await rebalanceCore(market, brokerId, { execute: process.env.MERIDIAN_AUTO_APPROVE === "1" });
+      if (r.status === "skipped") {
+        console.log(`[${key}] core rebalance skipped (${r.reason})`);
+        return;
+      }
+      coreSession = session;
+      console.log(`[${key}] core ${r.status}: ${r.detail}`);
+    } catch (err) {
+      console.warn(`[${key}] core rebalance failed (continuing): ${(err as Error).message}`);
+    }
+  }
+
   /** Current held tickers for this desk's market, on the fund and advisory books. */
   async function heldTickers(): Promise<string[]> {
     try {
@@ -249,6 +270,7 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     if (executed > 0) console.log(`[${key}] executed ${executed} operator-approved trade(s)`);
     await markNav();
     await measureRisk();
+    await rebalanceCoreOnce(agentIds.broker);
     const held = await heldTickers();
 
     // Update covered names on new filings first, then on a verdict flip, then
