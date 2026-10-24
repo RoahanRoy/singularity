@@ -3,6 +3,7 @@
 import { ReactNode, createContext, useContext, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getCurrentOperator, type OperatorUser } from "@/lib/auth/operator";
+import { useTheme } from "@/lib/meridian/theme";
 
 type AuthState =
   | { status: "loading"; user: null }
@@ -18,6 +19,7 @@ export function useOperator(): OperatorUser | null {
 export function AuthGate({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [state, setState] = useState<AuthState>({ status: "loading", user: null });
+  const [theme] = useTheme("light");
 
   useEffect(() => {
     let alive = true;
@@ -37,21 +39,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
     if (state.status === "anon") router.replace("/sign-in");
   }, [state.status, router]);
 
+  // Same paper theme and preference as the Shell it stands in for.
   if (state.status !== "authed") {
     return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "grid",
-          placeItems: "center",
-          background: "#0a0b0e",
-          color: "#8b8d97",
-          fontFamily: "var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace)",
-          fontSize: 12,
-          letterSpacing: "0.12em",
-        }}
-      >
-        {state.status === "loading" ? "VERIFYING OPERATOR..." : "REDIRECTING..."}
+      <div className="mx" data-theme={theme} style={{ alignItems: "center", justifyContent: "center" }}>
+        <div role="status" className="m-sub" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="m-dot m-pulse" style={{ background: "var(--accent)" }} aria-hidden />
+          {state.status === "loading" ? "Checking your sign-in…" : "Redirecting to sign-in…"}
+        </div>
       </div>
     );
   }
