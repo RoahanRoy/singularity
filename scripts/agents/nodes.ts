@@ -112,7 +112,8 @@ export type Ctx = {
     slippage_bps: number;
     fees_bps: number;
     impact_bps: number;
-    venue_score: number;
+    /** No measured meaning for a paper fill; null until execution is modelled. */
+    venue_score: number | null;
     notes: string;
   };
   signal?: {
@@ -1243,6 +1244,7 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
       venue: ctx.route?.venue ?? null,
       algo: ctx.route?.algo ?? null,
       conviction: ctx.memo?.conviction ?? null,
+      arrival: ctx.size?.arrival ?? null,
     };
     if (ctx.memoId) {
       await db.updateDocument(DB, "memos", ctx.memoId, {
@@ -1267,7 +1269,7 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
     if (ctx.memoId) {
       await db.updateDocument(DB, "memos", ctx.memoId, {
         status: "review",
-        pending_exec_json: JSON.stringify({ qty, weight_pct: ctx.size?.weight_pct ?? null, venue: ctx.route?.venue ?? null, algo: ctx.route?.algo ?? null, conviction: ctx.memo?.conviction ?? null }).slice(0, 2048),
+        pending_exec_json: JSON.stringify({ qty, weight_pct: ctx.size?.weight_pct ?? null, venue: ctx.route?.venue ?? null, algo: ctx.route?.algo ?? null, conviction: ctx.memo?.conviction ?? null, arrival: ctx.size?.arrival ?? null }).slice(0, 2048),
       });
     }
     await emit(id, "handoff",
@@ -1309,7 +1311,7 @@ type ApprovableMemo = {
 
 async function executeApproved(memo: ApprovableMemo, agentIds: Record<string, string>): Promise<boolean> {
   if (!memo.ticker || !memo.pending_exec_json) return false;
-  let pending: { qty?: number; venue?: string | null };
+  let pending: { qty?: number; venue?: string | null; algo?: string | null; arrival?: { price: number; at: string } | null };
   try {
     pending = JSON.parse(memo.pending_exec_json);
   } catch {
@@ -1351,6 +1353,10 @@ async function executeApproved(memo: ApprovableMemo, agentIds: Record<string, st
     `APPROVED FILL BUY ${f.filled_qty} ${memo.ticker} @ ${f.fill_price.toFixed(2)}${f.capped ? ` (capped from ${qty})` : ""}`,
     { trade_id: f.id, memo_id: memo.$id, filled_qty: f.filled_qty, requested_qty: qty });
   await setStatus(id, "idle");
+  await recordTca({
+    agentId: agentIds.tca, tradeId: f.id, ticker: memo.ticker, qty: f.filled_qty, fillPrice: f.fill_price,
+    arrival: pending.arrival ?? undefined, venue: pending.venue ?? null, algo: pending.algo ?? null,
+  });
   return true;
 }
 
@@ -1382,64 +1388,79 @@ export async function sweepApprovedMemos(market: "US" | "IN", agentIds: Record<s
 
 // 8. TCA --------------------------------------------------------------------
 //
-// Post-trade. Reads the fill + route and writes a transaction-cost record.
-// Does not retry, resize, or comment on strategy.
-export async function tca(ctx: Ctx): Promise<Ctx> {
-  if (!ctx.trade || ctx.trade.status !== "filled") return ctx;
+// Post-trade, in code. Measures the fill against the arrival quote the PM sized
+// on (implementation shortfall). The paper broker fills at the live quote with
+// no commission, so fees and impact are zero by construction, not estimates;
+// both become real once execution is modelled (bid/ask, impact, partial fills).
+// A fill without a recorded arrival has nothing to measure against: no row.
 
-  const id = ctx.agentIds.tca;
-  const prompt = loadPrompt("tca-agent");
+async function recordTca(input: {
+  agentId: string;
+  tradeId: string;
+  ticker: string;
+  qty: number;
+  fillPrice: number;
+  arrival?: { price: number; at: string };
+  venue: string | null;
+  algo: string | null;
+}): Promise<NonNullable<Ctx["tca"]> | null> {
+  const { agentId: id, arrival } = input;
+  if (!arrival || !(arrival.price > 0)) {
+    await emit(id, "thought", `TCA ${input.ticker}: no arrival quote recorded, nothing to measure`);
+    return null;
+  }
   await setStatus(id, "thinking");
-
-  // Synthesise an arrival price near the fill so the LLM has something to anchor on.
-  // In the live system this would be the route's reference price at submission time.
-  const fillPrice = ctx.trade.fill_price ?? 200;
-  const arrivalPrice = Number((fillPrice * (1 + (Math.random() - 0.5) * 0.004)).toFixed(2));
-
-  const userMsg = [
-    `Ticker: ${ctx.ticker}`,
-    `Side: buy`,
-    `Qty: ${ctx.size?.qty ?? 0}`,
-    `Fill price: ${fillPrice}`,
-    `Arrival price: ${arrivalPrice}`,
-    `Venue: ${ctx.route?.venue ?? "IBKR"}`,
-    `Algo: ${ctx.route?.algo ?? "default"}`,
-    `Horizon (min): ${ctx.route?.horizon_minutes ?? 0}`,
-  ].join("\n");
-
-  const raw = await ask({
-    model: prompt.meta.model,
-    system: prompt.body,
-    user: userMsg,
-    label: `tca:${ctx.ticker}`,
-  });
-  const t = extractJson<NonNullable<Ctx["tca"]>>(raw);
-
+  // Signed for a buy: positive = paid above arrival (unfavourable).
+  const slippage = ((input.fillPrice - arrival.price) / arrival.price) * 10_000;
+  const t: NonNullable<Ctx["tca"]> = {
+    arrival_price: arrival.price,
+    fill_price: input.fillPrice,
+    benchmark_price: arrival.price,
+    benchmark_kind: "arrival",
+    slippage_bps: Math.round(slippage * 100) / 100,
+    fees_bps: 0,
+    impact_bps: 0,
+    venue_score: null,
+    notes: `Fill ${input.fillPrice} vs arrival ${arrival.price} quoted ${arrival.at}. Paper fill at the live quote: no commission, no modelled impact.`,
+  };
   try {
     await db.createDocument(DB, "tca", ID.unique(), {
-      trade_id: ctx.trade.id,
-      ticker: ctx.ticker,
-      venue: ctx.route?.venue ?? "IBKR",
-      algo: ctx.route?.algo ?? "default",
-      arrival_price: Number((t.arrival_price ?? arrivalPrice).toFixed(4)),
-      fill_price: Number((t.fill_price ?? fillPrice).toFixed(4)),
-      benchmark_price: Number((t.benchmark_price ?? arrivalPrice).toFixed(4)),
-      benchmark_kind: t.benchmark_kind ?? "arrival",
-      slippage_bps: Number((t.slippage_bps ?? 0).toFixed(2)),
-      fees_bps: Number((t.fees_bps ?? 1).toFixed(2)),
-      impact_bps: Number((t.impact_bps ?? 0).toFixed(2)),
-      venue_score: Number((t.venue_score ?? 0).toFixed(3)),
-      notes: (t.notes ?? "").slice(0, 1024),
+      trade_id: input.tradeId,
+      ticker: input.ticker,
+      venue: (input.venue ?? "paper").slice(0, 32),
+      algo: (input.algo ?? "none").slice(0, 16),
+      arrival_price: Number(t.arrival_price.toFixed(4)),
+      fill_price: Number(t.fill_price.toFixed(4)),
+      benchmark_price: Number(t.benchmark_price.toFixed(4)),
+      benchmark_kind: t.benchmark_kind,
+      slippage_bps: t.slippage_bps,
+      fees_bps: t.fees_bps,
+      impact_bps: t.impact_bps,
+      venue_score: null,
+      notes: t.notes.slice(0, 1024),
       occurred_at: new Date().toISOString(),
     });
   } catch (err) {
-    console.warn(`[tca] write failed for ${ctx.trade.id}:`, (err as Error).message);
+    console.warn(`[tca] write failed for ${input.tradeId}:`, (err as Error).message);
   }
-
-  await emit(id, "thought",
-    `TCA ${ctx.ticker}: slip ${t.slippage_bps?.toFixed(1)}bps, score ${t.venue_score?.toFixed(2)}`, t);
+  await emit(id, "thought", `TCA ${input.ticker}: slippage ${t.slippage_bps.toFixed(1)}bps vs arrival`, t);
   await setStatus(id, "idle");
-  return { ...ctx, tca: t };
+  return t;
+}
+
+export async function tca(ctx: Ctx): Promise<Ctx> {
+  if (!ctx.trade || ctx.trade.status !== "filled" || ctx.trade.fill_price == null) return ctx;
+  const t = await recordTca({
+    agentId: ctx.agentIds.tca,
+    tradeId: ctx.trade.id,
+    ticker: ctx.ticker,
+    qty: ctx.size?.qty ?? 0,
+    fillPrice: ctx.trade.fill_price,
+    arrival: ctx.size?.arrival,
+    venue: ctx.route?.venue ?? null,
+    algo: ctx.route?.algo ?? null,
+  });
+  return t ? { ...ctx, tca: t } : ctx;
 }
 
 // 8b. Attribution & Reconciliation ------------------------------------------
@@ -1655,7 +1676,7 @@ async function bootstrapFor(c: Record<string, ClusterRef>, suffix = ""): Promise
     compliance:          await ensureAgent(`Compliance${s}`,           "ops",       c.ops, m("compliance")),
     smartRouter:         await ensureAgent(`Smart Router${s}`,         "execution", c.execution, m("smart-router")),
     broker:              await ensureAgent(`Paper Broker${s}`,         "execution", c.execution, "code"),
-    tca:                 await ensureAgent(`TCA${s}`,                  "ops",       c.execution, m("tca-agent")),
+    tca:                 await ensureAgent(`TCA${s}`,                  "ops",       c.execution, "code"),
     attribution:         await ensureAgent(`Attribution & Recon${s}`,  "ops",       c.ops, m("attribution")),
     budgetController:    await ensureAgent(`Budget Controller${s}`,    "ops",       c.governance, m("budget-controller")),
   };
