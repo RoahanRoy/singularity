@@ -1,7 +1,6 @@
 /**
  * One-shot US (IBKR) book enrichment from free Yahoo Finance history, so the
- * Portfolio screen's US desk shows real numbers (factor betas, NAV series /
- * KPIs) instead of empty / zero panels.
+ * Portfolio screen's US desk shows real factor betas instead of empty panels.
  *
  * The implementation lives in src/lib/us/enrich.ts (config) over the shared
  * src/lib/market/enrich-core.ts, and is shared with the weekly Vercel cron

@@ -4,22 +4,20 @@
  * Framework-free (no `server-only`, no `next/*`, no `@/` alias) so it runs from
  * both the Vercel cron routes and the one-shot CLIs. Callers pass a node-appwrite
  * `Databases` instance + database id and a per-market EnrichConfig; the generic
- * machinery (Yahoo history, univariate betas, NAV reconstruction, pnl fix) is
- * identical across markets.
+ * machinery (Yahoo history, univariate betas, pnl fix) is identical across
+ * markets.
  *
  * For each position in the config's market — on the advisory book
  * (`advisory_positions`) and the fund's own book (fund rows of `positions`) — it:
  *   1. pulls ~1y of daily closes for the holding + factor proxies,
  *   2. computes univariate betas (cov/var on daily returns) → factor_exposures_json,
- *   3. reconstructs the advisory book's NAV series over the window where ALL its
- *      holdings have history (qty held constant) and appends the missing daily
- *      snapshots,
- *   4. corrects the latest snapshot's pnl_daily to a real day-over-day delta.
+ *   3. corrects the latest snapshot's pnl_daily to a real day-over-day delta.
  *
- * All writes are additive/idempotent: betas update in place, snapshots append
- * only for missing dates.
+ * It never writes NAV snapshots: a mark is only what the book was worth when it
+ * was taken. Replaying today's quantities over past closes would invent a
+ * history the book never had. Writes are idempotent: betas update in place.
  */
-import { type Databases, Query, ID } from "node-appwrite";
+import { type Databases, Query } from "node-appwrite";
 
 /** The advisory book's snapshots: tagged, or from before the books were split. */
 const ADVISORY_SNAPSHOT = Query.or([Query.equal("book", "advisory"), Query.isNull("book")]);
@@ -33,8 +31,6 @@ export type EnrichConfig = {
   factors: FactorProxy[];
   /** Map a bare desk ticker to its Yahoo symbol (e.g. `${t}.NS` for NSE). */
   yahooSymbol: (ticker: string) => string;
-  /** UTC time appended to a snapshot's date, approximating the session close. */
-  snapshotCloseUtc: string; // e.g. "20:00:00.000Z"
   /** Logged when the market has no positions yet. */
   emptyBookHint: string;
 };
@@ -42,9 +38,6 @@ export type EnrichConfig = {
 export type EnrichSummary = {
   holdings: number;
   betasWritten: number;
-  snapshotsAdded: number;
-  sessions: number;
-  windowStart: string | null;
   pnlCorrected: boolean;
 };
 
@@ -112,18 +105,9 @@ function beta(stock: number[], factor: number[]): number {
   return varf === 0 ? 0 : cov / varf;
 }
 
-function closeAtOrBefore(bars: Bar[], date: string): number | null {
-  let chosen: number | null = null;
-  for (const b of bars) {
-    if (b.date <= date) chosen = b.close;
-    else break;
-  }
-  return chosen;
-}
-
 // ── runner ────────────────────────────────────────────────────────────────────
 
-type PosDoc = { $id: string; ticker: string; qty: number; col: "advisory_positions" | "positions" };
+type PosDoc = { $id: string; ticker: string; col: "advisory_positions" | "positions" };
 
 export async function runEnrichment(
   databases: Databases,
@@ -132,8 +116,7 @@ export async function runEnrichment(
   log: (msg: string) => void = () => {},
 ): Promise<EnrichSummary> {
   const summary: EnrichSummary = {
-    holdings: 0, betasWritten: 0, snapshotsAdded: 0, sessions: 0,
-    windowStart: null, pnlCorrected: false,
+    holdings: 0, betasWritten: 0, pnlCorrected: false,
   };
 
   const [advRes, fundRes] = await Promise.all([
@@ -170,7 +153,6 @@ export async function runEnrichment(
   });
 
   // 2) Per-holding history + betas (bounded concurrency).
-  const holdingBars = new Map<string, Bar[]>();
   await mapPool(positions, 6, async (p) => {
     const ySym = cfg.yahooSymbol(p.ticker);
     let bars: Bar[];
@@ -181,7 +163,6 @@ export async function runEnrichment(
       return;
     }
     if (bars.length < 30) { log(`  ! ${p.ticker}: only ${bars.length} bars`); return; }
-    holdingBars.set(p.ticker, bars);
 
     const exposures = cfg.factors.flatMap((f) => {
       const fb = factorBars.get(f.key);
@@ -196,69 +177,10 @@ export async function runEnrichment(
   });
   log(`betas written: ${summary.betasWritten}`);
 
-  // 3) Reconstruct + append NAV snapshots.
-  await reconstructSnapshots(databases, dbId, cfg, positions.filter((p) => p.col === "advisory_positions"), holdingBars, summary, log);
-
-  // 4) Correct the latest snapshot's pnl_daily to a real session delta.
+  // 3) Correct the latest snapshot's pnl_daily to a real session delta.
   summary.pnlCorrected = await correctLatestPnl(databases, dbId, cfg, log);
 
   return summary;
-}
-
-async function reconstructSnapshots(
-  databases: Databases,
-  dbId: string,
-  cfg: EnrichConfig,
-  positions: PosDoc[],
-  holdingBars: Map<string, Bar[]>,
-  summary: EnrichSummary,
-  log: (msg: string) => void,
-) {
-  const held = positions.filter((p) => holdingBars.has(p.ticker));
-  if (held.length === 0) { log("No holding history — skipping reconstruction."); return; }
-
-  // Window start = the latest "first date" across holdings (so all names exist).
-  let windowStart = "0000-00-00";
-  for (const p of held) {
-    const first = holdingBars.get(p.ticker)![0].date;
-    if (first > windowStart) windowStart = first;
-  }
-  const calendar = holdingBars.get(held[0].ticker)!.map((b) => b.date).filter((d) => d >= windowStart);
-
-  const series: { date: string; nav: number }[] = [];
-  for (const date of calendar) {
-    let nav = 0, complete = true;
-    for (const p of held) {
-      const c = closeAtOrBefore(holdingBars.get(p.ticker)!, date);
-      if (c == null) { complete = false; break; }
-      nav += p.qty * c;
-    }
-    if (complete) series.push({ date, nav });
-  }
-  if (series.length < 2) { log("Reconstructed series too short."); return; }
-
-  summary.sessions = series.length;
-  summary.windowStart = series[0].date;
-
-  const existing = await databases.listDocuments(dbId, "fund_snapshots", [Query.equal("market", cfg.market), ADVISORY_SNAPSHOT, Query.limit(500)]);
-  const haveDates = new Set(
-    (existing.documents as unknown as { captured_at: string }[]).map((d) => d.captured_at.slice(0, 10)),
-  );
-
-  for (let i = 0; i < series.length; i++) {
-    const { date, nav } = series[i];
-    if (haveDates.has(date)) continue;
-    const prev = i > 0 ? series[i - 1].nav : nav;
-    await databases.createDocument(dbId, "fund_snapshots", ID.unique(), {
-      nav_usd: Number(nav.toFixed(2)),
-      pnl_daily: Number((nav - prev).toFixed(2)),
-      captured_at: `${date}T${cfg.snapshotCloseUtc}`,
-      market: cfg.market,
-      book: "advisory",
-    });
-    summary.snapshotsAdded++;
-  }
-  log(`reconstruction: ${series.length} sessions from ${series[0].date} → +${summary.snapshotsAdded} snapshots`);
 }
 
 /** If the latest snapshot still carries a lifetime P&L figure, fix it. */

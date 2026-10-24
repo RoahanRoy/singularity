@@ -99,6 +99,18 @@ function indexOnMarks(snaps: FundSnapshot[], bars: Bar[] | null): (number | null
 }
 
 /**
+ * A mark written long after the moment it claims. An old enrich step replayed
+ * the quantities held that day over a year of closes, back-dating each row; those rows
+ * landed a day or more late. A recorded mark is written as it is taken, within
+ * a second. Replays chart faint and stay out of the metrics: the book never
+ * held those quantities on those dates.
+ */
+const REPLAY_LAG_MS = 60 * 60 * 1000;
+function isReplay(s: FundSnapshot): boolean {
+  return Date.parse(s.$createdAt) - Date.parse(s.captured_at) > REPLAY_LAG_MS;
+}
+
+/**
  * Range metrics from the stored marks. The advisory book's NAV moves with the
  * operator's deposits, so its returns come from the flow-free book_index when
  * every mark carries one. The index return comes from its daily closes on the
@@ -193,7 +205,9 @@ export function BookScreen() {
   const from = rangeStart(range, new Date());
   const inRange = snapshots.filter((s) => Date.parse(s.captured_at) >= from);
   const closes = indexOnMarks(inRange, indexBars);
-  const m = metrics(inRange, book, closes);
+  const replays = inRange.map(isReplay);
+  const recorded = inRange.filter((_, i) => !replays[i]);
+  const m = metrics(recorded, book, indexOnMarks(recorded, indexBars));
   const index = DESK_INDEX[market];
   // The index rebased onto the book's value where its closes start, so the two
   // lines leave together and the gap between them is the excess.
@@ -274,9 +288,11 @@ export function BookScreen() {
             color={toneOf((m.ret ?? 0) || 1)}
             name={book === "fund" ? "Fund" : "Holdings"}
             compare={compare}
+            faint={{ name: "Replayed: later holdings at past closes", at: replays }}
             label={(p, first, i) => (
               <>
-                {shortDate(p.t)} · {fullMoney(p.v, market)} · {pct(first.v ? p.v / first.v - 1 : null, 2, true)} in range
+                {shortDate(p.t)} · {fullMoney(p.v, market)}
+                {replays[i] ? " (replayed)" : ""} · {pct(first.v ? p.v / first.v - 1 : null, 2, true)} in range
                 {compare && closes[i] != null && i >= anchor
                   ? ` · ${index.name} ${pct((closes[i] as number) / (closes[anchor] as number) - 1, 2, true)}`
                   : ""}
@@ -302,6 +318,13 @@ export function BookScreen() {
           </div>
         ))}
       </div>
+      {replays.some(Boolean) && (
+        <p className="m-meta" style={{ marginTop: 10 }}>
+          From the {recorded.length} recorded {recorded.length === 1 ? "mark" : "marks"} in range; the{" "}
+          {inRange.length - recorded.length} replayed {inRange.length - recorded.length === 1 ? "one is" : "ones are"} drawn
+          only.
+        </p>
+      )}
 
       <section style={{ marginTop: 44 }}>
         <div className="m-shead">

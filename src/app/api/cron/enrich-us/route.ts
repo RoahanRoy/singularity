@@ -3,7 +3,7 @@ import { runUsEnrichment } from "@/lib/us/enrich";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Enrichment fetches Yahoo histories + writes betas/snapshots; give it room.
+// Enrichment fetches Yahoo histories + writes betas; give it room.
 export const maxDuration = 60;
 
 /**

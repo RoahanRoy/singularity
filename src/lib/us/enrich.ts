@@ -3,8 +3,8 @@
  *
  * Mirror of src/lib/india/enrich.ts: the generic machinery lives in
  * src/lib/market/enrich-core.ts; this file supplies US specifics — broad
- * factor proxies (market/tech/size/rates/USD), bare Yahoo symbols (no suffix),
- * and the ~16:00 ET snapshot close.
+ * factor proxies (market/tech/size/rates/USD) and bare Yahoo symbols (no
+ * suffix).
  *
  * Runs from both the weekly Vercel cron (`/api/cron/enrich-us`) and the
  * one-shot CLI (`scripts/enrich-us.ts`). All writes are additive/idempotent.
@@ -29,7 +29,6 @@ const US_CONFIG: EnrichConfig = {
   market: "US",
   factors: FACTORS,
   yahooSymbol: (t) => t, // US symbols need no suffix
-  snapshotCloseUtc: "20:00:00.000Z", // ~16:00 ET close (EDT)
   emptyBookHint: "No market=US positions — connect an IBKR account and sync first.",
 };
 

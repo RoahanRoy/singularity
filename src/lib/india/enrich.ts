@@ -1,10 +1,9 @@
 /**
  * India book enrichment — the India-desk config over the shared engine.
  *
- * The generic machinery (Yahoo history, betas, NAV reconstruction, pnl fix)
- * lives in src/lib/market/enrich-core.ts and is shared with the US desk. This
- * file only supplies India specifics: NSE factor proxies, the ".NS" Yahoo
- * suffix and the ~15:30 IST snapshot close.
+ * The generic machinery (Yahoo history, betas, pnl fix) lives in
+ * src/lib/market/enrich-core.ts and is shared with the US desk. This file only
+ * supplies India specifics: NSE factor proxies and the ".NS" Yahoo suffix.
  *
  * Runs from both the weekly Vercel cron (`/api/cron/enrich-india`) and the
  * one-shot CLI (`scripts/enrich-india.ts`). Both pass a node-appwrite
@@ -30,7 +29,6 @@ const INDIA_CONFIG: EnrichConfig = {
   market: "IN",
   factors: FACTORS,
   yahooSymbol: (t) => `${t}.NS`,
-  snapshotCloseUtc: "10:00:00.000Z", // ~15:30 IST close
   emptyBookHint: "No market=IN positions — sync Horizon from Portfolio first.",
 };
 

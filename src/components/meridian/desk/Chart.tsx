@@ -10,10 +10,15 @@ const H = 200;
 /** A second series drawn dashed over the first, in its units: one value per point, null where it has none. */
 export type Compare = { name: string; values: (number | null)[]; color: string };
 
+/** Points of the main line drawn faint, and what the legend calls them. One flag per point. */
+export type Faint = { name: string; at: boolean[] };
+
 /**
  * The design's line chart: a filled line with a dashed baseline at the first
  * point, and a hover rule that reports the point under the pointer. A
  * `compare` series (the index) draws dashed on the same scale, with a legend.
+ * Segments touching a `faint` point draw faint, so the reader can tell them
+ * apart from the rest of the line.
  */
 export function LineChart({
   points,
@@ -22,6 +27,7 @@ export function LineChart({
   label,
   name,
   compare,
+  faint,
 }: {
   points: Point[];
   color: string;
@@ -31,6 +37,7 @@ export function LineChart({
   /** The main line's name in the legend; only shown beside a compare line. */
   name?: string;
   compare?: Compare;
+  faint?: Faint;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   if (points.length < 2) return null;
@@ -41,8 +48,16 @@ export function LineChart({
   const pad = (hi - lo) * 0.08 || Math.abs(hi) * 0.01 || 1;
   const y = (v: number) => H - ((v - (lo - pad)) / (hi - lo + 2 * pad)) * H;
   const x = (i: number) => (i / (points.length - 1)) * W;
-  const path = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
+  const at = (i: number) => `${x(i).toFixed(1)},${y(points[i].v).toFixed(1)}`;
+  const path = points.map((_, i) => `${i ? "L" : "M"}${at(i)}`).join("");
   const fill = `${path}L${W},${H}L0,${H}Z`;
+  // Split the line by segment: a segment is faint if either end is.
+  const dim = faint && faint.at.some(Boolean) ? faint : null;
+  const seg = (want: boolean) =>
+    points
+      .slice(1)
+      .map((_, k) => (!!(dim?.at[k] || dim?.at[k + 1]) === want ? `M${at(k)}L${at(k + 1)}` : ""))
+      .join("");
   // A gap in the compare series lifts the pen rather than bridging it.
   const cmpPath = cmp
     ? cmp.values
@@ -56,12 +71,19 @@ export function LineChart({
 
   return (
     <div>
-      {cmp && (
-        <div className="m-meta" style={{ display: "flex", gap: 16, marginTop: 18 }}>
+      {(cmp || dim) && (
+        <div className="m-meta" style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", marginTop: 18 }}>
           <Swatch color={color}>{name ?? "Book"}</Swatch>
-          <Swatch color={cmp.color} dashed>
-            {cmp.name}
-          </Swatch>
+          {dim && (
+            <Swatch color={color} faint>
+              {dim.name}
+            </Swatch>
+          )}
+          {cmp && (
+            <Swatch color={cmp.color} dashed>
+              {cmp.name}
+            </Swatch>
+          )}
         </div>
       )}
       <div
@@ -71,7 +93,7 @@ export function LineChart({
           setHover(Math.round(f * (points.length - 1)));
         }}
         onMouseLeave={() => setHover(null)}
-        style={{ position: "relative", height, marginTop: cmp ? 10 : 18, cursor: "crosshair" }}
+        style={{ position: "relative", height, marginTop: cmp || dim ? 10 : 18, cursor: "crosshair" }}
       >
         <svg
           viewBox={`0 0 ${W} ${H}`}
@@ -84,7 +106,14 @@ export function LineChart({
           {cmp && (
             <path d={cmpPath} fill="none" stroke={cmp.color} strokeWidth={1.3} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
           )}
-          <path d={path} fill="none" stroke={color} strokeWidth={1.6} vectorEffect="non-scaling-stroke" />
+          {dim ? (
+            <>
+              <path d={seg(true)} fill="none" stroke={color} strokeOpacity={FAINT} strokeWidth={1.6} vectorEffect="non-scaling-stroke" />
+              <path d={seg(false)} fill="none" stroke={color} strokeWidth={1.6} vectorEffect="non-scaling-stroke" />
+            </>
+          ) : (
+            <path d={path} fill="none" stroke={color} strokeWidth={1.6} vectorEffect="non-scaling-stroke" />
+          )}
         </svg>
         {h && hover != null && (
           <>
@@ -136,11 +165,13 @@ export function LineChart({
   );
 }
 
-function Swatch({ color, dashed, children }: { color: string; dashed?: boolean; children: ReactNode }) {
+const FAINT = 0.35;
+
+function Swatch({ color, dashed, faint, children }: { color: string; dashed?: boolean; faint?: boolean; children: ReactNode }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
       <svg width={18} height={6} aria-hidden>
-        <line x1={0} x2={18} y1={3} y2={3} stroke={color} strokeWidth={1.6} strokeDasharray={dashed ? "5 3" : undefined} />
+        <line x1={0} x2={18} y1={3} y2={3} stroke={color} strokeOpacity={faint ? FAINT : undefined} strokeWidth={1.6} strokeDasharray={dashed ? "5 3" : undefined} />
       </svg>
       {children}
     </span>

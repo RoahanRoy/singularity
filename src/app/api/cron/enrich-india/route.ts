@@ -3,7 +3,7 @@ import { runIndiaEnrichment } from "@/lib/india/enrich";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Enrichment fetches ~34 Yahoo histories + writes betas/snapshots; give it room.
+// Enrichment fetches ~34 Yahoo histories + writes betas; give it room.
 export const maxDuration = 60;
 
 /**
