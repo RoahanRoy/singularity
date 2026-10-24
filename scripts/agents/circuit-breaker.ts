@@ -26,20 +26,17 @@
  * a book still beyond the limit trips again immediately. "Can't mark" does not
  * latch — it re-checks on the next fill.
  *
- * Equity = mandate cash (0 with no mandate) + paper book at live marks. Day P&L
- * marks shares held at the open from the prior close and shares bought today
- * from their fill price. Paper buys are cash-neutral to equity, so start-of-day
- * equity = equity − day P&L. Real-holdings rows (Horizon, IBKR, legacy Kite)
- * are excluded — the agents can't trade them.
+ * Equity is the fund book (fund-book.ts): mandate cash + paper positions at
+ * live marks. The advisory book (Horizon, IBKR, legacy Kite) is excluded — the
+ * agents can't trade it.
  *
  * Env:
  *   MERIDIAN_MAX_DAILY_LOSS_PCT   default 3   (% of start-of-day equity)
  *   MERIDIAN_MAX_DRAWDOWN_PCT     default 10  (% below mandate capital base)
  */
-import { db, DB, ID, Query, emit, writeAudit } from "./appwrite";
-import { getQuoteDetail } from "./quotes";
+import { db, DB, ID, emit, writeAudit } from "./appwrite";
 import { exchangeDate } from "./market-hours";
-import { getMandate } from "../../src/lib/fund/mandate";
+import { markFundBook } from "./fund-book";
 
 type Market = "US" | "IN";
 
@@ -53,7 +50,6 @@ const MAX_DRAWDOWN_PCT = envPct("MERIDIAN_MAX_DRAWDOWN_PCT", 10);
 const MAX_UNPRICED_PCT = 20;
 /** Re-measure at most this often while clear — a sweep can fill many memos. */
 const CACHE_MS = 60_000;
-const QUOTE_CONCURRENCY = 8;
 
 export type BreakerReading = {
   market: Market;
@@ -76,108 +72,23 @@ export type BreakerVerdict = {
   reading: BreakerReading | null;
 };
 
-type PaperRow = {
-  ticker: string;
-  qty: number;
-  market_value?: number | null;
-  ibkr_account_id?: string | null;
-  kite_account_id?: string | null;
-  horizon_source?: string | null;
-};
-type TradeRow = {
-  ticker: string;
-  side: string;
-  qty: number;
-  price: number;
-  venue?: string | null;
-  status?: string | null;
-  filled_at?: string | null;
-};
-
-async function mapPool<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R>): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
-        const i = next++;
-        out[i] = await fn(items[i]);
-      }
-    }),
-  );
-  return out;
-}
-
 /**
- * Mark the desk's paper book. Pure read — no writes, no alerts. Throws if the
- * book or mandate can't be read (the caller treats that as a halt).
+ * Mark the desk's fund book (fund-book.ts) as a breaker reading. Pure read —
+ * no writes, no alerts. Throws if the book or mandate can't be read (the
+ * caller treats that as a halt).
  */
 export async function measureBook(market: Market, now: Date = new Date()): Promise<BreakerReading> {
-  const session = exchangeDate(market, now);
-  const [posRes, tradeRes, mandate] = await Promise.all([
-    db.listDocuments(DB, "positions", [Query.equal("market", market), Query.limit(200)]),
-    db.listDocuments(DB, "trades", [
-      Query.equal("market", market),
-      Query.orderDesc("$createdAt"),
-      Query.limit(200),
-    ]),
-    getMandate(db, DB, market),
-  ]);
-
-  const book = (posRes.documents as unknown as PaperRow[]).filter(
-    (p) => !p.ibkr_account_id && !p.kite_account_id && !p.horizon_source && p.qty > 0,
-  );
-
-  // Paper shares bought this session, per ticker — their day P&L runs from the
-  // fill price, not the prior close.
-  const today = new Map<string, { qty: number; cost: number }>();
-  for (const t of tradeRes.documents as unknown as TradeRow[]) {
-    if (t.side !== "buy" || t.status !== "filled" || !String(t.venue ?? "").startsWith("paper-")) continue;
-    if (!t.filled_at || exchangeDate(market, new Date(t.filled_at)) !== session) continue;
-    const k = t.ticker.toUpperCase();
-    const agg = today.get(k) ?? { qty: 0, cost: 0 };
-    agg.qty += t.qty;
-    agg.cost += t.qty * t.price;
-    today.set(k, agg);
-  }
-
-  const quotes = await mapPool(book, QUOTE_CONCURRENCY, (p) => getQuoteDetail(p.ticker, market));
-
-  let mv = 0;
-  let dayPnl = 0;
-  let unpriced = 0;
-  book.forEach((p, i) => {
-    const q = quotes[i];
-    if (!q || q.prevClose == null) {
-      // No live mark: carry the stored value, contribute no P&L, and count it
-      // toward the unpriced share that can halt us on its own.
-      const stored = Math.abs(p.market_value ?? 0);
-      mv += stored;
-      unpriced += stored;
-      return;
-    }
-    const fills = today.get(p.ticker.toUpperCase());
-    const boughtToday = Math.min(fills?.qty ?? 0, p.qty);
-    const costToday = fills && fills.qty > 0 ? fills.cost * (boughtToday / fills.qty) : 0;
-    const heldAtOpen = p.qty - boughtToday;
-    mv += p.qty * q.price;
-    dayPnl += heldAtOpen * (q.price - q.prevClose) + (boughtToday * q.price - costToday);
-  });
-
-  const equity = (mandate?.cash ?? 0) + mv;
-  const sod = equity - dayPnl;
-  const base = mandate?.capital_base ?? 0;
-
+  const b = await markFundBook(market, now);
   return {
     market,
-    session,
-    equity: Number(equity.toFixed(2)),
-    sod_equity: Number(sod.toFixed(2)),
-    day_pnl: Number(dayPnl.toFixed(2)),
-    day_pnl_pct: sod > 0 ? Number(((dayPnl / sod) * 100).toFixed(3)) : 0,
-    drawdown_pct: mandate && base > 0 ? Number((Math.max(0, (base - equity) / base) * 100).toFixed(3)) : null,
-    unpriced_pct: mv > 0 ? Number(((unpriced / mv) * 100).toFixed(1)) : 0,
-    names: book.length,
+    session: b.session,
+    equity: b.equity,
+    sod_equity: b.sod_equity,
+    day_pnl: b.day_pnl,
+    day_pnl_pct: b.day_pnl_pct,
+    drawdown_pct: b.drawdown_pct,
+    unpriced_pct: b.unpriced_pct,
+    names: b.names.length,
   };
 }
 

@@ -23,6 +23,7 @@ import { fetchRiskFree } from "./market-data";
 import { indexDoc, recallPrior, formatRecall } from "./recall";
 import { getMandate, deployableThisCycle, debitCash } from "../../src/lib/fund/mandate";
 import { checkCircuitBreaker } from "./circuit-breaker";
+import { markFundBook, fundRows } from "./fund-book";
 import { sectorOf, indiaSectorOf, sectorFromIndustry, type Sector } from "./universe";
 import { bootstrapQuant, type QuantCtx } from "./quant-nodes";
 
@@ -388,7 +389,7 @@ export async function parser(ctx: Ctx): Promise<Ctx> {
 
 // Internals exported for unit testing / future composition.
 export const _filingPipeline = { edgarReader, summarize, indexFiling, findFiling };
-export const _paperBook = { paperPositions, bookPaperBuy, fillPaperTrade };
+export const _paperBook = { bookPaperBuy, fillPaperTrade };
 
 // 2. Sector Analyst ---------------------------------------------------------
 //
@@ -804,10 +805,13 @@ export async function pm(ctx: Ctx): Promise<Ctx> {
   const prompt = loadPrompt("portfolio-manager");
   await setStatus(id, "thinking");
   const market = ctx.market ?? "US";
-  // The fund's NAV is its mandate: with none there is no capital to size from.
-  const mandate = await getMandate(db, DB, market).catch(() => null);
-  if (!mandate || !(mandate.capital_base > 0)) return stage(ctx, id, `no ${market} fund mandate, no capital to size from`);
-  const nav = mandate.capital_base;
+  // Size against the fund's NAV: its mandate cash plus its positions at live
+  // marks. No mandate, no capital; a book that can't be marked has no NAV.
+  const book = await markFundBook(market).catch((err: Error) => err);
+  if (book instanceof Error) return stage(ctx, id, `can't mark the ${market} fund book (${book.message})`);
+  const mandate = book.mandate;
+  if (!mandate || !(book.equity > 0)) return stage(ctx, id, `no ${market} fund mandate, no capital to size from`);
+  const nav = book.equity;
   // A rich valuation the committee still approved trades at half size: the
   // catalyst carried the vote, the price limits how much the fund risks on it.
   const rich = ctx.valuation?.verdict === "rich";
@@ -824,7 +828,7 @@ Critic score: ${ctx.critique?.score}
 Quant signal: ${ctx.signal ? `${ctx.signal.direction} ${ctx.signal.score} (conf ${ctx.signal.confidence})` : "n/a"}
 Valuation: ${ctx.valuation ? `${ctx.valuation.verdict}, ${ctx.valuation.implied_upside_pct?.toFixed(1)}% upside` : "n/a"}
 IC decision: approve (conviction ${ctx.ic?.conviction ?? "n/a"}, soft weight ceiling ${ctx.ic?.target_weight_hint_pct ?? "n/a"}%)
-NAV: ${nav} (fund mandate capital base)
+NAV: ${nav} (fund book: cash ${book.cash} + positions ${book.mv}${book.unpriced_pct > 0 ? `, ${book.unpriced_pct}% at a stored mark` : ""})
 Name weight cap: ${cap}%${rich ? " (half the usual cap: valuation rich)" : ""}
 Action floor: ${ACTION_FLOOR} · full size at: ${FULL_SIZE_AT}
 Price: ${price} (live quote)`,
@@ -922,10 +926,12 @@ export async function risk(ctx: Ctx): Promise<Ctx> {
 
 // 5b. Deterministic pre-trade risk overlay ----------------------------------
 //
-// The risk officer checks this name's VaR; these checks look at the whole book,
-// in code, and always run between sizing and execution. Every decision — allow or block — is written to audit_log so
-// the operator has an immutable paper trail. Limits come from the operator's
-// risk_limits row (seeded with defaults on first run).
+// The risk officer checks this name's VaR; these checks look at the whole fund
+// book (fund-book.ts: mandate cash + paper positions at live marks — never the
+// advisory Horizon book), in code, between sizing and execution. Every
+// decision — allow or block — is written to audit_log so the operator has an
+// immutable paper trail. Limits come from the operator's risk_limits row
+// (seeded with defaults on first run). A book that can't be marked blocks.
 export async function riskOverlay(ctx: Ctx): Promise<Ctx> {
   const id = ctx.agentIds.risk;
   // Nothing to gate unless the chain produced a sized, risk-approved trade.
@@ -934,26 +940,25 @@ export async function riskOverlay(ctx: Ctx): Promise<Ctx> {
   await setStatus(id, "thinking");
   const limits = await ensureRiskLimits();
 
-  // Scope the book to this cycle's desk. Without the market filter a US cycle
-  // would count India names toward gross/name caps (and vice versa), since both
-  // desks share one limit set. Mirrors heldTickers() in the tech/india loops.
+  // Scope the book to this cycle's desk: both desks share one limit set.
   const market = ctx.market ?? "US";
-  const positions = await db.listDocuments(DB, "positions", [
-    Query.equal("market", market),
-    Query.limit(200),
-  ]);
-  const held = positions.documents as unknown as Array<{ ticker: string; weight: number }>;
-  // `weight` may be stored as a fraction (0..1) or a percent — normalise to pct.
-  const toPct = (w: number) => (Math.abs(w) <= 1 ? w * 100 : w);
-  const grossPct = held.reduce((s, p) => s + Math.abs(toPct(p.weight ?? 0)), 0);
-  const alreadyHeld = held.some((p) => p.ticker === ctx.ticker);
-  const nameCount = new Set(held.map((p) => p.ticker)).size + (alreadyHeld ? 0 : 1);
-
-  const proposedWeight = ctx.size.weight_pct ?? 0;
-  const varPct = ctx.risk.var_pct ?? 0;
-  const projectedGross = grossPct + proposedWeight;
+  const book = await markFundBook(market).catch((err: Error) => err);
+  const notional = ctx.size.qty * (ctx.size.arrival?.price ?? 0);
 
   const breaches: string[] = [];
+  let proposedWeight = 0, projectedGross = 0, nameCount = 0;
+  if (book instanceof Error || !(book.equity > 0)) {
+    breaches.push(book instanceof Error ? `can't mark the fund book (${book.message})` : `fund book has no equity (${book.equity})`);
+  } else {
+    // Post-trade, as % of fund NAV. A cash buy leaves NAV unchanged.
+    const ticker = ctx.ticker.toUpperCase();
+    const existing = book.names.find((n) => n.ticker.toUpperCase() === ticker);
+    proposedWeight = (((existing?.mv ?? 0) + notional) / book.equity) * 100;
+    projectedGross = ((book.mv + notional) / book.equity) * 100;
+    nameCount = book.names.length + (existing ? 0 : 1);
+  }
+  const varPct = ctx.risk.var_pct ?? 0;
+
   if (proposedWeight > limits.max_position_weight_pct)
     breaches.push(`position weight ${proposedWeight.toFixed(2)}% > ${limits.max_position_weight_pct}% cap`);
   if (projectedGross > limits.max_gross_leverage * 100)
@@ -1094,40 +1099,17 @@ export async function smartRouter(ctx: Ctx): Promise<Ctx> {
 // 7. Paper Broker -----------------------------------------------------------
 //
 // Fills a compliance-cleared BUY at a real quote (no quote, no fill: the order
-// is held for a later cycle or the operator) and books it into the PAPER
-// positions book — rows with no brokerage account id and no horizon_source, so
-// a live IBKR/Kite/Horizon sync (which only replaces real-holdings rows) never
-// clobbers them and the two coexist as one combined book.
-
-type PaperPosition = {
-  $id: string;
-  ticker: string;
-  qty: number;
-  avg_cost: number;
-  market_value: number;
-  ibkr_account_id?: string | null;
-  kite_account_id?: string | null;
-  horizon_source?: string | null;
-};
-
-/** Paper rows for a market: positions with no brokerage account id and not from Horizon. */
-async function paperPositions(market: "US" | "IN"): Promise<PaperPosition[]> {
-  const res = await db.listDocuments(DB, "positions", [
-    Query.equal("market", market),
-    Query.limit(200),
-  ]);
-  return (res.documents as unknown as PaperPosition[]).filter(
-    (p) => !p.ibkr_account_id && !p.kite_account_id && !p.horizon_source,
-  );
-}
+// is held for a later cycle or the operator) and books it into the fund book
+// (fund-book.ts) — positions rows with no brokerage account id and no
+// horizon_source, which a Horizon/IBKR sync never touches.
 
 /**
- * Book a paper BUY: add to (or open) the ticker's paper position at `price`,
- * then renormalise weights across the paper book for that market so the risk
- * overlay and portfolio screen see a consistent book.
+ * Book a paper BUY: add to (or open) the ticker's fund position at `price`,
+ * then restate every fund position's weight as its share of fund NAV
+ * (`cash`, the mandate's cash after this fill, plus the positions).
  */
-async function bookPaperBuy(ticker: string, qty: number, price: number, market: "US" | "IN"): Promise<void> {
-  const book = await paperPositions(market);
+async function bookPaperBuy(ticker: string, qty: number, price: number, market: "US" | "IN", cash: number): Promise<void> {
+  const book = await fundRows(market);
   const existing = book.find((p) => p.ticker.toUpperCase() === ticker.toUpperCase());
 
   if (existing) {
@@ -1156,13 +1138,14 @@ async function bookPaperBuy(ticker: string, qty: number, price: number, market: 
     book.push({ $id: created.$id, ticker, qty, avg_cost: price, market_value: qty * price });
   }
 
-  // Renormalise weights across the paper book (fractions in 0..1, matching the
-  // sync path). Small book, so writing each row per fill is cheap.
-  const gross = book.reduce((s, p) => s + Math.abs(p.market_value), 0) || 1;
+  // Weights as fractions (0..1) of fund NAV. Small book, so writing each row
+  // per fill is cheap.
+  const nav = cash + book.reduce((s, p) => s + Math.abs(p.market_value), 0);
+  if (!(nav > 0)) return;
   await Promise.all(
     book.map((p) =>
       db.updateDocument(DB, "positions", p.$id, {
-        weight: Number((p.market_value / gross).toFixed(6)),
+        weight: Number((p.market_value / nav).toFixed(6)),
       }).catch(() => {}),
     ),
   );
@@ -1241,7 +1224,7 @@ async function fillPaperTrade(
   // Reflect the fill in the paper book. Best-effort: a booking failure must not
   // undo a recorded fill, so we log and continue.
   try {
-    await bookPaperBuy(ticker, qty, price, market);
+    await bookPaperBuy(ticker, qty, price, market, Math.max(0, mandate.cash - qty * price));
   } catch (err) {
     console.warn(`[broker] paper book update failed for ${ticker}:`, (err as Error).message);
   }
