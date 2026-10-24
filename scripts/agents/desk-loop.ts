@@ -15,9 +15,10 @@
  *   1. `claude login` (uses your Pro/Max subscription for LLM calls)
  *   2. .env.local has Appwrite endpoint / project / database / API key
  *
- * Behavior: runs continuously. Each cycle first scans for fresh events (new
- * filings/news — see events.ts) and drains any into a priority queue; the
- * ticker for the cycle is the next queued event, or, when the queue is empty,
+ * Behavior: runs continuously. Each cycle first scans for new filings (see
+ * events.ts) on names the desk covers — held, or researched — and drains any
+ * into a priority queue; the ticker for the cycle is the next queued update,
+ * or, when the queue is empty,
  * the strongest unresearched idea from the daily quant sweep (ideas.ts), or,
  * when none is left, a round-robin pick over the held book (falling back to the
  * static universe).
@@ -30,7 +31,7 @@
  *   <PREFIX>_ONCE=1            run a single cycle and exit (for testing)
  *   <PREFIX>_INTERVAL_MS       pause between cycles (default 60000)
  *   <PREFIX>_ERROR_BACKOFF_MS  pause after a failed cycle (default 15000)
- *   <PREFIX>_EVENT_SCAN=0      disable event-driven selection (round-robin only)
+ *   <PREFIX>_EVENT_SCAN=0      don't scan for filings on covered names
  *   <PREFIX>_EVENT_BATCH       names probed for new filings per cycle (default 10)
  *   <PREFIX>_IDEAS=0           don't research ideas from the quant sweep
  *   MERIDIAN_SYNC_BASE         base URL of the running app for the sync route
@@ -53,7 +54,7 @@ import { markFundNav } from "./fund-nav";
 import { reportRisk } from "./portfolio-risk";
 import { marketState } from "./market-hours";
 import { collectEvents, type EventHit, type LatestFilingKey } from "./events";
-import { nextIdea } from "./ideas";
+import { hasMemo, nextIdea } from "./ideas";
 
 export type DeskConfig = {
   /** Short tag used for log lines and env-var prefixing (e.g. "tech", "india"). */
@@ -72,7 +73,7 @@ export type DeskConfig = {
   nextTicker: (held: readonly string[]) => Promise<string>;
   /** Resolves a ticker's sector for this desk. */
   sectorOf: (ticker: string) => Sector;
-  /** Static universe scanned for new filings (event-driven selection). */
+  /** Static universe: scanned for new filings, and where ideas come from. */
   universe?: readonly string[];
   /** Cheap latest-disclosure probe for the event scanner (EDGAR / NSE meta). */
   latestFilingKey?: LatestFilingKey;
@@ -91,9 +92,9 @@ export async function runDesk(config: DeskConfig): Promise<void> {
   const IGNORE_HOURS = process.env.MERIDIAN_IGNORE_MARKET_HOURS === "1";
   const CLOSED_POLL_MS = Number(process.env[`${envPrefix}_CLOSED_POLL_MS`] || 10 * 60_000);
   const SYNC_BASE = (process.env.MERIDIAN_SYNC_BASE || "http://localhost:3000").replace(/\/$/, "");
-  // Event-driven selection: react to fresh filings/news instead of blindly
-  // round-robining the universe. Off when the desk has no universe wired, or
-  // when the operator disables it. Round-robin always runs underneath as the
+  // Filing updates: react to new filings on covered names instead of blindly
+  // round-robining. Off when the desk has no universe wired, or when the
+  // operator disables it. Ideas and round-robin run underneath as the
   // fallback, so a scan outage never stalls the loop.
   const EVENT_SCAN = process.env[`${envPrefix}_EVENT_SCAN`] !== "0" && !!config.universe;
   const EVENT_BATCH = Number(process.env[`${envPrefix}_EVENT_BATCH`] || config.eventScanBatch || 10);
@@ -204,6 +205,12 @@ export async function runDesk(config: DeskConfig): Promise<void> {
       let added = 0;
       for (const h of hits) {
         if (queued.has(h.ticker)) continue;
+        // A filing updates a view the desk holds; an uncovered name waits for
+        // the sweep to rank it as an idea.
+        if (!h.held && !(await hasMemo(h.ticker))) {
+          console.log(`[${key}] ${h.ticker}: ${h.detail}, not covered — left to the idea ranking`);
+          continue;
+        }
         queued.add(h.ticker);
         eventQueue.push(h);
         added++;
@@ -227,8 +234,8 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     await measureRisk();
     const held = await heldTickers();
 
-    // React to fresh disclosures first, then research the next idea; fall back
-    // to round-robin to keep cold names covered and the loop warm.
+    // Update covered names on new filings first, then research the next idea;
+    // fall back to round-robin to keep cold names covered and the loop warm.
     await scanEvents(held);
     const evt = eventQueue.shift();
     let ticker: string;
@@ -237,15 +244,15 @@ export async function runDesk(config: DeskConfig): Promise<void> {
     if (evt) {
       queued.delete(evt.ticker);
       ticker = evt.ticker;
-      via = `event · ${evt.kind} (${evt.label})`;
+      via = `update · ${evt.kind} (${evt.label})`;
       // Surface the trigger on the live feed (best-effort) so the Swarm/Research
       // screens show WHY this name jumped the queue, not just that it ran.
       try {
         await emit(
           agentIds.parser,
           "thought",
-          `Reacting to ${evt.kind} signal — ${ticker}: ${evt.detail}`,
-          { via: "event-driven", kind: evt.kind, label: evt.label, ticker, held: evt.held },
+          `Updating ${ticker} on a ${evt.kind} — ${evt.detail}`,
+          { via: "update", kind: evt.kind, label: evt.label, ticker, held: evt.held },
         );
       } catch {
         /* feed emit is non-fatal — the cycle proceeds regardless */

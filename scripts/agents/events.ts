@@ -1,44 +1,38 @@
 /**
- * MERIDIAN — event scanner (the "react to filings/news" backbone).
+ * MERIDIAN — event scanner: the filings that update a covered name.
  *
- * The desk loop used to be pure round-robin: it walked its ~70-name universe on
- * a cursor, so a filing or headline that landed on a name near the back of the
- * rotation could wait an hour to be looked at, and most cycles were spent on
- * names with nothing new. This module turns the loop event-driven: each cycle it
- * cheaply detects which tickers just had a *genuinely new* disclosure and hands
- * the desk a priority queue, so fresh events jump the line while round-robin
- * still runs underneath to keep cold names covered.
- *
- * Two independent, already-supported signals feed one queue:
- *   1. NEWS   — rows the separate `agents:news` process writes to the `news`
- *               Appwrite collection. Pure Appwrite read; no extra external HTTP.
- *   2. FILING — a rolling slice of the universe probed against EDGAR (US) or NSE
- *               (IN) via the desk's `latestFilingKey`, meta only (no doc fetch).
+ * Each cycle probes a rolling slice of the desk's names (held first, then the
+ * universe) against EDGAR (US) or NSE (IN) via the desk's `latestFilingKey`,
+ * meta only, and returns the names whose newest disclosure changed. The desk
+ * acts on a hit only for a name it covers — held on a book, or researched
+ * (ideas.ts) — so a filing updates the view the desk already holds. Material
+ * events reach the venue as filings (US 8-K, Indian LODR announcements);
+ * headlines reach the desk through the daily quant sweep, whose news agent
+ * reads them for every name and votes in the verdict the ideas rank by.
  *
  * Watermarks live in a per-market state slot (`.agents-events-<market>.json`,
- * or Appwrite `agent_state` — see state-store.ts): a `newsSince` timestamp and
- * a per-ticker `filingKeys` map. The FIRST time we
- * see a ticker or start a desk we seed the watermark SILENTLY — only a *change*
- * from a known baseline fires an event, so a fresh boot never stampedes the
+ * or Appwrite `agent_state` — see state-store.ts): a per-ticker `filingKeys`
+ * map. The FIRST time we see a ticker we seed its watermark SILENTLY — only a
+ * *change* from a known baseline fires, so a fresh boot never stampedes the
  * whole universe into the queue.
  *
  * Correctness note: this is a *prioritization hint*, never a source of truth.
  * The parser still dedups every disclosure via findFiling(), so even a spurious
  * enqueue costs at most one cheap parser short-circuit — never a double analysis
  * or a double trade. That safety net is what lets this module stay best-effort:
- * every fetch is wrapped, and any failure degrades to round-robin.
+ * every fetch is wrapped, and any failure degrades to the next pick.
  */
-import { db, DB, Query, type Market } from "./appwrite";
+import type { Market } from "./appwrite";
 import { readState, writeState } from "./state-store";
 
-export type EventKind = "filing" | "news";
+export type EventKind = "filing";
 
 export type EventHit = {
   ticker: string;
   kind: EventKind;
-  /** Form type ("8-K"), announcement category, or "NEWS". */
+  /** Form type ("8-K") or announcement category. */
   label: string;
-  /** Short human detail for the log line (headline / form). */
+  /** Short human detail for the log line. */
   detail: string;
   /** ISO timestamp of the disclosure, for ordering. */
   at: string;
@@ -52,8 +46,6 @@ export type LatestFilingKey = (
 ) => Promise<{ key: string; form: string; filedAt: string } | null>;
 
 type EventState = {
-  /** Only `news` rows created after this ISO instant fire. null → seed on first pass. */
-  newsSince: string | null;
   /** ticker → last-seen disclosure key (accession / announcement datetime). */
   filingKeys: Record<string, string>;
   /** Rolling position into the scan pool, so each cycle probes a fresh slice. */
@@ -65,7 +57,6 @@ const stateFile = (market: Market) => `.agents-events-${market}.json`;
 async function loadState(market: Market): Promise<EventState> {
   const raw = (await readState<Partial<EventState>>(stateFile(market))) ?? {};
   return {
-    newsSince: raw.newsSince ?? null,
     filingKeys: raw.filingKeys ?? {},
     scanCursor: raw.scanCursor ?? 0,
   };
@@ -76,55 +67,6 @@ async function saveState(market: Market, state: EventState): Promise<void> {
     await writeState(stateFile(market), state);
   } catch (err) {
     console.warn(`[events] could not persist ${market} state: ${(err as Error).message}`);
-  }
-}
-
-/**
- * News rows created since the watermark → hot tickers. Ordered by row-insertion
- * time ($createdAt), which is when the news agent *found* the item — a truer
- * "just arrived" signal than the article's own published_at. We over-fetch and
- * filter market in code so we don't depend on a custom index existing.
- */
-async function collectNewsEvents(
-  market: Market,
-  state: EventState,
-): Promise<EventHit[]> {
-  // First pass on a fresh desk: baseline the watermark to now and fire nothing,
-  // so we react to what lands NEXT rather than replaying the whole backlog.
-  if (!state.newsSince) {
-    state.newsSince = new Date().toISOString();
-    return [];
-  }
-  try {
-    const res = await db.listDocuments(DB, "news", [
-      Query.greaterThan("$createdAt", state.newsSince),
-      Query.orderDesc("$createdAt"),
-      Query.limit(50),
-    ]);
-    const hits: EventHit[] = [];
-    const seen = new Set<string>();
-    let newest = state.newsSince;
-    for (const d of res.documents) {
-      const createdAt = String(d.$createdAt ?? "");
-      if (createdAt > newest) newest = createdAt;
-      if (String(d.market ?? "").toUpperCase() !== market) continue;
-      const ticker = String(d.ticker ?? "").toUpperCase();
-      if (!ticker || seen.has(ticker)) continue; // one hit per ticker per pass
-      seen.add(ticker);
-      hits.push({
-        ticker,
-        kind: "news",
-        label: "NEWS",
-        detail: String(d.title ?? "headline").slice(0, 100),
-        at: String(d.published_at ?? d.$createdAt ?? new Date().toISOString()),
-        held: false,
-      });
-    }
-    state.newsSince = newest; // advance past everything we just saw
-    return hits;
-  } catch (err) {
-    console.warn(`[events] news scan failed (continuing): ${(err as Error).message}`);
-    return [];
   }
 }
 
@@ -183,32 +125,20 @@ export type CollectEventsArgs = {
 };
 
 /**
- * Detect this cycle's events across both signals and return them ranked
- * (held-book names first, then most-recent). Persists the advanced watermark.
- * Fully best-effort: on any internal failure it returns what it has (possibly
- * an empty list) so the desk falls back to round-robin.
+ * Detect this cycle's new filings and return them ranked (held-book names
+ * first, then most recent). Persists the advanced watermark. Fully
+ * best-effort: on any internal failure it returns what it has (possibly an
+ * empty list).
  */
 export async function collectEvents(args: CollectEventsArgs): Promise<EventHit[]> {
   const { market, held, universe, batch, latestFilingKey } = args;
+  if (!latestFilingKey) return [];
   const state = await loadState(market);
   const heldSet = new Set(held.map((t) => t.toUpperCase()));
-
-  const news = await collectNewsEvents(market, state);
-
-  let filings: EventHit[] = [];
-  if (latestFilingKey) {
-    // Held names first, then the rest of the universe — so what we own is always
-    // in the scan rotation, not just the static roster.
-    const pool = [...heldSet, ...universe.filter((t) => !heldSet.has(t.toUpperCase()))];
-    filings = await collectFilingEvents(market, pool, latestFilingKey, batch, heldSet, state);
-  }
-  // Tag news hits with held-ness now that we know the book.
-  for (const h of news) h.held = heldSet.has(h.ticker);
-
+  // Held names first, then the rest of the universe — so what we own is always
+  // in the scan rotation, not just the static roster.
+  const pool = [...heldSet, ...universe.filter((t) => !heldSet.has(t.toUpperCase()))];
+  const hits = await collectFilingEvents(market, pool, latestFilingKey, batch, heldSet, state);
   await saveState(market, state);
-
-  const all = [...filings, ...news];
-  // Held book first; within each tier, most recent disclosure first.
-  all.sort((a, b) => Number(b.held) - Number(a.held) || b.at.localeCompare(a.at));
-  return all;
+  return hits.sort((a, b) => Number(b.held) - Number(a.held) || b.at.localeCompare(a.at));
 }
