@@ -19,6 +19,7 @@ import { fetchLatestFiling, type EdgarFiling } from "./edgar";
 import { fetchLatestIndiaFiling } from "./india";
 import { fetchTranscript } from "./transcript";
 import { getQuote } from "./quotes";
+import { fetchRiskFree } from "./market-data";
 import { indexDoc, recallPrior, formatRecall } from "./recall";
 import { getMandate, deployableThisCycle, debitCash } from "../../src/lib/fund/mandate";
 import { checkCircuitBreaker } from "./circuit-breaker";
@@ -132,9 +133,13 @@ export type Ctx = {
   };
   financing?: {
     approved: boolean;
-    funding_source: "cash" | "margin" | "mixed";
-    est_financing_bps: number;
-    borrow_available: boolean;
+    funding_source: "cash";
+    /** Notional at the arrival quote, in the desk's currency. */
+    notional: number;
+    /** Cash deployable this cycle (mandate cash within the pacing cap). */
+    deployable: number;
+    /** Annual opportunity cost of the cash at the measured short rate; null when the rate is unmeasured. */
+    est_financing_bps: number | null;
     notes: string;
   };
   attribution?: {
@@ -860,32 +865,48 @@ Price: ${price} (live quote)`,
 
 // 4b. Treasury / Financing --------------------------------------------------
 //
-// Once the PM has sized an approved trade, Treasury decides how it is funded
-// (cash / margin / borrow) and the financing drag. An unfundable position —
-// e.g. a short with no locatable borrow — is blocked here, before risk and
-// execution ever see it. No view on the thesis; fundability only.
+// In code. The fund is long-only and funded from the mandate's cash: no margin,
+// no borrow. Treasury checks the sized trade against the cash it can deploy
+// this cycle and prices the cash at the measured short rate (its opportunity
+// cost). No mandate, a paused mandate, or too little cash for one share blocks
+// here, before risk and execution see it. No view on the thesis.
 export async function treasury(ctx: Ctx): Promise<Ctx> {
   if (!ctx.size || ctx.size.qty === 0) return ctx;
 
   const id = ctx.agentIds.treasury;
-  const prompt = loadPrompt("treasury");
+  const market = ctx.market ?? "US";
   await setStatus(id, "thinking");
 
-  const userMsg = [
-    `Ticker: ${ctx.ticker}`,
-    `Side: buy`,
-    `Qty: ${ctx.size.qty}`,
-    `Weight pct: ${ctx.size.weight_pct}`,
-    `Conviction: ${ctx.memo?.conviction ?? 0}`,
-    ctx.quant?.price != null
-      ? `Price: ${ctx.quant.price} ${ctx.quant.currency ?? ""} (${ctx.quant.priceSource ?? "quote"}); notional ${Math.round(ctx.size.qty * ctx.quant.price)} ${ctx.quant.currency ?? ""}`
-      : "",
-  ].join("\n");
+  const [mandate, rf] = await Promise.all([
+    getMandate(db, DB, market).catch(() => null),
+    fetchRiskFree(market).then((r) => r.short).catch(() => null),
+  ]);
+  const price = ctx.size.arrival?.price ?? 0;
+  const notional = Number((ctx.size.qty * price).toFixed(2));
+  const deployable = Number(deployableThisCycle(mandate).toFixed(2));
+  // An unmeasured rate (FRED down, env/default stand-in) is not a cost of cash.
+  const bps = rf && !rf.assumption ? Math.round(rf.value * 10_000 * 10) / 10 : null;
+  const rate = bps == null ? `short rate unmeasured${rf ? ` (${rf.source})` : ""}` : `${bps}bps/yr at ${rf!.source}`;
 
-  const raw = await ask({ model: prompt.meta.model, system: prompt.body, user: userMsg, label: `treasury:${ctx.ticker}` });
-  const f = extractJson<NonNullable<Ctx["financing"]>>(raw);
+  let block: string | null = null;
+  if (!(price > 0)) block = "no arrival quote to price the trade";
+  else if (!mandate) block = `no ${market} fund mandate — no cash to fund from`;
+  else if (mandate.status !== "active") block = `${market} mandate is ${mandate.status}`;
+  else if (deployable < price) block = `deployable cash ${deployable} is below one share (${price})`;
+
+  const capped = !block && notional > deployable
+    ? ` Fill will be capped to ${Math.floor(deployable / price)} sh by cash/pacing.`
+    : "";
+  const f: NonNullable<Ctx["financing"]> = {
+    approved: !block,
+    funding_source: "cash",
+    notional,
+    deployable,
+    est_financing_bps: bps,
+    notes: block ?? `Cash-funded: notional ${notional} against ${deployable} deployable; cost of cash ${rate}.${capped}`,
+  };
   await emit(id, f.approved ? "thought" : "alert",
-    `Financing ${f.approved ? "OK" : "BLOCK"} ${ctx.ticker} — ${f.funding_source}, ${f.est_financing_bps?.toFixed(1)}bps`, f);
+    `Financing ${f.approved ? "OK" : "BLOCK"} ${ctx.ticker} — ${block ?? `cash, ${bps == null ? "rate unmeasured" : `${bps}bps/yr`}`}`, f);
   await setStatus(id, "idle");
   return { ...ctx, financing: f };
 }
@@ -1480,7 +1501,7 @@ export async function attribution(ctx: Ctx): Promise<Ctx> {
     `Intended: BUY ${ctx.size?.qty ?? 0} ${ctx.ticker}`,
     `Executed: ${ctx.trade.status} ${ctx.size?.qty ?? 0} ${ctx.ticker} @ ${ctx.trade.fill_price ?? "n/a"}`,
     `TCA: slippage ${ctx.tca?.slippage_bps ?? "n/a"}bps, fees ${ctx.tca?.fees_bps ?? "n/a"}bps`,
-    `Financing: ${ctx.financing ? `${ctx.financing.est_financing_bps}bps (${ctx.financing.funding_source})` : "n/a"}`,
+    `Financing: ${ctx.financing ? (ctx.financing.est_financing_bps == null ? `unmeasured (${ctx.financing.funding_source})` : `${ctx.financing.est_financing_bps}bps/yr cost of cash (${ctx.financing.funding_source})`) : "n/a"}`,
     `Quant signal: ${ctx.signal ? JSON.stringify(ctx.signal.factors) : "n/a"}`,
     `Memo conviction: ${ctx.memo?.conviction ?? "n/a"}`,
   ].join("\n");
@@ -1671,7 +1692,7 @@ async function bootstrapFor(c: Record<string, ClusterRef>, suffix = ""): Promise
     valuationReviewer:   await ensureAgent(`Valuation Reviewer${s}`,   "research",  c.research, m("valuation-reviewer")),
     cio:                 await ensureAgent(`CIO / Committee${s}`,      "ops",       c.committee, m("cio")),
     pm:                  await ensureAgent(`PM${s}`,                   "ops",       c.ops, m("portfolio-manager")),
-    treasury:            await ensureAgent(`Treasury${s}`,             "ops",       c.treasury, m("treasury")),
+    treasury:            await ensureAgent(`Treasury${s}`,             "ops",       c.treasury, "code"),
     risk:                await ensureAgent(`Risk Officer${s}`,         "risk",      c.risk, m("risk-officer")),
     compliance:          await ensureAgent(`Compliance${s}`,           "ops",       c.ops, m("compliance")),
     smartRouter:         await ensureAgent(`Smart Router${s}`,         "execution", c.execution, m("smart-router")),

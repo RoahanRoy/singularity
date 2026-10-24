@@ -60,13 +60,13 @@ const PIPE: [string, string, Tier, Role, string][] = [
   ["07", "Valuation Reviewer", "opus", "research", "Reviews the fair-value band the valuation agents computed and judges how well those models fit this business. A poor fit downgrades 'cheap' to 'fair'. It estimates a band itself only when none was computed."],
   ["08", "CIO / Committee", "opus", "gate", "Combines memo, critique, valuation and quant signal into one go / no-go. The PM must respect it."],
   ["09", "Portfolio Manager", "opus", "decision", "Picks a weight within the mandate's per-name cap; code turns it into shares at the live price and fund NAV. It's a proposal — risk and compliance still gate it."],
-  ["10", "Treasury", "sonnet", "decision", "Decides funding: cash vs margin, borrow for shorts, and the financing cost in basis points."],
+  ["10", "Treasury", "code", "decision", "Funds the trade from the mandate's cash, in code: blocks it with no mandate or too little deployable cash, and prices the cash at the measured short rate."],
   ["11", "Risk Officer", "code", "gate", "1-day 95% VaR on the proposed position, measured from the stock's own GARCH and historical VaR. Approves only inside 1.5% of NAV. A conservative haiku estimate is the fallback when nothing was measured."],
   ["12", "Risk Overlay", "code", "gate", "Deterministic book-level check: gross leverage, name count, position weight and VaR caps. Vetoes any breach."],
   ["13", "Compliance", "haiku", "gate", "Restricted list, position limits, wash sale, Reg SHO. It can block, but never approves sizing."],
   ["14", "Smart Router", "haiku", "execution", "Picks venue and algorithm (TWAP / VWAP / IS). No say over size — only how it reaches the market."],
-  ["15", "Paper Broker", "code", "execution", "Simulated fills, no LLM. Writes the trade so the book and P&L move."],
-  ["16", "TCA", "haiku", "post", "Post-trade cost analysis: slippage vs benchmark, fees and market impact."],
+  ["15", "Paper Broker", "code", "execution", "Paper fills at the live quote, no LLM. No quote, no fill. Writes the trade so the book and P&L move."],
+  ["16", "TCA", "code", "post", "Measures the fill against the arrival quote the PM sized on. Paper fills carry no fees or modelled impact yet."],
   ["17", "Attribution & Recon", "haiku", "post", "Reconciles intended vs executed and attributes expected return to its factor sources. Closes the loop."],
 ];
 
