@@ -6,8 +6,15 @@ import { useMarket } from "../MarketContext";
 import { FundMandatePanel } from "../FundMandate";
 import { HorizonSourcePanel, useHorizonStatus } from "../HorizonSource";
 import { IbkrAccountsPanel } from "../IbkrAccounts";
-import { latestRiskReport, listAdvisoryPositions, listAdvisoryTrades, listFundSnapshots } from "@/lib/appwrite/queries";
-import type { AdvisoryTrade, FactorExposure, FundSnapshot, Position, RiskReport, RiskReportPayload } from "@/lib/appwrite/schema";
+import {
+  latestRiskReport,
+  listAdvisoryPositions,
+  listAdvisoryTrades,
+  listFundSnapshots,
+  listFundTrades,
+  listMemosForTickers,
+} from "@/lib/appwrite/queries";
+import type { AdvisoryTrade, FactorExposure, FundSnapshot, Memo, Position, RiskReport, RiskReportPayload, Trade } from "@/lib/appwrite/schema";
 import type { Market } from "@/lib/meridian/format";
 import { MIN_DAYS_FOR_STATS, type BenchmarkResult } from "@/lib/fund/benchmark";
 import { recordedTrack } from "@/lib/fund/scorecard";
@@ -131,7 +138,7 @@ function parseReport(row: RiskReport | null): { row: RiskReport; p: RiskReportPa
 
 export function BookScreen() {
   const { market } = useMarket();
-  const { full } = useDesk();
+  const { full, go, setResearchView, setFocusMemo } = useDesk();
   const [book, setBook] = useState<Book>("fund");
   const [range, setRange] = useState("3M");
   // Null: the comparison when there's a track to draw, else the value.
@@ -189,6 +196,24 @@ export function BookScreen() {
   const weighted = sorted.map((p) => ({ p, w: denom > 0 ? (p.market_value || 0) / denom : 0 }));
   const quotes = useQuotes(sorted.slice(0, 40).map((p) => yahoo(p.ticker, market)));
   const byTicker = new Map((risk?.p.names ?? []).map((n) => [n.ticker, n]));
+  // The newest memo on each held name: why the book holds it.
+  const heldKey = sorted.map((p) => p.ticker.toUpperCase()).slice(0, 100);
+  const memoOf = useLoad(
+    () =>
+      listMemosForTickers(market, heldKey).then((ms) => {
+        const out: Record<string, Memo> = {};
+        for (const x of ms) if (x.ticker && !out[x.ticker.toUpperCase()]) out[x.ticker.toUpperCase()] = x;
+        return out;
+      }),
+    [market, heldKey.join(",")],
+    {} as Record<string, Memo>,
+  );
+  const openMemo = (x: Memo) => {
+    setFocusMemo(x);
+    setResearchView("filings");
+    go("research");
+  };
+  const HOLD_COLS = "minmax(120px,1.5fr) repeat(7,minmax(64px,0.8fr))";
   const budget = onboard?.budgets[market]?.target_te ?? null;
 
   const metricRows: [string, string, string?][] = [
@@ -329,31 +354,50 @@ export function BookScreen() {
           </p>
         ) : (
           <div style={{ overflowX: "auto" }}>
-            <div style={{ minWidth: 520 }}>
-              <div className="m-tr head" style={{ gridTemplateColumns: "minmax(120px,1.6fr) repeat(4,minmax(70px,1fr))" }}>
+            <div style={{ minWidth: 760 }}>
+              <div className="m-tr head" style={{ gridTemplateColumns: HOLD_COLS }}>
                 <span>Name</span>
-                <span style={{ textAlign: "right" }}>Weight</span>
-                <span style={{ textAlign: "right" }}>Today</span>
-                <span style={{ textAlign: "right" }}>Beta</span>
-                <span style={{ textAlign: "right" }}>Share of risk</span>
+                <span className="r">Quantity</span>
+                <span className="r">Avg cost</span>
+                <span className="r">Value</span>
+                <span className="r">Unrealised</span>
+                <span className="r">Weight</span>
+                <span className="r">Today</span>
+                <span className="r" title="Beta · share of the book's risk">Beta · risk</span>
               </div>
               {weighted.map(({ p, w }) => {
                 const q = quotes[yahoo(p.ticker, market)];
                 const d = q ? q.changePct / 100 : null;
                 const r = byTicker.get(p.ticker);
                 return (
-                  <div key={p.$id} className="m-tr" style={{ gridTemplateColumns: "minmax(120px,1.6fr) repeat(4,minmax(70px,1fr))" }}>
+                  <div key={p.$id} className="m-tr" style={{ gridTemplateColumns: HOLD_COLS, fontSize: 13 }}>
                     <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       <span style={{ fontWeight: 600 }}>{p.ticker}</span>{" "}
-                      {p.label && <span className="m-meta">{p.label}</span>}
+                      {memoOf?.[p.ticker.toUpperCase()] ? (
+                        <button className="m-link" style={{ fontSize: 12 }} onClick={() => openMemo(memoOf[p.ticker.toUpperCase()])}>
+                          thesis →
+                        </button>
+                      ) : (
+                        p.label && <span className="m-meta">{p.label}</span>
+                      )}
                     </span>
-                    <span style={{ textAlign: "right" }}>{pct(w, 1)}</span>
-                    <span style={{ textAlign: "right", color: toneOf(d) }}>{pct(d, 2, true)}</span>
-                    <span className="m-ink2" style={{ textAlign: "right" }}>
-                      {r?.beta == null ? "—" : r.beta.toFixed(2)}
+                    <span className="r">{p.qty.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+                    <span className="r m-ink2">{p.avg_cost ? money(p.avg_cost, market) : "—"}</span>
+                    <span className="r">{money(p.market_value || 0, market)}</span>
+                    <span className="r" style={{ color: toneOf(p.unrealized_pnl) }}>
+                      {p.unrealized_pnl == null
+                        ? "—"
+                        : `${p.unrealized_pnl < 0 ? "−" : "+"}${money(Math.abs(p.unrealized_pnl), market)}`}
+                      {p.avg_cost > 0 && p.qty > 0 && (
+                        <span className="m-meta" style={{ display: "block" }}>
+                          {pct(p.unrealized_pnl / (p.avg_cost * p.qty), 1, true)}
+                        </span>
+                      )}
                     </span>
-                    <span className="m-ink2" style={{ textAlign: "right" }}>
-                      {pct(r?.risk_share, 1)}
+                    <span className="r">{pct(w, 1)}</span>
+                    <span className="r" style={{ color: toneOf(d) }}>{pct(d, 2, true)}</span>
+                    <span className="r m-ink2">
+                      {r?.beta == null ? "—" : r.beta.toFixed(2)} · {pct(r?.risk_share, 0)}
                     </span>
                   </div>
                 );
@@ -363,12 +407,13 @@ export function BookScreen() {
         )}
         {book === "fund" && fund?.cash != null && value ? (
           <p className="m-note">
-            Cash {fullMoney(fund.cash, market)} ({pct(fund.cash / value, 1)}) is undeployed mandate capital.
+            Cash {fullMoney(fund.cash, market)} ({pct(fund.cash / value, 1)}) is undeployed mandate capital. Value and unrealised
+            P&amp;L are at the last mark; Today is live.
           </p>
         ) : null}
       </section>
 
-      {book === "advisory" && <TradesSection market={market} nonce={nonce} />}
+      {book === "advisory" ? <TradesSection market={market} nonce={nonce} /> : <FundTrades market={market} />}
 
       {full && <FullDetail weighted={weighted} risk={risk} indexName={index.name} />}
 
@@ -480,6 +525,62 @@ function TradesSection({ market, nonce }: { market: Market; nonce: number }) {
               </button>
             </p>
           )}
+        </>
+      )}
+    </section>
+  );
+}
+
+/** The fund's fills: what the paper broker bought and sold, newest first. */
+function FundTrades({ market }: { market: Market }) {
+  const [all, setAll] = useState(false);
+  const trades = useLoad(() => listFundTrades(market, 200), [market], [] as Trade[]);
+  const shown = trades ? (all ? trades : trades.slice(0, TRADES_SHOWN)) : [];
+  const cols = "minmax(96px,0.9fr) minmax(90px,1fr) 44px repeat(3,minmax(76px,1fr)) minmax(80px,0.9fr)";
+  return (
+    <section style={{ marginTop: 44 }}>
+      <div className="m-shead">
+        <h2 className="m-h2">Trades</h2>
+        <span className="m-meta">The fund&apos;s paper fills</span>
+      </div>
+      {trades == null ? (
+        <p className="m-empty">Loading…</p>
+      ) : trades.length === 0 ? (
+        <p className="m-empty">The fund hasn&apos;t traded yet: approved orders and the core rebalance fill at the next desk run.</p>
+      ) : (
+        <>
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ minWidth: 640 }}>
+              <div className="m-tr head" style={{ gridTemplateColumns: cols }}>
+                <span>Date</span>
+                <span>Name</span>
+                <span>Side</span>
+                <span className="r">Quantity</span>
+                <span className="r">Price</span>
+                <span className="r">Amount</span>
+                <span className="r">Venue</span>
+              </div>
+              {shown.map((t) => (
+                <div key={t.$id} className="m-tr" style={{ gridTemplateColumns: cols, fontSize: 13 }}>
+                  <span className="m-ink2">{tradeDate(t.filled_at ?? t.$createdAt)}</span>
+                  <span style={{ fontWeight: 600 }}>{t.ticker}</span>
+                  <span style={{ color: t.side === "buy" ? "var(--up)" : "var(--down)" }}>{t.side === "buy" ? "Buy" : "Sell"}</span>
+                  <span className="r">{t.qty.toLocaleString("en-US", { maximumFractionDigits: 4 })}</span>
+                  <span className="r m-ink2">{money(t.price, market)}</span>
+                  <span className="r">{money(t.qty * t.price, market)}</span>
+                  <span className="r m-ink2">{t.venue}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          {trades.length > TRADES_SHOWN && (
+            <p className="m-note">
+              <button className="m-link" onClick={() => setAll((v) => !v)}>
+                {all ? "Show fewer" : `Show all ${trades.length}${trades.length === 200 ? " most recent" : ""}`}
+              </button>
+            </p>
+          )}
+          <p className="m-note">Execution cost against the arrival price is in each fill&apos;s TCA step on the Agents feed; it isn&apos;t stored on the trade.</p>
         </>
       )}
     </section>

@@ -186,6 +186,16 @@ export async function listPendingTrades(limit = 10, market?: Market): Promise<Tr
   return res.documents;
 }
 
+/** The fund's fills on a desk, newest first (the paper broker's `trades` rows). */
+export async function listFundTrades(market: Market, limit = 100): Promise<Trade[]> {
+  const res = await databases.listDocuments<Trade & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.trades,
+    [...marketFilter(market), Query.equal("status", "filled"), Query.orderDesc("$createdAt"), Query.limit(limit)],
+  );
+  return res.documents;
+}
+
 export async function listRecentTrades(limit = 50): Promise<Trade[]> {
   const res = await databases.listDocuments<Trade & Models.Document>(
     DATABASE_ID,
