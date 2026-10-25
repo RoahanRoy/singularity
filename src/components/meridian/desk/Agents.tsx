@@ -13,7 +13,7 @@ import {
   subscribeAgents,
 } from "@/lib/appwrite/queries";
 import type { Agent, AgentEvent } from "@/lib/appwrite/schema";
-import { ago, useLoad } from "./data";
+import { ago, startOfToday, useLoad } from "./data";
 
 /**
  * The agent fleet on the v2 layout: what the desk's agents are doing now, by
@@ -50,12 +50,6 @@ const plain = (s: string) => s.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").re
 function modelLabel(model: string): string {
   const m = model.trim().match(/^claude-(opus|sonnet|haiku|fable)-([\d-]+)$/i);
   return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2].replace(/-/g, ".")}` : model;
-}
-
-function startOfToday(): string {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
 }
 
 export function AgentsScreen() {

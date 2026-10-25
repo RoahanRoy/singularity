@@ -14,7 +14,7 @@ import {
 } from "@/lib/appwrite/queries";
 import type { AgentStatusDoc, AgentWorker, BudgetLedger, OperatorMessage } from "@/lib/appwrite/schema";
 import type { Market } from "@/lib/meridian/format";
-import { ago, money, toneOf, useFundBook, useLoad, useOnboard } from "./data";
+import { ago, money, startOfToday, toneOf, useFundBook, useLoad, useOnboard } from "./data";
 
 /**
  * The operator console on the v2 layout: a chat on the desk's real
@@ -264,12 +264,6 @@ function Workers() {
       </div>
     </>
   );
-}
-
-function startOfToday(): string {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
 }
 
 const CATEGORY: Record<BudgetLedger["category"], string> = {

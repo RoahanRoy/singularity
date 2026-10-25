@@ -40,11 +40,17 @@ export async function listClusters(market?: Market): Promise<Cluster[]> {
   return res.documents;
 }
 
-export async function listRecentEvents(limit = 12): Promise<AgentEvent[]> {
+/** Newest events; pass a desk's agent ids to keep that desk's (events carry no market). */
+export async function listRecentEvents(limit = 12, agentIds?: string[]): Promise<AgentEvent[]> {
+  if (agentIds && agentIds.length === 0) return [];
   const res = await databases.listDocuments<AgentEvent & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.agent_events,
-    [Query.orderDesc("occurred_at"), Query.limit(limit)],
+    [
+      ...(agentIds ? [Query.equal("agent_id", agentIds.slice(0, 100))] : []),
+      Query.orderDesc("occurred_at"),
+      Query.limit(limit),
+    ],
   );
   return res.documents;
 }

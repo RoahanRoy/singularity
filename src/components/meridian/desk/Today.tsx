@@ -8,12 +8,12 @@ import {
   listAgentStatus,
   listAgents,
   listAuditLog,
-  listBudgetLedger,
+  listBudgetSince,
   listRecentEvents,
   subscribeAgentEvents,
   subscribeAgentStatus,
 } from "@/lib/appwrite/queries";
-import type { AgentEvent, AgentStatusDoc, Memo } from "@/lib/appwrite/schema";
+import type { Agent, AgentEvent, AgentStatusDoc, Memo } from "@/lib/appwrite/schema";
 import { lagLimit, Z99 } from "@/lib/fund/risk-budget";
 import { TRADING_DAYS } from "@/lib/quant/risk";
 import { DESK_INDEX } from "@/lib/market/indices";
@@ -25,6 +25,7 @@ import {
   fullMoney,
   heldOrder,
   pct,
+  startOfToday,
   toneOf,
   useFundBook,
   useLoad,
@@ -37,25 +38,59 @@ import {
 // this and nobody is home to run them (same rule as the Console).
 const DISPATCHER_STALE_MS = 12 * 60_000;
 const WORKERS = ["responder", "tech", "india"] as const;
+const FEED_SIZE = 8;
+const SEEN_KEY = (m: Market) => `meridian-desk-seen-${m}`;
+
+/** When this viewer last left Today on a desk (this browser only). */
+function readSeen(m: Market): string | null {
+  try {
+    return window.localStorage.getItem(SEEN_KEY(m));
+  } catch {
+    return null;
+  }
+}
 
 export function TodayScreen() {
   const { market } = useMarket();
   const onboard = useOnboard();
   const book = useFundBook(market, onboard);
   const { held, go } = useDesk();
-  const [events, setEvents] = useState<AgentEvent[] | null>(null);
+  // The event stream is shared by both desks; this desk's agents pick its rows.
+  const agents = useLoad(() => listAgents(200, market), [market], [] as Agent[]);
+  const [got, setGot] = useState<{ market: Market; rows: AgentEvent[] } | null>(null);
+  // The last visit as it stood when Today opened; leaving stamps the next one.
+  const [seen] = useState(() => ({ US: readSeen("US"), IN: readSeen("IN") }));
 
   useEffect(() => {
+    if (!agents) return;
+    const mine = new Set(agents.map((a) => a.$id));
     let cancelled = false;
-    listRecentEvents(6)
-      .then((e) => !cancelled && setEvents(e))
-      .catch(() => !cancelled && setEvents([]));
-    const unsub = subscribeAgentEvents((ev) => !cancelled && setEvents((p) => [ev, ...(p ?? [])].slice(0, 6)));
+    listRecentEvents(FEED_SIZE, [...mine])
+      .then((rows) => !cancelled && setGot({ market, rows }))
+      .catch(() => !cancelled && setGot({ market, rows: [] }));
+    const unsub = subscribeAgentEvents((ev) => {
+      if (cancelled || !mine.has(ev.agent_id)) return;
+      setGot((p) => ({ market, rows: [ev, ...(p?.market === market ? p.rows : [])].slice(0, FEED_SIZE) }));
+    });
     return () => {
       cancelled = true;
       unsub();
     };
-  }, []);
+  }, [agents, market]);
+
+  useEffect(
+    () => () => {
+      try {
+        window.localStorage.setItem(SEEN_KEY(market), new Date().toISOString());
+      } catch {
+        /* storage blocked: every visit reads as the first */
+      }
+    },
+    [market],
+  );
+
+  const events = got?.market === market ? got.rows : null;
+  const names = Object.fromEntries((agents ?? []).map((a) => [a.$id, a.name]));
 
   const pending = (held ?? []).filter((m) => m.status === "review");
   const budget = onboard?.budgets[market] ?? null;
@@ -65,7 +100,7 @@ export function TodayScreen() {
       <div className="m-stack">
         <Headline market={market} book={book} pending={pending.length} lastStep={events?.[0]?.occurred_at ?? null} />
         <Decisions held={held} />
-        <Feed events={events} onAll={() => go("agents")} />
+        <Feed events={events} names={names} seenAt={seen[market]} onAll={() => go("agents")} />
       </div>
       <aside className="m-aside">
         <AgentCard lastStep={events?.[0]?.occurred_at ?? null} />
@@ -329,15 +364,44 @@ function ThesisLink({ memo }: { memo: Memo }) {
   );
 }
 
-// The order the broker sized. It only holds an order that cleared compliance
-// and the pre-trade gate, so both read as passed.
+// The order the broker sized, and what each gate measured on it. The broker
+// only holds an order that cleared the risk budget, the pre-trade overlay and
+// compliance; orders staged before the measures were stored say so.
 function planRows(m: Memo, o: ReturnType<typeof heldOrder>): [string, string, string?][] {
   if (!o) return [["Order", "No sized order on this memo", "var(--warn)"]];
   const rows: [string, string, string?][] = [["Order", `Buy ${o.qty.toLocaleString()} ${m.ticker ?? "shares"}`]];
   if (o.weight_pct != null) rows.push(["Size", `${o.weight_pct.toFixed(2)}% of NAV`]);
   if (o.algo || o.venue) rows.push(["Route", [o.algo, o.venue].filter(Boolean).join(" · ")]);
   if (o.arrival) rows.push(["Arrival price", `${o.arrival.price.toLocaleString(undefined, { maximumFractionDigits: 2 })} · ${clockOrDate(o.arrival.at)}`]);
-  rows.push(["Pre-trade risk gate", "Passed", "var(--up)"], ["Compliance", "Passed", "var(--up)"]);
+  const c = o.checks;
+  if (!c) {
+    rows.push(["Risk budget, overlay, compliance", "Cleared · measures not stored on this order", "var(--up)"]);
+    return rows;
+  }
+  if (c.te_before != null && c.te_after != null)
+    rows.push([
+      "Tracking error",
+      `${pct(c.te_before)} → ${pct(c.te_after)}${c.target_te != null ? ` · budget ${pct(c.target_te)}` : ""}`,
+      "var(--up)",
+    ]);
+  if (c.var95_after_pct != null) rows.push(["Book 1-day VaR 95% after", `${c.var95_after_pct.toFixed(2)}% of NAV`]);
+  if (c.valuation)
+    rows.push([
+      "Valuation",
+      `${c.valuation.verdict}${c.valuation.upside_pct != null ? ` · ${c.valuation.upside_pct > 0 ? "+" : ""}${c.valuation.upside_pct.toFixed(1)}% to fair value` : ""}`,
+      c.valuation.verdict === "rich" ? "var(--warn)" : undefined,
+    ]);
+  if (c.critic)
+    rows.push([
+      "Red-team critic",
+      `${c.critic.verdict}${c.critic.score != null ? ` · ${c.critic.score.toFixed(2)}` : ""}`,
+      c.critic.verdict === "pass" ? "var(--up)" : "var(--warn)",
+    ]);
+  rows.push(
+    c.compliance_flags.length
+      ? ["Compliance", `Cleared with notes: ${c.compliance_flags.join("; ")}`, "var(--warn)"]
+      : ["Compliance", "Cleared, no flags", "var(--up)"],
+  );
   return rows;
 }
 
@@ -347,16 +411,31 @@ function firstSentence(s: string): string {
   return m ? m[1] : t.length > 220 ? t.slice(0, 217) + "…" : t;
 }
 
-function Feed({ events, onAll }: { events: AgentEvent[] | null; onAll: () => void }) {
-  const names = useLoad(
-    () => listAgents(200).then((a) => Object.fromEntries(a.map((x) => [x.$id, x.name]))),
-    [],
-    {} as Record<string, string>,
-  );
+function Feed({
+  events,
+  names,
+  seenAt,
+  onAll,
+}: {
+  events: AgentEvent[] | null;
+  names: Record<string, string>;
+  seenAt: string | null;
+  onAll: () => void;
+}) {
+  const fresh = (e: AgentEvent) => !seenAt || e.occurred_at > seenAt;
+  const count = events?.filter(fresh).length ?? 0;
+  const meta = !seenAt
+    ? "Latest on this desk"
+    : count === 0
+      ? `Nothing new since ${clockOrDate(seenAt)}`
+      : `${count === FEED_SIZE ? `${count}+` : count} new since ${clockOrDate(seenAt)}`;
   return (
     <section>
       <div className="m-shead">
         <h2 className="m-h2">Since you last looked</h2>
+        <span className="m-meta" style={{ marginRight: "auto", marginLeft: 12 }}>
+          {events == null ? "" : meta}
+        </span>
         <button className="m-link" onClick={onAll}>
           All agent activity →
         </button>
@@ -364,7 +443,7 @@ function Feed({ events, onAll }: { events: AgentEvent[] | null; onAll: () => voi
       {events == null ? (
         <p className="m-empty">Loading…</p>
       ) : events.length === 0 ? (
-        <p className="m-empty">No agent activity yet.</p>
+        <p className="m-empty">No agent activity on this desk yet.</p>
       ) : (
         events.map((e) => (
           <div
@@ -376,13 +455,14 @@ function Feed({ events, onAll }: { events: AgentEvent[] | null; onAll: () => voi
               padding: "11px 0",
               borderTop: "1px solid var(--line)",
               fontSize: 13,
+              opacity: fresh(e) ? 1 : 0.55,
             }}
           >
             <span className="m-mono m-ink3" style={{ fontSize: 12 }}>
               {clockOrDate(e.occurred_at)}
             </span>
             <span style={{ minWidth: 0 }}>
-              <span style={{ fontWeight: 600 }}>{names?.[e.agent_id] ?? e.agent_id}</span>{" "}
+              <span style={{ fontWeight: 600 }}>{names[e.agent_id] ?? e.agent_id}</span>{" "}
               <span className="m-ink2">{e.summary}</span>
             </span>
           </div>
@@ -396,16 +476,15 @@ function AgentCard({ lastStep }: { lastStep: string | null }) {
   const [statuses, setStatuses] = useState<Record<string, AgentStatusDoc> | null>(null);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  // Both desks, since local midnight; a page short of the day's rows reads as a floor.
   const spend = useLoad(
     () =>
-      listBudgetLedger(200).then((rows) => {
-        const day = new Date().toDateString();
-        return rows
-          .filter((r) => r.category === "llm" && new Date(r.occurred_at).toDateString() === day)
-          .reduce((s, r) => s + (r.amount_usd || 0), 0);
-      }),
+      listBudgetSince(startOfToday()).then(({ rows, total }) => ({
+        usd: rows.filter((r) => r.category === "llm").reduce((s, r) => s + (r.amount_usd || 0), 0),
+        partial: total > rows.length,
+      })),
     [],
-    null as number | null,
+    null as { usd: number; partial: boolean } | null,
   );
 
   useEffect(() => {
@@ -463,7 +542,7 @@ function AgentCard({ lastStep }: { lastStep: string | null }) {
       <div className="m-sub">{sub}</div>
       <div className="m-kv" style={{ borderTop: 0, padding: 0, fontSize: 12 }}>
         <span>Inference spend today</span>
-        <span>{spend == null ? "—" : `$${spend.toFixed(2)}`}</span>
+        <span>{spend == null ? "—" : `${spend.partial ? "≥ " : ""}$${spend.usd.toFixed(2)}`}</span>
       </div>
       <button className="m-btn2" disabled={!online || busy} onClick={toggle} title={online ? undefined : "Run npm run agents:dispatch on your host"}>
         {running > 0 ? "Pause all agents" : "Resume agents"}
@@ -522,7 +601,7 @@ function Guardrails({ market, target, onEdit }: { market: Market; target: number
           [`No single name's active risk above ${pct(target)}`, true],
           [`Halt on a day loss beyond ${Z99.toFixed(2)} × (index vol + ${pct(target)}) / √${TRADING_DAYS}`, true],
           [`Halt when trailing the ${idx} by ${pct(lagLimit(target, 21))} over a month`, true],
-          ["Every trade waits for your approval", true],
+          ["Trades wait for your approval unless the desk runs with MERIDIAN_AUTO_APPROVE=1", true],
         ];
   return (
     <section>

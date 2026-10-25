@@ -26,7 +26,14 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[], fallback: T)
   return got && got.key === key ? got.v : null;
 }
 
-export type MandateCash = { cash: number; capital_base: number; status?: string };
+/** Local midnight, as an ISO stamp. */
+export function startOfToday(): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+}
+
+export type MandateCash ={ cash: number; capital_base: number; status?: string };
 export type Onboard = {
   mandates: Record<Market, MandateCash | null>;
   budgets: Record<Market, { target_te: number; set_at?: string } | null>;
@@ -113,6 +120,16 @@ export type HeldOrder = {
   algo: string | null;
   conviction: number | null;
   arrival: { price: number; at: string } | null;
+  /** What each gate measured (nodes.ts stagedOrder); absent on orders staged before it was stored. */
+  checks?: {
+    te_before: number | null;
+    te_after: number | null;
+    target_te: number | null;
+    var95_after_pct: number | null;
+    critic: { verdict: "pass" | "revise" | "reject"; score: number | null } | null;
+    valuation: { verdict: "rich" | "fair" | "cheap"; upside_pct: number | null; low: number; high: number } | null;
+    compliance_flags: string[];
+  };
 };
 
 export function heldOrder(m: Pick<Memo, "pending_exec_json">): HeldOrder | null {
