@@ -215,7 +215,28 @@ export function Shell({ children }: { children: (screen: ScreenId) => ReactNode 
     setScreen(id);
     setMoreOpen(false);
     write(SCREEN_KEY, id);
+    // Each screen is a history entry, so Back returns to the last one and a
+    // copied link opens the same screen.
+    const u = new URL(window.location.href);
+    const param = raw === "quant" ? "quant" : id;
+    if (u.searchParams.get("screen") !== param) {
+      u.searchParams.set("screen", param);
+      window.history.pushState(null, "", u);
+    }
     window.scrollTo(0, 0);
+  }, []);
+
+  useEffect(() => {
+    const onPop = () => {
+      const raw = new URLSearchParams(window.location.search).get("screen");
+      const id = resolveScreen(raw);
+      if (!id) return;
+      if (raw === "quant") setResearchView("quant");
+      setScreen(id);
+      setMoreOpen(false);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, []);
   const setDetail = (f: boolean) => {
     setFull(f);
