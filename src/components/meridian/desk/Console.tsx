@@ -28,6 +28,10 @@ const threadFor = (market: Market) => (market === "IN" ? "default-IN" : "default
 
 const HINTS = ["What's my biggest risk?", "Summarise today", "Which memos are waiting on me?", "What changed on the book?"];
 
+// The responder polls once a minute when idle, then a model call answers.
+// Past this with no reply, nobody is answering: it isn't running.
+const REPLY_WAIT_MS = 5 * 60_000;
+
 function Chat({ market }: { market: Market }) {
   const op = useOperator();
   const thread = threadFor(market);
@@ -36,6 +40,12 @@ function Chat({ market }: { market: Market }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const feed = useRef<HTMLDivElement>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,7 +66,10 @@ function Chat({ market }: { market: Market }) {
   }, [thread]);
 
   const msgs = got?.thread === thread ? got.rows : null;
-  const thinking = !!msgs?.length && msgs[msgs.length - 1].role === "operator";
+  const last = msgs?.[msgs.length - 1];
+  const waiting = last?.role === "operator" ? Math.max(0, now - Date.parse(last.$createdAt)) : null;
+  const thinking = waiting != null && waiting < REPLY_WAIT_MS;
+  const unanswered = waiting != null && !thinking;
 
   useEffect(() => {
     if (feed.current) feed.current.scrollTop = feed.current.scrollHeight;
@@ -106,6 +119,13 @@ function Chat({ market }: { market: Market }) {
           })
         )}
         {thinking && <p className="m-meta m-pulse">Meridian is working…</p>}
+        {unanswered && (
+          <p className="m-sub" style={{ color: "var(--warn)", margin: 0 }}>
+            No reply after {ago(last!.$createdAt, now)}: the Operator responder isn&apos;t running. It runs on your Mac
+            alongside <span className="m-mono">npm run dev</span> or <span className="m-mono">npm run agents:responder</span>, and
+            answers only messages from the 10 minutes before it starts, so ask again once it&apos;s up.
+          </p>
+        )}
       </div>
       <div className="m-chips">
         {HINTS.map((h) => (
@@ -130,7 +150,7 @@ function Chat({ market }: { market: Market }) {
       </form>
       <p className="m-note" style={{ marginTop: 8 }}>
         {error ? <span style={{ color: "var(--down)" }}>{error} </span> : null}
-        The Operator responder answers from the live book, recent memos and news. If it&apos;s stopped, messages wait for it.
+        The Operator responder answers from the live book, recent memos and news.
       </p>
     </section>
   );
