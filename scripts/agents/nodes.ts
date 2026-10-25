@@ -100,7 +100,15 @@ export type Ctx = {
     /** The live quote the PM sized against: TCA's arrival benchmark. */
     arrival?: { price: number; at: string };
   };
-  risk?: { approved: boolean; var_pct: number; notes: string };
+  risk?: {
+    approved: boolean;
+    var_pct: number;
+    notes: string;
+    /** Tracking error before and after the trade, and the budget it was held to (fractions). */
+    te_before?: number;
+    te_after?: number;
+    target_te?: number;
+  };
   compliance?: { approved: boolean; flags: string[] };
   route?: {
     venue: string;
@@ -939,6 +947,9 @@ export async function risk(ctx: Ctx): Promise<Ctx> {
       ? breaches.join("; ")
       : `Tracking error ${pctOf(m.before.tracking_error)} → ${pctOf(post.tracking_error)} vs the ${pctOf(target)} budget (${m.index}); ${ctx.ticker} ${pctOf(m.nameWeightBefore + add)} × ${pctOf(m.nameActiveVol)} active vol = ${pctOf((m.nameWeightBefore + add) * m.nameActiveVol)} of it. Book VaR95 ${pctOf(post.var95.parametric)}.`
     ).slice(0, 1000),
+    te_before: m.before.tracking_error,
+    te_after: post.tracking_error,
+    target_te: target,
   };
   await emit(id, r.approved ? "thought" : "alert",
     `Risk ${r.approved ? "APPROVED" : "BLOCKED"} ${ctx.ticker} (TE ${pctOf(post.tracking_error)} vs ${pctOf(target)} budget)`, r);
@@ -1128,6 +1139,33 @@ export async function smartRouter(ctx: Ctx): Promise<Ctx> {
 const coreNote = (f: { core_sold: number }, market: "US" | "IN") =>
   f.core_sold > 0 ? `, funded in part by selling ${f.core_sold} ${DESK_INDEX[market].etf}` : "";
 
+/**
+ * The order held for the operator: its size and route, plus what each gate
+ * measured on it, so the desk can show the numbers rather than "passed".
+ */
+function stagedOrder(ctx: Ctx) {
+  const round = (x: number | undefined, dp = 4) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 10 ** dp) / 10 ** dp);
+  return {
+    qty: ctx.size!.qty,
+    weight_pct: ctx.size?.weight_pct ?? null,
+    venue: ctx.route?.venue ?? null,
+    algo: ctx.route?.algo ?? null,
+    conviction: ctx.memo?.conviction ?? null,
+    arrival: ctx.size?.arrival ?? null,
+    checks: {
+      te_before: round(ctx.risk?.te_before),
+      te_after: round(ctx.risk?.te_after),
+      target_te: round(ctx.risk?.target_te),
+      var95_after_pct: ctx.risk?.var_pct ?? null,
+      critic: ctx.critique ? { verdict: ctx.critique.verdict, score: round(ctx.critique.score, 2) } : null,
+      valuation: ctx.valuation
+        ? { verdict: ctx.valuation.verdict, upside_pct: round(ctx.valuation.implied_upside_pct, 1), low: ctx.valuation.fair_value_low, high: ctx.valuation.fair_value_high }
+        : null,
+      compliance_flags: (ctx.compliance?.flags ?? []).slice(0, 5).map((f) => f.slice(0, 120)),
+    },
+  };
+}
+
 export async function broker(ctx: Ctx): Promise<Ctx> {
   const id = ctx.agentIds.broker;
   if (!ctx.compliance?.approved || !ctx.preTrade?.allowed) return ctx;
@@ -1141,14 +1179,7 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
   // fill without re-running the LLM chain. tca/attribution are skipped until the
   // fill actually happens (they guard on ctx.trade).
   if (!AUTO_APPROVE) {
-    const pending = {
-      qty,
-      weight_pct: ctx.size?.weight_pct ?? null,
-      venue: ctx.route?.venue ?? null,
-      algo: ctx.route?.algo ?? null,
-      conviction: ctx.memo?.conviction ?? null,
-      arrival: ctx.size?.arrival ?? null,
-    };
+    const pending = stagedOrder(ctx);
     if (ctx.memoId) {
       await db.updateDocument(DB, "memos", ctx.memoId, {
         status: "review",
@@ -1172,7 +1203,7 @@ export async function broker(ctx: Ctx): Promise<Ctx> {
     if (ctx.memoId) {
       await db.updateDocument(DB, "memos", ctx.memoId, {
         status: "review",
-        pending_exec_json: JSON.stringify({ qty, weight_pct: ctx.size?.weight_pct ?? null, venue: ctx.route?.venue ?? null, algo: ctx.route?.algo ?? null, conviction: ctx.memo?.conviction ?? null, arrival: ctx.size?.arrival ?? null }).slice(0, 2048),
+        pending_exec_json: JSON.stringify(stagedOrder(ctx)).slice(0, 2048),
       });
     }
     await emit(id, "handoff",
