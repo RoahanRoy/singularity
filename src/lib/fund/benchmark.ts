@@ -59,7 +59,8 @@ export type BenchmarkResult = {
 };
 
 const TRADING_DAYS = 252;
-const MIN_DAYS_FOR_STATS = 10;
+/** Daily returns needed before beta, tracking error, vol or Sharpe is read. */
+export const MIN_DAYS_FOR_STATS = 10;
 
 export function compareToIndex(holdings: BenchmarkHolding[], index: Bar[], from?: string): BenchmarkResult | null {
   const idx = index.filter((b) => b.close > 0 && (!from || b.date >= from)).sort((a, b) => a.date.localeCompare(b.date));

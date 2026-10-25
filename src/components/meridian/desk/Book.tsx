@@ -9,9 +9,9 @@ import { IbkrAccountsPanel } from "../IbkrAccounts";
 import { latestRiskReport, listAdvisoryPositions, listAdvisoryTrades, listFundSnapshots } from "@/lib/appwrite/queries";
 import type { AdvisoryTrade, FactorExposure, FundSnapshot, Position, RiskReport, RiskReportPayload } from "@/lib/appwrite/schema";
 import type { Market } from "@/lib/meridian/format";
-import type { Bar } from "@/lib/fund/benchmark";
+import { MIN_DAYS_FOR_STATS, type BenchmarkResult } from "@/lib/fund/benchmark";
+import { recordedTrack } from "@/lib/fund/scorecard";
 import { DESK_INDEX } from "@/lib/market/indices";
-import { operatorFetch } from "@/lib/auth/operator-fetch";
 import { TRADING_DAYS } from "@/lib/quant/risk";
 import { LineChart, shortDate } from "./Chart";
 import { PlanSection } from "./Plan";
@@ -84,21 +84,6 @@ function std(xs: number[]): number {
 }
 
 /**
- * The index's daily close on or before each mark's date: the last session the
- * mark had seen. Null for marks older than the closes Yahoo returned.
- * Marks and bars both run oldest first.
- */
-function indexOnMarks(snaps: FundSnapshot[], bars: Bar[] | null): (number | null)[] {
-  let k = 0;
-  let last: number | null = null;
-  return snaps.map((s) => {
-    const day = s.captured_at.slice(0, 10);
-    while (bars && k < bars.length && bars[k].date <= day) last = bars[k++].close;
-    return last;
-  });
-}
-
-/**
  * A mark written long after the moment it claims. An old enrich step replayed
  * the quantities held that day over a year of closes, back-dating each row; those rows
  * landed a day or more late. A recorded mark is written as it is taken, within
@@ -111,43 +96,29 @@ function isReplay(s: FundSnapshot): boolean {
 }
 
 /**
- * Range metrics from the stored marks. The advisory book's NAV moves with the
- * operator's deposits, so its returns come from the flow-free book_index when
- * every mark carries one. The index return comes from its daily closes on the
- * marks, or else the level each mark recorded.
+ * Range metrics from the recorded track: the flow-free book level against the
+ * index level written on the same marks, a point a day (scorecard.ts). NAV
+ * moves with deposits, top-ups and whatever a sync brings in, so none of these
+ * read it. Vol and Sharpe wait for as many days as beta does.
  */
-function metrics(snaps: FundSnapshot[], book: Book, closes: (number | null)[]) {
-  const flowFree = book === "advisory" && snaps.length > 0 && snaps.every((s) => s.book_index != null);
-  const level = snaps.map((s) => (flowFree ? (s.book_index as number) : s.nav_usd));
-  const rets: number[] = [];
-  for (let i = 1; i < level.length; i++) if (level[i - 1]) rets.push(level[i] / level[i - 1] - 1);
-  const enough = rets.length >= 2;
-  let peak = level[0] ?? 0;
-  let dd = 0;
-  for (const v of level) {
-    if (v > peak) peak = v;
-    if (peak) dd = Math.min(dd, v / peak - 1);
-  }
+function metrics(track: BenchmarkResult | null) {
+  if (!track) return { ret: null, idx: null, excess: null, dd: null, vol: null, sharpe: null };
+  const rets = track.book.slice(1).map((v, i) => v / track.book[i] - 1);
+  const enough = rets.length >= MIN_DAYS_FOR_STATS;
   const vol = std(rets) * Math.sqrt(TRADING_DAYS);
-  const mean = rets.length ? rets.reduce((s, x) => s + x, 0) / rets.length : 0;
-  const first = snaps[0];
-  const last = snaps[snaps.length - 1];
-  const c0 = closes[0];
-  const cN = closes[closes.length - 1];
-  const idx =
-    c0 && cN
-      ? cN / c0 - 1
-      : first?.index_level && last?.index_level
-        ? last.index_level / first.index_level - 1
-        : null;
+  const mean = rets.reduce((s, x) => s + x, 0) / rets.length;
   return {
-    ret: level.length >= 2 && level[0] ? level[level.length - 1] / level[0] - 1 : null,
-    idx,
-    dd: level.length >= 2 ? dd : null,
+    ret: track.bookReturn,
+    idx: track.indexReturn,
+    excess: track.excess,
+    dd: track.bookMaxDrawdown,
     vol: enough ? vol : null,
     sharpe: enough && vol ? (mean * TRADING_DAYS) / vol : null,
   };
 }
+
+/** A track day ("2026-10-24") as the chart writes dates, read at noon UTC so no zone shifts it a day. */
+const dayDate = (d: string) => shortDate(`${d}T12:00:00Z`);
 
 function parseReport(row: RiskReport | null): { row: RiskReport; p: RiskReportPayload } | null {
   if (!row) return null;
@@ -163,6 +134,8 @@ export function BookScreen() {
   const { full } = useDesk();
   const [book, setBook] = useState<Book>("fund");
   const [range, setRange] = useState("3M");
+  // Null: the comparison when there's a track to draw, else the value.
+  const [view, setView] = useState<"return" | "value" | null>(null);
   // Bumped after a Horizon sync so the advisory book re-reads.
   const [nonce, setNonce] = useState(0);
   const onboard = useOnboard();
@@ -179,15 +152,6 @@ export function BookScreen() {
   );
   const risk = riskGot?.hit ?? null;
   const { status: horizon, refresh: refreshHorizon } = useHorizonStatus();
-  // A year of the index's daily closes (no tickers: the index alone).
-  const indexBars = useLoad<Bar[] | null>(
-    () =>
-      operatorFetch(`/api/market/benchmark?market=${market}`, { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((j: { index?: { bars?: Bar[] } } | null) => j?.index?.bars ?? null),
-    [market],
-    null,
-  );
 
   const positions = (book === "fund" ? fund?.positions : advisory?.[0]) ?? [];
   const snapshots = (book === "fund" ? fund?.snapshots : advisory?.[1]) ?? [];
@@ -204,24 +168,22 @@ export function BookScreen() {
 
   const from = rangeStart(range, new Date());
   const inRange = snapshots.filter((s) => Date.parse(s.captured_at) >= from);
-  const closes = indexOnMarks(inRange, indexBars);
   const replays = inRange.map(isReplay);
-  const recorded = inRange.filter((_, i) => !replays[i]);
-  const m = metrics(recorded, book, indexOnMarks(recorded, indexBars));
+  // The book against its index: both levels rebased to 100 where the range's
+  // track starts, so the gap between the lines is the excess.
+  const track = recordedTrack(inRange.filter((_, i) => !replays[i]));
+  const trackStart = snapshots.find((s) => Number(s.book_index) > 0 && Number(s.index_level) > 0);
+  const m = metrics(track);
+  const shown = view ?? (track ? "return" : "value");
   const index = DESK_INDEX[market];
-  // The index rebased onto the book's value where its closes start, so the two
-  // lines leave together and the gap between them is the excess.
-  const anchor = closes.findIndex((c) => c != null);
-  const compare =
-    anchor >= 0 && anchor < inRange.length - 1
-      ? {
-          name: anchor === 0 ? index.name : `${index.name} · from ${shortDate(inRange[anchor].captured_at)}`,
-          color: "var(--ink-3)",
-          values: closes.map((c, i) =>
-            c == null || i < anchor ? null : (inRange[anchor].nav_usd * c) / (closes[anchor] as number),
-          ),
-        }
-      : undefined;
+  const bookName = book === "fund" ? "Fund" : "Holdings";
+  const trackNote = !loaded
+    ? null
+    : track
+      ? `From the flow-free book level against the ${index.name}, both read at the same ${book === "fund" ? "daily mark" : "Horizon pull"}, on ${track.dates.length} days from ${dayDate(track.dates[0])}. Market value moves with deposits and syncs, so it is drawn but not measured.`
+      : trackStart
+        ? `The ${index.name} comparison reads the flow-free book level each ${book === "fund" ? "daily mark" : "Horizon pull"} records, on record since ${shortDate(trackStart.captured_at)}. It draws once the range holds two days of it.`
+        : `The ${index.name} comparison reads the flow-free book level each ${book === "fund" ? "daily mark" : "Horizon pull"} records; none is on record yet.`;
 
   const sorted = [...positions].sort((a, b) => (b.market_value || 0) - (a.market_value || 0));
   const weighted = sorted.map((p) => ({ p, w: denom > 0 ? (p.market_value || 0) / denom : 0 }));
@@ -232,6 +194,7 @@ export function BookScreen() {
   const metricRows: [string, string, string?][] = [
     [`Return · ${range}`, pct(m.ret, 2, true), toneOf(m.ret)],
     [index.name, pct(m.idx, 2, true), toneOf(m.idx)],
+    ["Excess return", pct(m.excess, 2, true), toneOf(m.excess)],
     ["Max drawdown", pct(m.dd, 1)],
     ["Volatility (ann.)", pct(m.vol, 1)],
     ["Sharpe", m.sharpe == null ? "—" : m.sharpe.toFixed(2)],
@@ -274,28 +237,53 @@ export function BookScreen() {
                 : `${dayPnl < 0 ? "−" : "+"}${money(Math.abs(dayPnl), market)} (${pct(dayPct, 2, true)}) at the last mark`}
             </div>
           </div>
-          <div className="m-seg sm" role="group" aria-label="Range">
-            {RANGES.map(([id, label]) => (
-              <button key={id} aria-pressed={range === id} onClick={() => setRange(id)}>
-                {label}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <div className="m-seg sm" role="group" aria-label="Chart">
+              <button aria-pressed={shown === "return"} onClick={() => setView("return")}>
+                vs {index.name}
               </button>
-            ))}
+              <button aria-pressed={shown === "value"} onClick={() => setView("value")}>
+                Value
+              </button>
+            </div>
+            <div className="m-seg sm" role="group" aria-label="Range">
+              {RANGES.map(([id, label]) => (
+                <button key={id} aria-pressed={range === id} onClick={() => setRange(id)}>
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-        {inRange.length >= 2 ? (
+        {shown === "return" ? (
+          track ? (
+            <LineChart
+              points={track.dates.map((d, i) => ({ t: `${d}T12:00:00Z`, v: track.book[i] }))}
+              color={toneOf(track.excess || 1)}
+              name={bookName}
+              compare={{ name: index.name, color: "var(--ink-3)", values: track.index }}
+              label={(p, _first, i) => (
+                <>
+                  {shortDate(p.t)} · {bookName} {pct(p.v / 100 - 1, 2, true)} · {index.name}{" "}
+                  {pct(track.index[i] / 100 - 1, 2, true)} · excess {pct(p.v / 100 - track.index[i] / 100, 2, true)}
+                </>
+              )}
+            />
+          ) : (
+            <p className="m-empty" style={{ marginTop: 18 }}>
+              {loaded ? `Nothing to set against the ${index.name} in this range yet.` : "Loading…"}
+            </p>
+          )
+        ) : inRange.length >= 2 ? (
           <LineChart
             points={inRange.map((s) => ({ t: s.captured_at, v: s.nav_usd }))}
             color={toneOf((m.ret ?? 0) || 1)}
-            name={book === "fund" ? "Fund" : "Holdings"}
-            compare={compare}
+            name={bookName}
             faint={{ name: "Replayed: later holdings at past closes", at: replays }}
             label={(p, first, i) => (
               <>
                 {shortDate(p.t)} · {fullMoney(p.v, market)}
                 {replays[i] ? " (replayed)" : ""} · {pct(first.v ? p.v / first.v - 1 : null, 2, true)} in range
-                {compare && closes[i] != null && i >= anchor
-                  ? ` · ${index.name} ${pct((closes[i] as number) / (closes[anchor] as number) - 1, 2, true)}`
-                  : ""}
               </>
             )}
           />
@@ -318,11 +306,9 @@ export function BookScreen() {
           </div>
         ))}
       </div>
-      {replays.some(Boolean) && (
+      {trackNote && (
         <p className="m-meta" style={{ marginTop: 10 }}>
-          From the {recorded.length} recorded {recorded.length === 1 ? "mark" : "marks"} in range; the{" "}
-          {inRange.length - recorded.length} replayed {inRange.length - recorded.length === 1 ? "one is" : "ones are"} drawn
-          only.
+          {trackNote}
         </p>
       )}
 
