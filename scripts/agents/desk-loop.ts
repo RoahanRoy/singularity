@@ -55,7 +55,7 @@ import { heldTickers as heldOnBooks } from "./coverage";
 import { markFundNav } from "./fund-nav";
 import { reportRisk } from "./portfolio-risk";
 import { reportPlan } from "./construct";
-import { rebalanceCore } from "./core";
+import { openCoreApproval, rebalanceCore } from "./core";
 import { exchangeDate, marketState } from "./market-hours";
 import { collectEvents, type EventHit, type LatestFilingKey } from "./events";
 import { hasMemo, nextIdea } from "./ideas";
@@ -193,14 +193,18 @@ export async function runDesk(config: DeskConfig): Promise<void> {
   }
 
   // The fund's index core, traded to the session's plan once per session
-  // (core.ts): filled with MERIDIAN_AUTO_APPROVE=1, held for the operator
-  // otherwise. A session without a stored plan tries again next cycle.
+  // (core.ts): filled with MERIDIAN_AUTO_APPROVE=1 or under the operator's
+  // approval from the Book, held otherwise. A session without a stored plan
+  // tries again next cycle; an approval made after the session's run is
+  // picked up by the next cycle too.
   let coreSession: string | null = null;
   async function rebalanceCoreOnce(brokerId: string): Promise<void> {
     const session = exchangeDate(market);
-    if (coreSession === session) return;
+    const auto = process.env.MERIDIAN_AUTO_APPROVE === "1";
+    const approval = auto ? null : await openCoreApproval(market);
+    if (coreSession === session && !approval) return;
     try {
-      const r = await rebalanceCore(market, brokerId, { execute: process.env.MERIDIAN_AUTO_APPROVE === "1" });
+      const r = await rebalanceCore(market, brokerId, { execute: auto, approval });
       if (r.status === "skipped") {
         console.log(`[${key}] core rebalance skipped (${r.reason})`);
         return;

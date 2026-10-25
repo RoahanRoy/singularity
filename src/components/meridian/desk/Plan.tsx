@@ -3,8 +3,11 @@
 import { useState } from "react";
 import { latestConstructionPlan } from "@/lib/appwrite/queries";
 import type { ConstructionPlan, ConstructionPlanPayload } from "@/lib/appwrite/schema";
+import { operatorFetch } from "@/lib/auth/operator-fetch";
+import type { CoreApproval } from "@/lib/fund/core-approval";
 import type { Market } from "@/lib/meridian/format";
-import { money, pct, useLoad } from "./data";
+import { nextDeskRun, runLabel } from "@/lib/meridian/schedule";
+import { clockOrDate, money, pct, useLoad } from "./data";
 
 const BINDING: Record<ConstructionPlan["binding"], string> = {
   target: "at target tracking error",
@@ -155,6 +158,7 @@ export function PlanSection({ market, book, targetTe }: { market: Market; book: 
           </div>
         </div>
       )}
+      {book === "fund" && <CoreDecision market={market} planId={row.$id} line={lines.find((l) => l.role === "core") ?? null} />}
       {fixed.length > 0 &&
         toggle("fixed", `${fixed.length} held as they are`, fixed.map((f) => ({ ...f, reason: `${pct(f.weight, 1)} · ${f.reason}` })))}
       {skippedCount > 0 &&
@@ -173,5 +177,100 @@ export function PlanSection({ market, book, targetTe }: { market: Market; book: 
           : "Advisory only: nothing is sent to a broker."}
       </p>
     </section>
+  );
+}
+
+type CoreLine = NonNullable<ConstructionPlanPayload["lines"]>[number];
+
+/** Read the desk's core approval (/api/core/approve), or post a decision on it. */
+async function coreApproval(market: Market, body?: { action: "approve" | "undo"; planId?: string }) {
+  const res = await operatorFetch(
+    body ? "/api/core/approve" : `/api/core/approve?market=${market}`,
+    body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ market, ...body }) } : { cache: "no-store" },
+  );
+  const j = (await res.json().catch(() => ({}))) as { approval?: CoreApproval | null; error?: string };
+  if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+  return j.approval ?? null;
+}
+
+/**
+ * The plan's index-core trade as a decision: approve it and the next desk run
+ * fills it at a live price, the same side and at most these shares.
+ */
+function CoreDecision({ market, planId, line }: { market: Market; planId: string; line: CoreLine | null }) {
+  const [nonce, setNonce] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const got = useLoad(
+    () => coreApproval(market).then((a) => ({ a }), (e: Error) => ({ a: null, err: e.message })),
+    [market, nonce],
+    { a: null },
+  );
+  const a = got?.a ?? null;
+  const open = a?.status === "approved" ? a : null;
+  const shares = line?.shares ?? 0;
+  if (!got || (!open && !shares) || (!open && !line)) return null;
+
+  async function decide(action: "approve" | "undo") {
+    setBusy(true);
+    setError(null);
+    try {
+      await coreApproval(market, { action, planId });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setBusy(false);
+    setNonce((n) => n + 1);
+  }
+
+  const desk = market === "IN" ? "India" : "US";
+  const run = runLabel(nextDeskRun(market));
+  const side = shares > 0 ? "Buy" : "Sell";
+  return (
+    <div className="m-card" style={{ margin: "14px 0 4px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 16px" }}>
+      <div style={{ flex: "1 1 280px", minWidth: 0 }}>
+        {open ? (
+          <>
+            <div style={{ fontWeight: 600 }}>
+              Core rebalance approved: {open.side} up to {open.max_shares.toLocaleString()} {open.ticker}
+            </div>
+            <div className="m-sub" style={{ fontSize: 13 }}>
+              Approved {clockOrDate(open.approved_at)} on the {open.plan_session} plan. The {desk} run {run} fills it at the live
+              price, re-sized on the book then; it holds if the plan has turned to the other side.
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontWeight: 600 }}>
+              Needs your decision: {side.toLowerCase()} {Math.abs(shares).toLocaleString()} {line!.ticker} for the index core
+            </div>
+            <div className="m-sub" style={{ fontSize: 13 }}>
+              {money(Math.abs(line!.value ?? 0), market)} · core {pct(line!.from, 1)} → {pct(line!.toRounded, 1)} of NAV. Approve and the{" "}
+              {desk} run {run} fills it at the live price, never more than these shares.
+            </div>
+          </>
+        )}
+        {a && !open && a.status !== "withdrawn" && a.done_at && (
+          <div className="m-meta" style={{ marginTop: 4 }}>
+            Last approval {a.status} {clockOrDate(a.done_at)}
+            {a.detail ? `: ${a.detail}` : ""}
+          </div>
+        )}
+        {error && (
+          <div className="m-sub" style={{ color: "var(--down)", fontSize: 13, marginTop: 4 }}>
+            {error}
+          </div>
+        )}
+      </div>
+      {open ? (
+        <button className="m-btn2" disabled={busy} onClick={() => decide("undo")}>
+          Undo
+        </button>
+      ) : (
+        <button className="m-btn" disabled={busy} onClick={() => decide("approve")}>
+          Approve {side.toLowerCase()} {Math.abs(shares).toLocaleString()} {line!.ticker}
+        </button>
+      )}
+    </div>
   );
 }
