@@ -96,6 +96,43 @@ export async function listMemos(limit = 6, market?: Market): Promise<Memo[]> {
   return res.documents;
 }
 
+/** One page of a desk's memos, newest first, optionally of one status; `total` counts them all. */
+export async function listMemosPage(
+  market: Market,
+  status: Memo["status"] | null,
+  limit = 25,
+  offset = 0,
+): Promise<{ memos: Memo[]; total: number }> {
+  const res = await databases.listDocuments<Memo & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.memos,
+    [
+      ...marketFilter(market),
+      ...(status ? [Query.equal("status", status)] : []),
+      Query.orderDesc("$createdAt"),
+      Query.limit(limit),
+      Query.offset(offset),
+    ],
+  );
+  return { memos: res.documents, total: res.total };
+}
+
+/** The newest memo on each of these tickers (one page; enough for a desk's idea list). */
+export async function listMemosForTickers(market: Market, tickers: string[]): Promise<Memo[]> {
+  if (!tickers.length) return [];
+  const res = await databases.listDocuments<Memo & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.memos,
+    [
+      ...marketFilter(market),
+      Query.equal("ticker", tickers.slice(0, 100)),
+      Query.orderDesc("$createdAt"),
+      Query.limit(200),
+    ],
+  );
+  return res.documents;
+}
+
 /** The fund's own book: the desk's paper positions. */
 export async function listFundPositions(limit = 25, market?: Market): Promise<Position[]> {
   const res = await databases.listDocuments<Position & Models.Document>(

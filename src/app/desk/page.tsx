@@ -1,7 +1,7 @@
 "use client";
 
 import "./desk.css";
-import { Shell, useDesk, type ScreenId } from "@/components/meridian/Shell";
+import { Shell, useDesk, type ResearchView, type ScreenId } from "@/components/meridian/Shell";
 import { AuthGate } from "@/components/meridian/AuthGate";
 import { MarketProvider } from "@/components/meridian/MarketContext";
 import { TodayScreen } from "@/components/meridian/desk/Today";
@@ -9,23 +9,38 @@ import { AuditLogScreen } from "@/components/meridian/desk/AuditLog";
 import { AgentsScreen } from "@/components/meridian/desk/Agents";
 import { FilingsView } from "@/components/meridian/desk/Research";
 import { QuantView } from "@/components/meridian/desk/Quant";
+import { IdeasView, MemosView } from "@/components/meridian/desk/Ideas";
 import { BookScreen } from "@/components/meridian/desk/Book";
 import { RiskScreen } from "@/components/meridian/desk/Risk";
 import { ConsoleScreen } from "@/components/meridian/desk/Console";
+
+const RESEARCH_TABS: [ResearchView, string][] = [
+  ["filings", "Filings"],
+  ["ideas", "Ideas"],
+  ["memos", "Memos"],
+  ["quant", "Quant"],
+];
 
 function ResearchTabs() {
   const { researchView, setResearchView } = useDesk();
   return (
     <>
       <div className="m-tabs" role="tablist" aria-label="Research views" style={{ margin: "-8px 0 28px" }}>
-        <button role="tab" aria-selected={researchView === "filings"} onClick={() => setResearchView("filings")}>
-          Filings &amp; memos
-        </button>
-        <button role="tab" aria-selected={researchView === "quant"} onClick={() => setResearchView("quant")}>
-          Quant
-        </button>
+        {RESEARCH_TABS.map(([id, label]) => (
+          <button key={id} role="tab" aria-selected={researchView === id} onClick={() => setResearchView(id)}>
+            {label}
+          </button>
+        ))}
       </div>
-      {researchView === "quant" ? <QuantView /> : <FilingsView />}
+      {researchView === "quant" ? (
+        <QuantView />
+      ) : researchView === "ideas" ? (
+        <IdeasView />
+      ) : researchView === "memos" ? (
+        <MemosView />
+      ) : (
+        <FilingsView />
+      )}
     </>
   );
 }

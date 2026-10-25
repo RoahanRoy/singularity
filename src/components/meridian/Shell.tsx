@@ -13,7 +13,7 @@ import type { Market } from "@/lib/meridian/format";
 import { useTheme } from "@/lib/meridian/theme";
 
 export type ScreenId = "today" | "book" | "risk" | "research" | "agents" | "console" | "log";
-export type ResearchView = "filings" | "quant";
+export type ResearchView = "filings" | "ideas" | "memos" | "quant";
 
 // group, then [id, label, Material Symbols glyph]
 const NAV: [string, [ScreenId, string, string][]][] = [
