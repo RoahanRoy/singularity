@@ -5,6 +5,7 @@ import { useDesk } from "../Shell";
 import { useMarket } from "../MarketContext";
 import { listAgents, listFilings, listMemos, listMemosByFiling, listPositions, subscribeFilings } from "@/lib/appwrite/queries";
 import type { Filing, Memo, MemoEntity } from "@/lib/appwrite/schema";
+import { nextDeskRun, runLabel } from "@/lib/meridian/schedule";
 import { ago, decideMemo, heldOrder, useLoad } from "./data";
 
 /** Enough rows to show a filing for every name on the book (largest desk holds ~55). */
@@ -275,11 +276,13 @@ function MemoArticle({
   held: Memo[] | null;
   onDecided: () => void;
 }) {
+  const { market: desk } = useMarket();
   const [idx, setIdx] = useState(0);
   const [tab, setTab] = useState<"memo" | "filing" | "entities">("memo");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const m = memos[Math.min(idx, memos.length - 1)];
+  const market = m.market ?? desk;
   const entities = parseEntities(m.entities_json);
   const order = heldOrder(m);
   // The held list is the live status; the row read here may be a step behind.
@@ -366,7 +369,9 @@ function MemoArticle({
               </>
             ) : status === "approved" ? (
               <>
-                <span className="m-sub">Approved · fills next sweep</span>
+                <span className="m-sub">
+                  Approved · fills at the {market === "IN" ? "India" : "US"} run {runLabel(nextDeskRun(market))}
+                </span>
                 {order && (
                   <button className="m-btn2" disabled={busy} onClick={() => act("undo")}>
                     Undo

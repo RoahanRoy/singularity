@@ -17,6 +17,7 @@ import type { Agent, AgentEvent, AgentStatusDoc, Memo } from "@/lib/appwrite/sch
 import { lagLimit, Z99 } from "@/lib/fund/risk-budget";
 import { TRADING_DAYS } from "@/lib/quant/risk";
 import { DESK_INDEX } from "@/lib/market/indices";
+import { nextDeskRun, runLabel } from "@/lib/meridian/schedule";
 import type { Market } from "@/lib/meridian/format";
 import {
   ago,
@@ -99,11 +100,11 @@ export function TodayScreen() {
     <div className="m-cols2">
       <div className="m-stack">
         <Headline market={market} book={book} pending={pending.length} lastStep={events?.[0]?.occurred_at ?? null} />
-        <Decisions held={held} />
+        <Decisions held={held} market={market} />
         <Feed events={events} names={names} seenAt={seen[market]} onAll={() => go("agents")} />
       </div>
       <aside className="m-aside">
-        <AgentCard lastStep={events?.[0]?.occurred_at ?? null} />
+        <AgentCard market={market} lastStep={events?.[0]?.occurred_at ?? null} />
         <RecentActions onAll={() => go("log")} />
         <Guardrails market={market} target={budget?.target_te ?? null} onEdit={() => go("book")} />
       </aside>
@@ -212,7 +213,7 @@ function Headline({
 }
 
 /** Held orders: every trade the broker clears waits here for the operator. */
-function Decisions({ held }: { held: Memo[] | null }) {
+function Decisions({ held, market }: { held: Memo[] | null; market: Market }) {
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -289,7 +290,8 @@ function Decisions({ held }: { held: Memo[] | null }) {
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   {approved ? (
                     <>
-                      <span style={{ fontSize: 13, fontWeight: 500, color: "var(--up)" }}>Approved · fills next sweep</span>
+                      <span style={{ fontSize: 13, fontWeight: 500, color: "var(--up)" }}>Approved · fills at the {market === "IN" ? "India" : "US"} run {runLabel(nextDeskRun(market))}
+                      </span>
                       <button className="m-link" disabled={busy === m.$id} onClick={() => act(m, "undo")}>
                         Undo
                       </button>
@@ -472,7 +474,15 @@ function Feed({
   );
 }
 
-function AgentCard({ lastStep }: { lastStep: string | null }) {
+/** "3h 20m" until a future time. */
+function until(t: Date, now: number): string {
+  const m = Math.max(0, Math.round((t.getTime() - now) / 60_000));
+  const d = Math.floor(m / 1440);
+  const h = Math.floor((m % 1440) / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m % 60}m` : `${m}m`;
+}
+
+function AgentCard({ market, lastStep }: { market: Market; lastStep: string | null }) {
   const [statuses, setStatuses] = useState<Record<string, AgentStatusDoc> | null>(null);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -509,12 +519,14 @@ function AgentCard({ lastStep }: { lastStep: string | null }) {
   const [title, dot] = !statuses
     ? ["Checking agents…", "var(--ink-3)"]
     : !online
-      ? ["Dispatcher offline", "var(--ink-3)"]
+      ? ["Runs on the cloud schedule", "var(--ink-3)"]
       : running > 0
         ? ["Agents are working", "var(--up)"]
         : ["Agents are paused", "var(--warn)"];
+  const next = nextDeskRun(market, new Date(now));
   const sub = [
-    online ? `${running} of ${WORKERS.length} workers running.` : "Desk loops run on the daily cloud routines.",
+    online ? `${running} of ${WORKERS.length} workers running.` : null,
+    `Next ${market === "IN" ? "India" : "US"} run ${runLabel(next, new Date(now))}, in ${until(next, now)}.`,
     lastStep ? `Last step ${ago(lastStep, now)} ago.` : null,
   ]
     .filter(Boolean)
@@ -544,9 +556,15 @@ function AgentCard({ lastStep }: { lastStep: string | null }) {
         <span>Inference spend today</span>
         <span>{spend == null ? "—" : `${spend.partial ? "≥ " : ""}$${spend.usd.toFixed(2)}`}</span>
       </div>
-      <button className="m-btn2" disabled={!online || busy} onClick={toggle} title={online ? undefined : "Run npm run agents:dispatch on your host"}>
-        {running > 0 ? "Pause all agents" : "Resume agents"}
-      </button>
+      {online ? (
+        <button className="m-btn2" disabled={busy} onClick={toggle}>
+          {running > 0 ? "Pause all agents" : "Resume agents"}
+        </button>
+      ) : (
+        <p className="m-meta" style={{ margin: 0 }}>
+          Pausing and resuming need the dispatcher on your Mac (<span className="m-mono">npm run agents:dispatch</span>).
+        </p>
+      )}
     </section>
   );
 }
