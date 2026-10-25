@@ -184,7 +184,7 @@ function useHeld(market: Market): [Memo[] | null, () => void] {
   const reload = useCallback(() => setNonce((n) => n + 1), []);
   useEffect(() => {
     let cancelled = false;
-    listHeldMemos(25, market)
+    listHeldMemos(100, market)
       .then((m) => !cancelled && setHeld(m))
       .catch(() => !cancelled && setHeld([]));
     return () => {

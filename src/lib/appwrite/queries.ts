@@ -154,11 +154,22 @@ export async function listRecentTrades(limit = 50): Promise<Trade[]> {
 
 /** Orders the broker sized and cleared but holds for the operator: memos in
  *  review (or approved, waiting for the loop's sweep) that carry pending_exec_json. */
-export async function listHeldMemos(limit = 10, market?: Market): Promise<Memo[]> {
+/**
+ * Memos holding a staged order. The order filter runs in the query: most
+ * review memos carry no order, so filtering after a newest-N page could push
+ * older staged orders off it entirely.
+ */
+export async function listHeldMemos(limit = 100, market?: Market): Promise<Memo[]> {
   const res = await databases.listDocuments<Memo & Models.Document>(
     DATABASE_ID,
     COLLECTIONS.memos,
-    [...marketFilter(market), Query.equal("status", ["review", "approved"]), Query.orderDesc("$createdAt"), Query.limit(limit)],
+    [
+      ...marketFilter(market),
+      Query.equal("status", ["review", "approved"]),
+      Query.isNotNull("pending_exec_json"),
+      Query.orderDesc("$createdAt"),
+      Query.limit(limit),
+    ],
   );
   return res.documents.filter((m) => m.pending_exec_json);
 }
