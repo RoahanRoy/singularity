@@ -142,11 +142,11 @@ export function heldOrder(m: Pick<Memo, "pending_exec_json">): HeldOrder | null 
   }
 }
 
-export async function decideMemo(memoId: string, action: "approve" | "reject" | "undo"): Promise<string | null> {
+export async function decideMemo(memoId: string, action: "approve" | "reject" | "undo", reason?: string): Promise<string | null> {
   const res = await operatorFetch("/api/memos/approve", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ memoId, action }),
+    body: JSON.stringify({ memoId, action, reason: reason || undefined }),
   });
   if (res.ok) return null;
   const j = await res.json().catch(() => ({}));

@@ -22,6 +22,7 @@ import { TRADING_DAYS } from "@/lib/quant/risk";
 import { DESK_INDEX } from "@/lib/market/indices";
 import { nextDeskRun, prevDeskRun, runLabel } from "@/lib/meridian/schedule";
 import { CoreDecision, coreLineOf, corePending, useCoreApproval, type CoreLine } from "./Plan";
+import { DeclineButton, OrderPlan } from "./Decide";
 import type { CoreApproval } from "@/lib/fund/core-approval";
 import type { Market } from "@/lib/meridian/format";
 import {
@@ -233,7 +234,6 @@ function Headline({
   );
 }
 
-/** Held orders: every trade the broker clears waits here for the operator. */
 type CoreState = { planId: string; line: CoreLine | null; approval: CoreApproval | null; reload: () => void };
 
 /** Held orders and the index-core trade: everything here waits for the operator. */
@@ -243,10 +243,10 @@ function Decisions({ held, market, core }: { held: Memo[] | null; market: Market
   const [error, setError] = useState<string | null>(null);
   const { reloadHeld } = useDesk();
 
-  async function act(m: Memo, action: "approve" | "reject" | "undo") {
+  async function act(m: Memo, action: "approve" | "reject" | "undo", reason?: string) {
     setBusy(m.$id);
     setError(null);
-    const err = await decideMemo(m.$id, action).catch((e: Error) => e.message);
+    const err = await decideMemo(m.$id, action, reason).catch((e: Error) => e.message);
     if (err) setError(`${m.ticker ?? m.title}: ${err}`);
     setBusy(null);
     if (action !== "undo") setOpen(null);
@@ -334,37 +334,14 @@ function Decisions({ held, market, core }: { held: Memo[] | null; market: Market
               </div>
               {isOpen && (
                 <div className="m-card" style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
-                  <div>
-                    <div className="m-label" style={{ marginBottom: 4 }}>
-                      Action plan
-                    </div>
-                    {planRows(m, o).map(([k, v, tone], i) => (
-                      <div
-                        key={k}
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "22px minmax(0,1fr) auto",
-                          gap: 10,
-                          padding: "6px 0",
-                          borderBottom: "1px solid var(--line)",
-                          fontSize: 13,
-                        }}
-                      >
-                        <span className="m-mono m-ink3">{i + 1}</span>
-                        <span>{k}</span>
-                        <span style={{ color: tone ?? "var(--ink)", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{v}</span>
-                      </div>
-                    ))}
-                  </div>
+                  <OrderPlan memo={m} order={o} />
                   <ThesisLink memo={m} />
                   {!approved && (
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
                       <button className="m-btn" disabled={busy === m.$id || !o} onClick={() => act(m, "approve")}>
                         Approve {o ? `buy ${o.qty.toLocaleString()}` : ""}
                       </button>
-                      <button className="m-btn2" disabled={busy === m.$id} onClick={() => act(m, "reject")}>
-                        Decline
-                      </button>
+                      <DeclineButton disabled={busy === m.$id} onDecline={(reason) => act(m, "reject", reason)} />
                     </div>
                   )}
                 </div>
@@ -471,47 +448,6 @@ function ThesisLink({ memo }: { memo: Memo }) {
       <span style={{ whiteSpace: "nowrap" }}>&nbsp;→</span>
     </button>
   );
-}
-
-// The order the broker sized, and what each gate measured on it. The broker
-// only holds an order that cleared the risk budget, the pre-trade overlay and
-// compliance; orders staged before the measures were stored say so.
-function planRows(m: Memo, o: ReturnType<typeof heldOrder>): [string, string, string?][] {
-  if (!o) return [["Order", "No sized order on this memo", "var(--warn)"]];
-  const rows: [string, string, string?][] = [["Order", `Buy ${o.qty.toLocaleString()} ${m.ticker ?? "shares"}`]];
-  if (o.weight_pct != null) rows.push(["Size", `${o.weight_pct.toFixed(2)}% of NAV`]);
-  if (o.algo || o.venue) rows.push(["Route", [o.algo, o.venue].filter(Boolean).join(" · ")]);
-  if (o.arrival) rows.push(["Arrival price", `${o.arrival.price.toLocaleString(undefined, { maximumFractionDigits: 2 })} · ${clockOrDate(o.arrival.at)}`]);
-  const c = o.checks;
-  if (!c) {
-    rows.push(["Risk budget, overlay, compliance", "Cleared · measures not stored on this order", "var(--up)"]);
-    return rows;
-  }
-  if (c.te_before != null && c.te_after != null)
-    rows.push([
-      "Tracking error",
-      `${pct(c.te_before)} → ${pct(c.te_after)}${c.target_te != null ? ` · budget ${pct(c.target_te)}` : ""}`,
-      "var(--up)",
-    ]);
-  if (c.var95_after_pct != null) rows.push(["Book 1-day VaR 95% after", `${c.var95_after_pct.toFixed(2)}% of NAV`]);
-  if (c.valuation)
-    rows.push([
-      "Valuation",
-      `${c.valuation.verdict}${c.valuation.upside_pct != null ? ` · ${c.valuation.upside_pct > 0 ? "+" : ""}${c.valuation.upside_pct.toFixed(1)}% to fair value` : ""}`,
-      c.valuation.verdict === "rich" ? "var(--warn)" : undefined,
-    ]);
-  if (c.critic)
-    rows.push([
-      "Red-team critic",
-      `${c.critic.verdict}${c.critic.score != null ? ` · ${c.critic.score.toFixed(2)}` : ""}`,
-      c.critic.verdict === "pass" ? "var(--up)" : "var(--warn)",
-    ]);
-  rows.push(
-    c.compliance_flags.length
-      ? ["Compliance", `Cleared with notes: ${c.compliance_flags.join("; ")}`, "var(--warn)"]
-      : ["Compliance", "Cleared, no flags", "var(--up)"],
-  );
-  return rows;
 }
 
 function firstSentence(s: string): string {

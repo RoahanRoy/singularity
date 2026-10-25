@@ -16,9 +16,10 @@ export const dynamic = "force-dynamic";
  * filled it yet; once executed there is nothing to undo. Every decision is
  * written to the audit log.
  *
- * POST { memoId: string, action: "approve" | "reject" | "undo" }
+ * POST { memoId: string, action: "approve" | "reject" | "undo", reason?: string }
+ * (a decline's reason, kept in the audit row)
  */
-type Body = { memoId?: string; action?: string };
+type Body = { memoId?: string; action?: string; reason?: string };
 
 type MemoRow = { status?: string; ticker?: string | null; pending_exec_json?: string | null };
 
@@ -89,13 +90,14 @@ export async function POST(req: Request) {
   })();
   const order = `buy ${qty ?? "?"} ${memo.ticker ?? memoId}`;
   const verb = { approve: "Approved", reject: "Declined", undo: "Undid approval of" }[action];
+  const why = typeof body.reason === "string" && body.reason.trim() ? `: ${body.reason.trim().slice(0, 300)}` : "";
   try {
     await databases.createDocument(DATABASE_ID, COLLECTIONS.audit_log, ID.unique(), {
       actor: "operator",
       action: `operator_${action}`,
       target: memo.ticker ?? memoId,
       decision: action === "reject" ? "block" : "allow",
-      detail: `${verb} ${order} (memo ${memoId})`,
+      detail: `${verb} ${order} (memo ${memoId})${why}`,
       occurred_at: new Date().toISOString(),
     });
   } catch {

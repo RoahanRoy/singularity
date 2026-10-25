@@ -7,6 +7,7 @@ import { listAgents, listFilings, listMemos, listMemosByFiling, listPositions, s
 import type { Filing, Memo, MemoEntity } from "@/lib/appwrite/schema";
 import { nextDeskRun, runLabel } from "@/lib/meridian/schedule";
 import { ago, decideMemo, heldOrder, useLoad } from "./data";
+import { DeclineButton, OrderPlan } from "./Decide";
 
 /** Enough rows to show a filing for every name on the book (largest desk holds ~55). */
 const QUEUE_SIZE = 80;
@@ -288,10 +289,10 @@ function MemoArticle({
   // The held list is the live status; the row read here may be a step behind.
   const status = held?.find((h) => h.$id === m.$id)?.status ?? m.status;
 
-  async function act(action: "approve" | "reject" | "undo") {
+  async function act(action: "approve" | "reject" | "undo", reason?: string) {
     setBusy(true);
     setError(null);
-    const err = await decideMemo(m.$id, action).catch((e: Error) => e.message);
+    const err = await decideMemo(m.$id, action, reason).catch((e: Error) => e.message);
     setBusy(false);
     if (err) setError(err);
     onDecided();
@@ -356,15 +357,18 @@ function MemoArticle({
               <p key={i}>{p}</p>
             ))}
           </div>
+          {order && (status === "review" || status === "approved") && (
+            <div className="m-card" style={{ marginTop: 24 }}>
+              <OrderPlan memo={m} order={order} />
+            </div>
+          )}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 24, paddingTop: 16, borderTop: "1px solid var(--line)" }}>
             {status === "review" && order ? (
               <>
                 <button className="m-btn" disabled={busy} onClick={() => act("approve")}>
                   Approve buy {order.qty.toLocaleString()}
                 </button>
-                <button className="m-btn2" disabled={busy} onClick={() => act("reject")}>
-                  Decline
-                </button>
+                <DeclineButton disabled={busy} onDecline={(reason) => act("reject", reason)} />
                 <span className="m-meta">The order is staged; nothing trades until you approve.</span>
               </>
             ) : status === "approved" ? (
