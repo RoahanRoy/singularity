@@ -21,6 +21,15 @@ export function nextDeskRun(market: Market, now = new Date()): Date {
   return d;
 }
 
+/** The latest scheduled run of the desk's routine at or before `now`. */
+export function prevDeskRun(market: Market, now = new Date()): Date {
+  const { hour, minute } = RUN_UTC[market];
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour, minute));
+  if (d.getTime() > now.getTime()) d.setUTCDate(d.getUTCDate() - 1);
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
+  return d;
+}
+
 /** "Mon 21:30" in the viewer's zone, or "today 21:30" / "tomorrow 21:30". */
 export function runLabel(d: Date, now = new Date()): string {
   const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });

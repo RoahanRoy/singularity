@@ -158,7 +158,7 @@ export function PlanSection({ market, book, targetTe }: { market: Market; book: 
           </div>
         </div>
       )}
-      {book === "fund" && <CoreDecision market={market} planId={row.$id} line={lines.find((l) => l.role === "core") ?? null} />}
+      {book === "fund" && <PlanCore market={market} planId={row.$id} line={lines.find((l) => l.role === "core") ?? null} />}
       {fixed.length > 0 &&
         toggle("fixed", `${fixed.length} held as they are`, fixed.map((f) => ({ ...f, reason: `${pct(f.weight, 1)} · ${f.reason}` })))}
       {skippedCount > 0 &&
@@ -180,7 +180,18 @@ export function PlanSection({ market, book, targetTe }: { market: Market; book: 
   );
 }
 
-type CoreLine = NonNullable<ConstructionPlanPayload["lines"]>[number];
+export type CoreLine = NonNullable<ConstructionPlanPayload["lines"]>[number];
+
+/** The core line a fund plan trades, if any. */
+export function coreLineOf(row: ConstructionPlan | null): CoreLine | null {
+  if (!row) return null;
+  try {
+    const p = JSON.parse(row.plan_json) as ConstructionPlanPayload;
+    return (p.lines ?? []).find((l) => l.role === "core" && l.shares != null && l.shares !== 0) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** Read the desk's core approval (/api/core/approve), or post a decision on it. */
 async function coreApproval(market: Market, body?: { action: "approve" | "undo"; planId?: string }) {
@@ -193,23 +204,44 @@ async function coreApproval(market: Market, body?: { action: "approve" | "undo";
   return j.approval ?? null;
 }
 
+/** The desk's core approval, null while it loads; `reload` after a decision. */
+export function useCoreApproval(market: Market): { got: { a: CoreApproval | null } | null; reload: () => void } {
+  const [nonce, setNonce] = useState(0);
+  const got = useLoad(() => coreApproval(market).then((a) => ({ a })), [market, nonce], { a: null });
+  return { got, reload: () => setNonce((n) => n + 1) };
+}
+
+/** Whether the core trade still waits on the operator: a trade on the plan and no open approval. */
+export const corePending = (line: CoreLine | null, a: CoreApproval | null) => !!line?.shares && a?.status !== "approved";
+
+function PlanCore({ market, planId, line }: { market: Market; planId: string; line: CoreLine | null }) {
+  const { got, reload } = useCoreApproval(market);
+  if (!got) return null;
+  return <CoreDecision market={market} planId={planId} line={line} approval={got.a} onDecided={reload} />;
+}
+
 /**
  * The plan's index-core trade as a decision: approve it and the next desk run
  * fills it at a live price, the same side and at most these shares.
  */
-function CoreDecision({ market, planId, line }: { market: Market; planId: string; line: CoreLine | null }) {
-  const [nonce, setNonce] = useState(0);
+export function CoreDecision({
+  market,
+  planId,
+  line,
+  approval: a,
+  onDecided,
+}: {
+  market: Market;
+  planId: string;
+  line: CoreLine | null;
+  approval: CoreApproval | null;
+  onDecided: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const got = useLoad(
-    () => coreApproval(market).then((a) => ({ a }), (e: Error) => ({ a: null, err: e.message })),
-    [market, nonce],
-    { a: null },
-  );
-  const a = got?.a ?? null;
   const open = a?.status === "approved" ? a : null;
   const shares = line?.shares ?? 0;
-  if (!got || (!open && !shares) || (!open && !line)) return null;
+  if (!open && !(line && shares)) return null;
 
   async function decide(action: "approve" | "undo") {
     setBusy(true);
@@ -220,7 +252,7 @@ function CoreDecision({ market, planId, line }: { market: Market; planId: string
       setError((e as Error).message);
     }
     setBusy(false);
-    setNonce((n) => n + 1);
+    onDecided();
   }
 
   const desk = market === "IN" ? "India" : "US";

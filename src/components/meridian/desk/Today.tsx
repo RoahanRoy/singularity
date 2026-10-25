@@ -8,6 +8,9 @@ import {
   listAgentStatus,
   listAgents,
   listAuditLog,
+  latestConstructionPlan,
+  latestHalt,
+  latestRiskReport,
   listBudgetSince,
   listRecentEvents,
   subscribeAgentEvents,
@@ -17,7 +20,9 @@ import type { Agent, AgentEvent, AgentStatusDoc, Memo } from "@/lib/appwrite/sch
 import { lagLimit, Z99 } from "@/lib/fund/risk-budget";
 import { TRADING_DAYS } from "@/lib/quant/risk";
 import { DESK_INDEX } from "@/lib/market/indices";
-import { nextDeskRun, runLabel } from "@/lib/meridian/schedule";
+import { nextDeskRun, prevDeskRun, runLabel } from "@/lib/meridian/schedule";
+import { CoreDecision, coreLineOf, corePending, useCoreApproval, type CoreLine } from "./Plan";
+import type { CoreApproval } from "@/lib/fund/core-approval";
 import type { Market } from "@/lib/meridian/format";
 import {
   ago,
@@ -93,18 +98,34 @@ export function TodayScreen() {
   const events = got?.market === market ? got.rows : null;
   const names = Object.fromEntries((agents ?? []).map((a) => [a.$id, a.name]));
 
-  const pending = (held ?? []).filter((m) => m.status === "review");
   const budget = onboard?.budgets[market] ?? null;
+  const plan = useLoad(() => latestConstructionPlan(market, "fund").then((row) => ({ row })), [market], { row: null });
+  const coreLine = coreLineOf(plan?.row ?? null);
+  const { got: core, reload: reloadCore } = useCoreApproval(market);
+  const corePend = core != null && corePending(coreLine, core.a);
+  const pending = (held ?? []).filter((m) => m.status === "review").length + (corePend ? 1 : 0);
+  const lastStep = events?.[0]?.occurred_at ?? null;
 
   return (
     <div className="m-cols2">
       <div className="m-stack">
-        <Headline market={market} book={book} pending={pending.length} lastStep={events?.[0]?.occurred_at ?? null} />
-        <Decisions held={held} market={market} />
+        <Headline market={market} book={book} pending={pending} lastStep={lastStep} />
+        <Checks
+          market={market}
+          hasFund={book != null && book.cash != null}
+          budget={budget?.target_te ?? null}
+          lastStep={events ? lastStep : undefined}
+          corePending={corePend}
+        />
+        <Decisions
+          held={held}
+          market={market}
+          core={plan && core ? { planId: plan.row?.$id ?? "", line: coreLine, approval: core.a, reload: reloadCore } : null}
+        />
         <Feed events={events} names={names} seenAt={seen[market]} onAll={() => go("agents")} />
       </div>
       <aside className="m-aside">
-        <AgentCard market={market} lastStep={events?.[0]?.occurred_at ?? null} />
+        <AgentCard market={market} lastStep={lastStep} />
         <RecentActions onAll={() => go("log")} />
         <Guardrails market={market} target={budget?.target_te ?? null} onEdit={() => go("book")} />
       </aside>
@@ -213,7 +234,10 @@ function Headline({
 }
 
 /** Held orders: every trade the broker clears waits here for the operator. */
-function Decisions({ held, market }: { held: Memo[] | null; market: Market }) {
+type CoreState = { planId: string; line: CoreLine | null; approval: CoreApproval | null; reload: () => void };
+
+/** Held orders and the index-core trade: everything here waits for the operator. */
+function Decisions({ held, market, core }: { held: Memo[] | null; market: Market; core: CoreState | null }) {
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -242,10 +266,15 @@ function Decisions({ held, market }: { held: Memo[] | null; market: Market }) {
           {error}
         </p>
       )}
+      {core && (
+        <CoreDecision market={market} planId={core.planId} line={core.line} approval={core.approval} onDecided={core.reload} />
+      )}
       {held == null ? (
         <p className="m-empty">Loading…</p>
       ) : held.length === 0 ? (
-        <p className="m-empty">Nothing needs you right now. The next proposal will appear here and in the sidebar badge.</p>
+        core && corePending(core.line, core.approval) ? null : (
+          <p className="m-empty">Nothing needs you right now. The next proposal will appear here and in the sidebar badge.</p>
+        )
       ) : (
         held.map((m) => {
           const o = heldOrder(m);
@@ -344,6 +373,84 @@ function Decisions({ held, market }: { held: Memo[] | null; market: Market }) {
           );
         })
       )}
+    </section>
+  );
+}
+
+// A run's first agent step lands minutes after it starts (install, sync,
+// news); past this with none, the run left no trace.
+const RUN_GRACE_MS = 30 * 60_000;
+
+/**
+ * What's wrong on the desk, in words, each with where to act: a halt this
+ * session, a scheduled run that left no trace, the book over its risk budget
+ * or unmeasured, no budget set.
+ */
+function Checks({
+  market,
+  hasFund,
+  budget,
+  lastStep,
+  corePending: coreWaits,
+}: {
+  market: Market;
+  hasFund: boolean;
+  budget: number | null;
+  corePending: boolean;
+  /** The desk's last agent step; undefined while it loads. */
+  lastStep: string | null | undefined;
+}) {
+  const { go } = useDesk();
+  const got = useLoad(
+    () => Promise.all([latestHalt(market), latestRiskReport(market, "fund")]).then(([halt, risk]) => ({ halt, risk })),
+    [market],
+    { halt: null, risk: null },
+  );
+  if (!got || lastStep === undefined) return null;
+  const now = new Date();
+  const desk = market === "IN" ? "India" : "US";
+  const prev = prevDeskRun(market, now);
+  const items: { tone: string; text: string; act?: [string, () => void] }[] = [];
+
+  if (got.halt && Date.parse(got.halt.occurred_at) >= prev.getTime())
+    items.push({ tone: "var(--down)", text: `Fills are halted for this session. ${got.halt.detail}`, act: ["Audit log", () => go("log")] });
+  if (now.getTime() - prev.getTime() > RUN_GRACE_MS && (!lastStep || Date.parse(lastStep) < prev.getTime()))
+    items.push({
+      tone: "var(--warn)",
+      text: `The ${desk} run due ${runLabel(prev, now)} left no agent activity: a market holiday, or the cloud routine didn't run. Last step ${lastStep ? `${ago(lastStep)} ago` : "never"}.`,
+      act: ["Agents", () => go("agents")],
+    });
+  if (hasFund && budget == null)
+    items.push({ tone: "var(--warn)", text: "No risk budget is set, so the desk stages every trade and sizes nothing.", act: ["Set it on the Book", () => go("book")] });
+  if (hasFund && !got.risk)
+    items.push({ tone: "var(--warn)", text: "The fund's risk isn't measured yet; the next desk run measures it.", act: ["Risk", () => go("risk")] });
+  const te = got.risk?.tracking_error ?? null;
+  if (te != null && budget != null && te > budget)
+    items.push({
+      tone: "var(--down)",
+      text: `Tracking error ${pct(te)} is above the ${pct(budget)} budget (measured ${ago(got.risk!.captured_at)} ago): no trade that adds to it will pass.${
+        coreWaits ? ` Cash held against the ${DESK_INDEX[market].name} counts as tracking error; the core rebalance below brings the book toward the index.` : ""
+      }`,
+      act: ["Risk", () => go("risk")],
+    });
+
+  if (!items.length) return null;
+  return (
+    <section aria-label="Desk checks">
+      {items.map((it) => (
+        <div
+          key={it.text}
+          style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "10px 0", borderTop: "1px solid var(--line)", fontSize: 13 }}
+        >
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: it.tone, flex: "none", transform: "translateY(-1px)" }} />
+          <span style={{ flex: 1, minWidth: 0, textWrap: "pretty" }}>{it.text}</span>
+          {it.act && (
+            <button className="m-link" style={{ whiteSpace: "nowrap" }} onClick={it.act[1]}>
+              {it.act[0]} →
+            </button>
+          )}
+        </div>
+      ))}
     </section>
   );
 }

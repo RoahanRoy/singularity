@@ -299,6 +299,22 @@ export async function listFundSnapshots(limit = 200, market?: Market, book: "fun
 // queried. The types remain in schema.ts for any external tooling.
 
 /** Append-only pre-trade / governance audit trail, newest first. */
+/** The desk's latest circuit-breaker halt (scripts/agents/circuit-breaker.ts), or null. */
+export async function latestHalt(market: Market): Promise<AuditLog | null> {
+  const res = await databases.listDocuments<AuditLog & Models.Document>(
+    DATABASE_ID,
+    COLLECTIONS.audit_log,
+    [
+      Query.equal("actor", "circuit-breaker"),
+      Query.equal("action", "halt"),
+      Query.equal("target", `${market} desk`),
+      Query.orderDesc("occurred_at"),
+      Query.limit(1),
+    ],
+  );
+  return res.documents[0] ?? null;
+}
+
 export async function listAuditLog(limit = 50): Promise<AuditLog[]> {
   const res = await databases.listDocuments<AuditLog & Models.Document>(
     DATABASE_ID,
