@@ -3,9 +3,12 @@
 import { useState } from "react";
 import { useDesk } from "../Shell";
 import { useMarket } from "../MarketContext";
-import { latestRiskReport } from "@/lib/appwrite/queries";
+import { latestHalt, latestRiskReport, listRiskHistory } from "@/lib/appwrite/queries";
 import type { RiskReport, RiskReportPayload } from "@/lib/appwrite/schema";
-import { ago, money, pct, toneOf, useLoad } from "./data";
+import type { Market } from "@/lib/meridian/format";
+import { nextDeskRun, prevDeskRun, runLabel } from "@/lib/meridian/schedule";
+import { LineChart, shortDate } from "./Chart";
+import { ago, clockOrDate, money, pct, toneOf, useLoad, useOnboard } from "./data";
 
 type Book = RiskReport["book"];
 
@@ -35,6 +38,10 @@ export function RiskScreen() {
   );
   const row = got?.row ?? null;
   const r = parse(row);
+  const onboard = useOnboard();
+  const target = onboard?.budgets[market]?.target_te ?? null;
+  const halt = useLoad(() => (book === "fund" ? latestHalt(market) : Promise.resolve(null)), [market, book], null);
+  const haltNow = halt && Date.parse(halt.occurred_at) >= prevDeskRun(market).getTime() ? halt : null;
 
   const seg = (
     <div className="m-seg" role="group" aria-label="Book">
@@ -54,11 +61,16 @@ export function RiskScreen() {
         ? `Couldn't read risk reports: ${got.error}`
         : row
           ? "The stored report couldn't be read."
-          : `No ${book} risk report for this desk yet. The desk loop measures each book hourly while it runs; to measure now, run: npx tsx --env-file=.env.local scripts/risk-report.ts ${market} ${book}`;
+          : `No ${book} risk report for this desk yet. Each desk run measures both books; the next ${market === "IN" ? "India" : "US"} run is ${runLabel(nextDeskRun(market))}.`;
     return (
       <div>
         <div style={{ marginBottom: 24 }}>{seg}</div>
         <p className="m-empty">{msg}</p>
+        {got && !got.error && !row && (
+          <p className="m-meta">
+            To measure now from your Mac: <span className="m-mono">npx tsx --env-file=.env.local scripts/risk-report.ts {market} {book}</span>
+          </p>
+        )}
       </div>
     );
   }
@@ -71,7 +83,11 @@ export function RiskScreen() {
       pct(r.var95.parametric),
       `${r.var95.parametric == null ? "" : `${money(r.var95.parametric * nav, market)} · `}historical ${pct(r.var95.historical)}`,
     ],
-    [`Tracking error vs ${r.index}`, pct(r.tracking_error), `beta ${num(r.beta)} · book vol ${pct(r.vol_annual)}`],
+    [
+      `Tracking error vs ${r.index}`,
+      pct(r.tracking_error),
+      `${target != null ? `budget ${pct(target)} · ` : ""}beta ${num(r.beta)} · book vol ${pct(r.vol_annual)}`,
+    ],
     ["Expected shortfall 95%", pct(r.es95.parametric), `historical ${pct(r.es95.historical)}`],
     ["NAV", money(nav, market), `cash ${pct(r.cash_weight, 1)} · measured ${pct(r.measured_weight, 1)}`],
   ];
@@ -102,6 +118,8 @@ export function RiskScreen() {
         {unm > 0 && <span className="m-tag warn">{pct(unm, 1)} unmeasured</span>}
       </div>
 
+      <Verdict te={r.tracking_error} target={target} cash={r.cash_weight} index={r.index} haltAt={haltNow?.occurred_at ?? null} haltWhy={haltNow?.detail ?? null} />
+
       <div
         style={{
           display: "grid",
@@ -122,6 +140,8 @@ export function RiskScreen() {
           </div>
         ))}
       </div>
+
+      <History market={market} book={book} target={target} />
 
       <div
         style={{
@@ -320,5 +340,75 @@ export function RiskScreen() {
         </div>
       )}
     </div>
+  );
+}
+
+/** The book against its risk budget, in one line, and any halt this session. */
+function Verdict({
+  te,
+  target,
+  cash,
+  index,
+  haltAt,
+  haltWhy,
+}: {
+  te: number | null;
+  target: number | null;
+  cash: number | null;
+  index: string;
+  haltAt: string | null;
+  haltWhy: string | null;
+}) {
+  const lines: [string, string][] = [];
+  if (haltAt) lines.push(["var(--down)", `Fills halted since ${clockOrDate(haltAt)}. ${haltWhy ?? ""}`]);
+  if (target == null) lines.push(["var(--warn)", "No risk budget set: trades stage for review and the plan sizes nothing. Set one in the mandate on the Book."]);
+  else if (te == null) lines.push(["var(--warn)", "Tracking error isn't measured, so trades can't be checked against the budget."]);
+  else if (te > target)
+    lines.push([
+      "var(--down)",
+      `Over budget: tracking error ${pct(te)} against ${pct(target)}. A trade that adds to it won't pass.${
+        (cash ?? 0) > 0.5 ? ` Most of the book is cash (${pct(cash, 0)}), which trails the ${index} by its full volatility; filling the index core closes most of the gap.` : ""
+      }`,
+    ]);
+  else lines.push(["var(--up)", `Within budget: tracking error ${pct(te)} against ${pct(target)}, ${pct(target - te)} of room.`]);
+  return (
+    <div style={{ margin: "0 0 20px" }}>
+      {lines.map(([c, t]) => (
+        <div key={t} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "8px 0", fontSize: 14 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: c, flex: "none", transform: "translateY(-1px)" }} />
+          <span style={{ textWrap: "pretty" }}>{t}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Tracking error by session against today's budget. */
+function History({ market, book, target }: { market: Market; book: RiskReport["book"]; target: number | null }) {
+  const rows = useLoad(() => listRiskHistory(market, book, 90), [market, book], [] as RiskReport[]);
+  const pts = (rows ?? []).filter((x) => x.tracking_error != null).map((x) => ({ t: x.captured_at, v: x.tracking_error! * 100 }));
+  if (pts.length < 2) return null;
+  return (
+    <section style={{ marginTop: 36 }}>
+      <div className="m-shead">
+        <h2 className="m-h2">Tracking error over time</h2>
+        <span className="m-meta">
+          {pts.length} sessions from {shortDate(pts[0].t)}
+          {target != null ? " · dashed: today's budget" : ""}
+        </span>
+      </div>
+      <LineChart
+        points={pts}
+        color={target != null && pts[pts.length - 1].v > target * 100 ? "var(--down)" : "var(--accent)"}
+        name="Tracking error"
+        compare={target != null ? { name: "Budget", color: "var(--ink-3)", values: pts.map(() => target * 100) } : undefined}
+        height={180}
+        label={(p) => (
+          <>
+            {shortDate(p.t)} · tracking error {p.v.toFixed(1)}%{target != null ? ` · budget ${pct(target)}` : ""}
+          </>
+        )}
+      />
+    </section>
   );
 }
